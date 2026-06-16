@@ -71,28 +71,44 @@ See REQUIREMENTS.md for full spec. Build in this order:
 
 ## Current Build Status
 
-Update this section after each session:
+Last updated: 2026-06-16
 
 ```
-[ ] STEP 1 — Types + Constants
-[ ] STEP 2 — Audit helper (lib/audit.ts)
-[ ] STEP 3 — AWS helpers
-[ ] STEP 4 — Business logic
-[ ] STEP 5 — API routes
-[ ] STEP 6 — Components
-[ ] STEP 7 — Pages
-[ ] STEP 8 — Config files
+[x] STEP 1 — Types + Constants
+[x] STEP 2 — Audit helper (lib/audit.ts)
+[x] STEP 3 — AWS helpers (dynamodb, s3, ses)
+[x] STEP 4 — Business logic (pricing, wallet)
+[x] STEP 5 — API routes (wallet, upload, download, webhook)
+[x] STEP 6 — Components (UploadZone, PriceCalculator, UploadProgress, WalletCard, TopupModal, DownloadCard)
+[x] STEP 7 — Pages (/, /wallet, /download/[fileId])
+[x] STEP 8 — Config files (.env.example, next.config.js, tailwind.config.js)
 ```
+
+MVP is complete and tested. Pushed to https://github.com/radhakantarout/vayu-transfer
+
+### AWS Infrastructure (ap-south-1)
+- S3 bucket: vayu-transfer-files (CORS + lifecycle configured)
+- DynamoDB: all 5 tables active
+- SES: sandbox mode, FROM = radhakanta.rout16@gmail.com (dev only)
+
+### Known Bugs Fixed
+- Download counter now only increments on button click (GET=info, POST=download)
+- Email sends shareable page link, not short-lived presigned URL
+
+### Next Session Priorities
+1. Extend download slots feature (uploader buys more slots for existing transfer)
+2. Razorpay live keys (when account approved)
+3. SES production access + domain verification
+4. Vercel deployment
 
 ---
 
 ## How to Continue in a New Session
 
 1. Read this file (CLAUDE.md)
-2. Read REQUIREMENTS.md for full specs
-3. Check build status above
-4. Continue from next unchecked step
-5. After completing each step, update status above and commit to GitHub
+2. Check "Next Session Priorities" above
+3. Run `npm run dev` to start local server
+4. Wallet needs dev credits — use the yellow banner button on the page
 
 ---
 
