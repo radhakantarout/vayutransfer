@@ -14,10 +14,7 @@ export default function Navbar() {
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <Image src="/logo.png" alt="VayuTransfer" width={40} height={40} className="rounded-md" />
-          <span className="font-extrabold text-lg tracking-tight">
-            <span className="text-white">Vayu</span><span className="text-accent">Transfer</span>
-          </span>
+          <Image src="/logo.png" alt="VayuTransfer" width={200} height={200} className="h-10 w-auto" />
         </Link>
 
         {/* Nav links — desktop */}

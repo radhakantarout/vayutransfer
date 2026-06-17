@@ -7,7 +7,7 @@ import type { Wallet, Transaction } from '@/types'
 const WALLETS_TABLE = process.env.DYNAMO_WALLETS_TABLE ?? 'vayu-wallets'
 const TRANSACTIONS_TABLE = process.env.DYNAMO_TRANSACTIONS_TABLE ?? 'vayu-transactions'
 
-export async function getOrCreateWallet(sessionId: string): Promise<Wallet> {
+export async function getOrCreateWallet(sessionId: string, skipDevSeed = false): Promise<Wallet> {
   // Check if wallet exists for this session
   const existing = await queryItems<Wallet>(
     WALLETS_TABLE,
@@ -20,9 +20,10 @@ export async function getOrCreateWallet(sessionId: string): Promise<Wallet> {
 
   // Create new wallet
   const now = new Date().toISOString()
-  // In dev mode, seed with ₹500 test credits so uploads work without Razorpay
+  // In dev mode, seed with ₹500 test credits so uploads work without Razorpay.
+  // skipDevSeed=true for Google OAuth users — they get the ₹50 signup bonus instead.
   const devSeedBalance =
-    process.env.NODE_ENV !== 'production' && process.env.DEV_SEED_WALLET === 'true'
+    !skipDevSeed && process.env.NODE_ENV !== 'production' && process.env.DEV_SEED_WALLET === 'true'
       ? 50000  // ₹500 in paise
       : 0
 

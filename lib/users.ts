@@ -32,8 +32,8 @@ export async function getOrCreateUser(profile: {
   const existing = await getItem<User>(USERS_TABLE, { userId })
   if (existing) return existing
 
-  // Create wallet using userId as the sessionId — same wallet system
-  const wallet = await getOrCreateWallet(userId)
+  // Create wallet — skip dev seed since the ₹50 signup bonus is credited below
+  const wallet = await getOrCreateWallet(userId, true)
 
   const now = new Date().toISOString()
   const user: User = {
