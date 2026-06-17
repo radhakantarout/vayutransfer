@@ -14,14 +14,16 @@ export default function Navbar() {
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <span className="font-extrabold text-accent text-lg tracking-tight">VayuTransfer</span>
+          <Image src="/logo.png" alt="VayuTransfer" width={32} height={32} className="rounded-md" />
+          <span className="font-extrabold text-lg tracking-tight">
+            <span className="text-white">Vayu</span><span className="text-accent">Transfer</span>
+          </span>
         </Link>
 
         {/* Nav links — desktop */}
         <div className="hidden md:flex items-center gap-6 text-sm text-muted">
+          <Link href="/" className="hover:text-text-primary transition-colors">Transfer Files</Link>
           <Link href="/pricing" className="hover:text-text-primary transition-colors">Pricing</Link>
-          <Link href="/terms" className="hover:text-text-primary transition-colors">Terms</Link>
-          <Link href="/privacy" className="hover:text-text-primary transition-colors">Privacy</Link>
           {session && (
             <Link href="/transfers" className="hover:text-text-primary transition-colors">My Transfers</Link>
           )}
