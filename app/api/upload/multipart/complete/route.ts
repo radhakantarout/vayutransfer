@@ -59,15 +59,11 @@ export async function POST(req: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
     const shareableLink = `${appUrl}/download/${fileId}`
 
-    // Send email with the shareable page link (not a presigned URL — those expire in 15 min)
-    if (transfer.recipientEmail) {
-      sendTransferLinkEmail(
-        transfer.recipientEmail,
-        transfer.fileName,
-        shareableLink,
-        expiryTime,
-        transfer.downloadSlots
-      ).catch((err) => console.error('[ses] email send failed:', err))
+    // Send email to all recipients
+    const recipients = transfer.recipientEmails ?? []
+    for (const email of recipients) {
+      sendTransferLinkEmail(email, transfer.fileName, shareableLink, expiryTime, transfer.downloadSlots)
+        .catch((err) => console.error('[ses] email send failed to', email, err))
     }
 
     void logAudit({
@@ -83,7 +79,7 @@ export async function POST(req: NextRequest) {
         downloadSlots: transfer.downloadSlots,
         expiryTime,
         shareableLink,
-        recipientEmailSent: !!transfer.recipientEmail,
+        recipientEmailsSent: transfer.recipientEmails?.length ?? 0,
       },
     })
 

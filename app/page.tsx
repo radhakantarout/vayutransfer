@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
+import { useWallet } from '@/lib/wallet-context'
 import UploadZone from '@/components/UploadZone'
 import PriceCalculator from '@/components/PriceCalculator'
 import UploadProgress from '@/components/UploadProgress'
-import WalletCard from '@/components/WalletCard'
-import TopupModal from '@/components/TopupModal'
+import EmailTagInput from '@/components/EmailTagInput'
 import { MULTIPART_CHUNK_SIZE_BYTES } from '@/constants/pricing'
 import type { PriceBreakdown } from '@/types'
 
@@ -15,18 +15,16 @@ type UploadState = 'idle' | 'pricing' | 'uploading' | 'done'
 export default function HomePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
-  const [walletId, setWalletId] = useState<string | null>(null)
-  const [balancePaise, setBalancePaise] = useState(0)
-  const [showTopup, setShowTopup] = useState(false)
   const [uploadState, setUploadState] = useState<UploadState>('idle')
   const [uploadPercent, setUploadPercent] = useState(0)
   const [currentChunk, setCurrentChunk] = useState(0)
   const [totalChunks, setTotalChunks] = useState(0)
   const [shareableLink, setShareableLink] = useState<string | null>(null)
-  const [recipientEmail, setRecipientEmail] = useState('')
+  const [recipientEmails, setRecipientEmails] = useState<string[]>([])
   const [agreedToTerms, setAgreedToTerms] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { data: session } = useSession()
+  const { walletId, balancePaise, refreshBalance } = useWallet()
 
   // Abort refs
   const abortRef = useRef<{ fileId: string; uploadId: string; s3Key: string } | null>(null)
@@ -38,11 +36,6 @@ export default function HomePage() {
     setShareableLink(null)
     setError(null)
   }
-
-  const handleWalletLoaded = useCallback((wId: string, balance: number) => {
-    setWalletId(wId)
-    setBalancePaise(balance)
-  }, [])
 
   const handleAbort = async () => {
     abortedRef.current = true
@@ -92,7 +85,7 @@ export default function HomePage() {
           fileName: selectedFile.name,
           fileSizeBytes: selectedFile.size,
           downloadSlots: pricing.downloadSlots,
-          recipientEmail: recipientEmail || undefined,
+          recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
           contentType: selectedFile.type || 'application/octet-stream',
         }),
       })
@@ -158,6 +151,7 @@ export default function HomePage() {
       setShareableLink(completeData.data.shareableLink)
       setUploadState('done')
       abortRef.current = null
+      refreshBalance()
     } catch (err) {
       if (!abortedRef.current) {
         setError(err instanceof Error ? err.message : 'Upload failed')
@@ -172,15 +166,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-bg">
-      {/* Wallet bar */}
-      <div className="border-b border-border bg-card/50">
-        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-end">
-          <WalletCard
-            onTopup={() => setShowTopup(true)}
-            onWalletLoaded={handleWalletLoaded}
-          />
-        </div>
-      </div>
 
       {/* Dev-only banner */}
       {process.env.NODE_ENV !== 'production' && (
@@ -233,19 +218,10 @@ export default function HomePage() {
               onPricingChange={setPricing}
             />
 
-            {/* Optional recipient email */}
-            <div className="space-y-1">
-              <label className="text-sm text-muted">
-                Recipient email <span className="text-xs opacity-60">(optional — we'll send the link)</span>
-              </label>
-              <input
-                type="email"
-                value={recipientEmail}
-                onChange={(e) => setRecipientEmail(e.target.value)}
-                placeholder="recipient@example.com"
-                className="w-full bg-card border border-border rounded-lg px-3 py-2.5 text-text-primary text-sm placeholder:text-muted focus:outline-none focus:border-accent"
-              />
-            </div>
+            <EmailTagInput
+              emails={recipientEmails}
+              onChange={setRecipientEmails}
+            />
 
             {/* Terms consent */}
             <label className="flex items-start gap-3 cursor-pointer select-none">
@@ -304,7 +280,7 @@ export default function HomePage() {
               setSelectedFile(null)
               setPricing(null)
               setShareableLink(null)
-              setRecipientEmail('')
+              setRecipientEmails([])
             }}
             className="w-full text-muted text-sm hover:text-text-primary transition-colors py-2"
           >
@@ -313,17 +289,6 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Topup modal */}
-      {showTopup && walletId && (
-        <TopupModal
-          walletId={walletId}
-          onSuccess={(newBalance) => {
-            setBalancePaise(newBalance)
-            setShowTopup(false)
-          }}
-          onClose={() => setShowTopup(false)}
-        />
-      )}
     </div>
   )
 }

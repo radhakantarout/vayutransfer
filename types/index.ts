@@ -44,7 +44,7 @@ export interface Transfer {
   billableGB: number
   downloadSlots: number
   downloadsUsed: number
-  recipientEmail?: string
+  recipientEmails?: string[]
   amountDeducted: number        // paise
   storageCostPaise: number
   downloadCostPaise: number

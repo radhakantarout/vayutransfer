@@ -19,11 +19,11 @@ export async function POST(req: NextRequest) {
       fileName?: string
       fileSizeBytes?: number
       downloadSlots?: number
-      recipientEmail?: string
+      recipientEmails?: string[]
       contentType?: string
     }
 
-    const { walletId, fileName, fileSizeBytes, downloadSlots, recipientEmail, contentType } = body
+    const { walletId, fileName, fileSizeBytes, downloadSlots, recipientEmails, contentType } = body
 
     if (!walletId || !fileName || !fileSizeBytes || !downloadSlots) {
       return NextResponse.json<ApiResponse<never>>(
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
       billableGB: pricing.billableGB,
       downloadSlots,
       downloadsUsed: 0,
-      recipientEmail,
+      recipientEmails,
       amountDeducted: pricing.totalPaise,
       storageCostPaise: pricing.storageCostPaise,
       downloadCostPaise: pricing.downloadCostPaise,
