@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
         orderId: order.id,
         amountPaise: tier.pricePaise,
         currency: 'INR',
-        keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? '',
+        keyId: process.env.RAZORPAY_KEY_ID ?? '',
         txnId,
       },
     })
