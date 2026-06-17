@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    domains: [process.env.CLOUDFRONT_DOMAIN?.replace('https://', '') ?? ''],
+    domains: [
+      'lh3.googleusercontent.com',
+      process.env.CLOUDFRONT_DOMAIN?.replace('https://', '') ?? '',
+    ].filter(Boolean),
   },
   async headers() {
     return [
