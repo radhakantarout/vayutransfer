@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { useSession } from 'next-auth/react'
 import UploadZone from '@/components/UploadZone'
 import PriceCalculator from '@/components/PriceCalculator'
 import UploadProgress from '@/components/UploadProgress'
@@ -23,7 +24,9 @@ export default function HomePage() {
   const [totalChunks, setTotalChunks] = useState(0)
   const [shareableLink, setShareableLink] = useState<string | null>(null)
   const [recipientEmail, setRecipientEmail] = useState('')
+  const [agreedToTerms, setAgreedToTerms] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { data: session } = useSession()
 
   // Abort refs
   const abortRef = useRef<{ fileId: string; uploadId: string; s3Key: string } | null>(null)
@@ -165,23 +168,19 @@ export default function HomePage() {
     }
   }
 
-  const canUpload = pricing && walletId && balancePaise >= pricing.totalPaise
+  const canUpload = pricing && walletId && balancePaise >= pricing.totalPaise && agreedToTerms
 
   return (
     <div className="min-h-screen bg-bg">
-      {/* Top bar */}
-      <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div>
-            <span className="font-bold text-accent text-xl">VayuTransfer</span>
-            <span className="text-muted text-sm ml-2 hidden sm:inline">Secure file transfer. Prepaid.</span>
-          </div>
+      {/* Wallet bar */}
+      <div className="border-b border-border bg-card/50">
+        <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-end">
           <WalletCard
             onTopup={() => setShowTopup(true)}
             onWalletLoaded={handleWalletLoaded}
           />
         </div>
-      </header>
+      </div>
 
       {/* Dev-only banner */}
       {process.env.NODE_ENV !== 'production' && (
@@ -212,7 +211,11 @@ export default function HomePage() {
             <h1 className="text-3xl font-bold text-text-primary">
               Send large files.<br />Pay only for what you use.
             </h1>
-            <p className="text-muted">No login. No subscription. No surprises.</p>
+            <p className="text-muted">
+              {session
+                ? `Welcome back, ${session.user?.name?.split(' ')[0]}! Your wallet is ready.`
+                : 'Sign in with Google to get ₹50 free — or transfer anonymously.'}
+            </p>
           </div>
         )}
 
@@ -244,6 +247,23 @@ export default function HomePage() {
               />
             </div>
 
+            {/* Terms consent */}
+            <label className="flex items-start gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-[#00C6FF] flex-shrink-0"
+              />
+              <span className="text-xs text-muted leading-relaxed">
+                I agree to VayuTransfer&apos;s{' '}
+                <a href="/terms" target="_blank" className="text-accent hover:underline">Terms of Service</a>
+                {' '}and{' '}
+                <a href="/privacy" target="_blank" className="text-accent hover:underline">Privacy Policy</a>.
+                I confirm I have the right to transfer this file.
+              </span>
+            </label>
+
             {error && (
               <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
                 {error}
@@ -255,7 +275,9 @@ export default function HomePage() {
               disabled={!canUpload}
               className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {!canUpload && balancePaise < (pricing?.totalPaise ?? 0)
+              {!agreedToTerms
+                ? 'Agree to terms to upload'
+                : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
                 ? 'Add credits to upload'
                 : 'Upload & Generate Link'}
             </button>
