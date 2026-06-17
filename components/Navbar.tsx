@@ -11,10 +11,10 @@ export default function Navbar() {
 
   return (
     <nav className="border-b border-border bg-card/90 backdrop-blur-sm sticky top-0 z-50">
-      <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+      <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <Image src="/logo.png" alt="VayuTransfer" width={32} height={32} className="rounded-md" />
+          <Image src="/logo.png" alt="VayuTransfer" width={40} height={40} className="rounded-md" />
           <span className="font-extrabold text-lg tracking-tight">
             <span className="text-white">Vayu</span><span className="text-accent">Transfer</span>
           </span>
