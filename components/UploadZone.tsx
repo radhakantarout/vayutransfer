@@ -124,8 +124,9 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   }
 
   const totalBytes = entries.reduce((s, e) => s + e.file.size, 0)
-  const isOverBlock = totalBytes > BLOCK_BYTES
-  const isOverWarn  = !isOverBlock && totalBytes > WARN_BYTES
+  const isBundle    = entries.length > 1
+  const isOverBlock = isBundle && totalBytes > BLOCK_BYTES
+  const isOverWarn  = isBundle && !isOverBlock && totalBytes > WARN_BYTES
 
   // ── Files selected view ──────────────────────────────────────────────────
   if (entries.length > 0) {

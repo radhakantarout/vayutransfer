@@ -198,7 +198,7 @@ export default function HomePage() {
     walletId &&
     balancePaise >= pricing.totalPaise &&
     agreedToTerms &&
-    totalSizeBytes <= MAX_ZIP_BYTES
+    (!isBundle || totalSizeBytes <= MAX_ZIP_BYTES)
 
   return (
     <div className="min-h-screen bg-bg w-full overflow-x-hidden">
