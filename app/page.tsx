@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import JSZip from 'jszip'
 import { useSession } from 'next-auth/react'
 import { useWallet } from '@/lib/wallet-context'
 import UploadZone from '@/components/UploadZone'
@@ -8,12 +9,16 @@ import PriceCalculator from '@/components/PriceCalculator'
 import UploadProgress from '@/components/UploadProgress'
 import EmailTagInput from '@/components/EmailTagInput'
 import { MULTIPART_CHUNK_SIZE_BYTES } from '@/constants/pricing'
-import type { PriceBreakdown } from '@/types'
+import type { PriceBreakdown, FileEntry } from '@/types'
 
-type UploadState = 'idle' | 'pricing' | 'uploading' | 'done'
+type UploadState = 'idle' | 'pricing' | 'preparing' | 'uploading' | 'done'
+
+const MAX_ZIP_BYTES = 5 * 1024 * 1024 * 1024  // 5 GB
 
 export default function HomePage() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [entries, setEntries] = useState<FileEntry[]>([])
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [zipProgress, setZipProgress] = useState(0)
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
   const [uploadState, setUploadState] = useState<UploadState>('idle')
   const [uploadPercent, setUploadPercent] = useState(0)
@@ -26,15 +31,23 @@ export default function HomePage() {
   const { data: session } = useSession()
   const { walletId, balancePaise, refreshBalance } = useWallet()
 
-  // Abort refs
   const abortRef = useRef<{ fileId: string; uploadId: string; s3Key: string } | null>(null)
   const abortedRef = useRef(false)
 
-  const handleFileSelect = (file: File) => {
-    setSelectedFile(file)
-    setUploadState('pricing')
-    setShareableLink(null)
+  const totalSizeBytes = entries.reduce((s, e) => s + e.file.size, 0)
+  const isBundle = entries.length > 1
+
+  const handleFilesSelect = (newEntries: FileEntry[]) => {
+    setEntries(newEntries)
+    setUploadFile(null)
     setError(null)
+    setShareableLink(null)
+    if (newEntries.length === 0) {
+      setUploadState('idle')
+      setPricing(null)
+    } else {
+      setUploadState('pricing')
+    }
   }
 
   const handleAbort = async () => {
@@ -49,13 +62,13 @@ export default function HomePage() {
       })
     } catch {}
     setUploadState('idle')
-    setSelectedFile(null)
+    setEntries([])
+    setUploadFile(null)
     setPricing(null)
     abortRef.current = null
     abortedRef.current = false
   }
 
-  // Abort on page unload
   useEffect(() => {
     const onUnload = () => {
       const ctx = abortRef.current
@@ -70,10 +83,37 @@ export default function HomePage() {
   }, [walletId])
 
   const handleUpload = async () => {
-    if (!selectedFile || !pricing || !walletId) return
+    if (!entries.length || !pricing || !walletId) return
     setError(null)
-    setUploadState('uploading')
     abortedRef.current = false
+
+    let fileToUpload: File
+
+    if (entries.length === 1) {
+      fileToUpload = entries[0].file
+    } else {
+      // Zip phase
+      setUploadState('preparing')
+      setZipProgress(0)
+      try {
+        const zip = new JSZip()
+        for (const { file, path } of entries) {
+          zip.file(path, file)
+        }
+        const zipBlob = await zip.generateAsync(
+          { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
+          (meta) => setZipProgress(Math.round(meta.percent))
+        )
+        fileToUpload = new File([zipBlob], 'package.zip', { type: 'application/zip' })
+      } catch {
+        setError('Failed to create zip package. Please try again.')
+        setUploadState('pricing')
+        return
+      }
+    }
+
+    setUploadFile(fileToUpload)
+    setUploadState('uploading')
 
     try {
       // 1. Initiate
@@ -82,11 +122,11 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           walletId,
-          fileName: selectedFile.name,
-          fileSizeBytes: selectedFile.size,
+          fileName: fileToUpload.name,
+          fileSizeBytes: fileToUpload.size,
           downloadSlots: pricing.downloadSlots,
           recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
-          contentType: selectedFile.type || 'application/octet-stream',
+          contentType: fileToUpload.type || 'application/octet-stream',
         }),
       })
       const initData = await initRes.json()
@@ -102,18 +142,15 @@ export default function HomePage() {
 
       // 2. Upload chunks
       const parts: { PartNumber: number; ETag: string }[] = []
-
       for (let i = 0; i < chunks; i++) {
         if (abortedRef.current) return
-
         setCurrentChunk(i + 1)
         setUploadPercent(Math.round((i / chunks) * 95))
 
         const start = i * MULTIPART_CHUNK_SIZE_BYTES
-        const end = Math.min(start + MULTIPART_CHUNK_SIZE_BYTES, selectedFile.size)
-        const chunk = selectedFile.slice(start, end)
+        const end = Math.min(start + MULTIPART_CHUNK_SIZE_BYTES, fileToUpload.size)
+        const chunk = fileToUpload.slice(start, end)
 
-        // Get presigned URL for this part
         const partRes = await fetch('/api/upload/multipart/part-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -122,11 +159,7 @@ export default function HomePage() {
         const partData = await partRes.json()
         if (!partData.success) throw new Error('Failed to get upload URL')
 
-        // PUT chunk directly to S3
-        const putRes = await fetch(partData.data.presignedUrl, {
-          method: 'PUT',
-          body: chunk,
-        })
+        const putRes = await fetch(partData.data.presignedUrl, { method: 'PUT', body: chunk })
         if (!putRes.ok) throw new Error(`Part ${i + 1} upload failed`)
 
         const etag = putRes.headers.get('ETag')
@@ -135,7 +168,6 @@ export default function HomePage() {
       }
 
       if (abortedRef.current) return
-
       setUploadPercent(98)
 
       // 3. Complete
@@ -156,13 +188,17 @@ export default function HomePage() {
       if (!abortedRef.current) {
         setError(err instanceof Error ? err.message : 'Upload failed')
         setUploadState('pricing')
-        // Attempt abort/refund
         await handleAbort()
       }
     }
   }
 
-  const canUpload = pricing && walletId && balancePaise >= pricing.totalPaise && agreedToTerms
+  const canUpload =
+    pricing &&
+    walletId &&
+    balancePaise >= pricing.totalPaise &&
+    agreedToTerms &&
+    totalSizeBytes <= MAX_ZIP_BYTES
 
   return (
     <div className="min-h-screen bg-bg w-full overflow-x-hidden">
@@ -207,23 +243,30 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Idle: single column */}
+        {/* Idle: drop zone */}
         {uploadState === 'idle' && (
-          <UploadZone onFileSelect={handleFileSelect} />
+          <UploadZone onFilesSelect={handleFilesSelect} />
         )}
 
-        {/* Pricing: two-column layout on desktop */}
-        {uploadState === 'pricing' && selectedFile && (
+        {/* Pricing: two-column layout */}
+        {uploadState === 'pricing' && entries.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
 
-            {/* Left — upload zone + email + terms + button */}
+            {/* Left — file list + form */}
             <div className="space-y-4">
-              <UploadZone onFileSelect={handleFileSelect} file={selectedFile} />
+              <UploadZone onFilesSelect={handleFilesSelect} entries={entries} />
 
-              <EmailTagInput
-                emails={recipientEmails}
-                onChange={setRecipientEmails}
-              />
+              {isBundle && (
+                <div className="flex items-center gap-2 text-xs text-muted bg-card border border-border rounded-lg px-3 py-2">
+                  <span>🗜️</span>
+                  <span>
+                    {entries.length} files will be bundled into{' '}
+                    <strong className="text-text-primary">package.zip</strong> before uploading
+                  </span>
+                </div>
+              )}
+
+              <EmailTagInput emails={recipientEmails} onChange={setRecipientEmails} />
 
               <label className="flex items-start gap-3 cursor-pointer select-none">
                 <input
@@ -256,14 +299,16 @@ export default function HomePage() {
                   ? 'Agree to terms to upload'
                   : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
                   ? 'Add credits to upload'
+                  : isBundle
+                  ? `Bundle & Upload ${entries.length} files`
                   : 'Upload & Generate Link'}
               </button>
             </div>
 
-            {/* Right — price calculator, sticky on desktop */}
+            {/* Right — price calculator */}
             <div className="md:sticky md:top-24">
               <PriceCalculator
-                fileSizeBytes={selectedFile.size}
+                fileSizeBytes={totalSizeBytes}
                 walletBalancePaise={balancePaise}
                 onPricingChange={setPricing}
               />
@@ -272,14 +317,36 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* Preparing — zip in progress */}
+        {uploadState === 'preparing' && (
+          <div className="bg-card border border-border rounded-xl p-10 flex flex-col items-center gap-5">
+            <div className="text-5xl animate-pulse">🗜️</div>
+            <div className="text-center">
+              <div className="font-semibold text-text-primary text-lg">Preparing package…</div>
+              <div className="text-muted text-sm mt-1">
+                Compressing {entries.length} files into package.zip
+              </div>
+            </div>
+            <div className="w-full max-w-xs space-y-1">
+              <div className="w-full bg-bg rounded-full h-2 overflow-hidden">
+                <div
+                  className="h-full bg-accent rounded-full transition-all duration-200"
+                  style={{ width: `${zipProgress}%` }}
+                />
+              </div>
+              <div className="text-center text-accent font-bold text-sm">{zipProgress}%</div>
+            </div>
+          </div>
+        )}
+
         {/* Upload progress */}
-        {(uploadState === 'uploading' || uploadState === 'done') && selectedFile && (
+        {(uploadState === 'uploading' || uploadState === 'done') && uploadFile && (
           <UploadProgress
             percent={uploadPercent}
             currentChunk={currentChunk}
             totalChunks={totalChunks}
-            fileSizeBytes={selectedFile.size}
-            fileName={selectedFile.name}
+            fileSizeBytes={uploadFile.size}
+            fileName={uploadFile.name}
             shareableLink={shareableLink ?? undefined}
             onAbort={handleAbort}
           />
@@ -290,18 +357,20 @@ export default function HomePage() {
           <button
             onClick={() => {
               setUploadState('idle')
-              setSelectedFile(null)
+              setEntries([])
+              setUploadFile(null)
               setPricing(null)
               setShareableLink(null)
               setRecipientEmails([])
+              setAgreedToTerms(false)
             }}
             className="w-full text-muted text-sm hover:text-text-primary transition-colors py-2"
           >
             Upload another file →
           </button>
         )}
-      </main>
 
+      </main>
     </div>
   )
 }

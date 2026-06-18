@@ -98,6 +98,13 @@ export interface AuditEvent {
   createdAt: string             // ISO string
 }
 
+// ─── File Entry (multi-file / folder upload) ──────────────────────────────
+
+export interface FileEntry {
+  file: File
+  path: string   // relative path used as zip entry name (e.g. "photos/img1.jpg")
+}
+
 // ─── Business Logic Types ──────────────────────────────────────────────────
 
 export interface PriceBreakdown {
