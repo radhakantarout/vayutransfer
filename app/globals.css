@@ -2,21 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Dark mode (default) — stored as R G B so Tailwind opacity modifiers work */
+/* Light mode (default) — stored as R G B so Tailwind opacity modifiers work */
 :root {
-  --bg:      11  15  26;
-  --card:    19  25  41;
-  --nav:     19  25  41;
-  --border:  30  45  69;
-  --accent:   0 198 255;
-  --success:  0 229 160;
-  --danger:  255  83 112;
-  --text:    224 234 248;
-  --muted:    90 112 144;
-}
-
-/* Light mode — navbar stays dark so white logo stays visible */
-html.light {
   --bg:      237 242 248;
   --card:    255 255 255;
   --nav:      15  32  64;
@@ -25,6 +12,19 @@ html.light {
   --success:   0 168 112;
   --danger:  224  48  80;
   --text:     26  37  53;
+  --muted:    90 112 144;
+}
+
+/* Dark mode — navbar keeps same dark tone */
+html.dark {
+  --bg:      11  15  26;
+  --card:    19  25  41;
+  --nav:     19  25  41;
+  --border:  30  45  69;
+  --accent:   0 198 255;
+  --success:  0 229 160;
+  --danger:  255  83 112;
+  --text:    224 234 248;
   --muted:    90 112 144;
 }
 

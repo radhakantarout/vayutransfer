@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <head>
         {/* Runs before paint to prevent flash of wrong theme */}
-        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t==='light')document.documentElement.classList.add('light')}catch(e){}` }} />
+        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t==='dark')document.documentElement.classList.add('dark')}catch(e){}` }} />
       </head>
       <body className="min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full">
         <Providers>

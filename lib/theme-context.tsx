@@ -14,16 +14,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const stored = localStorage.getItem('vayu-theme') as Theme | null
-    const initial = stored ?? 'dark'
+    const initial = stored ?? 'light'
     setTheme(initial)
-    document.documentElement.classList.toggle('light', initial === 'light')
+    document.documentElement.classList.toggle('dark', initial === 'dark')
   }, [])
 
   const toggle = () => {
     setTheme((prev) => {
       const next = prev === 'dark' ? 'light' : 'dark'
       localStorage.setItem('vayu-theme', next)
-      document.documentElement.classList.toggle('light', next === 'light')
+      document.documentElement.classList.toggle('dark', next === 'dark')
       return next
     })
   }

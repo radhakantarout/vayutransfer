@@ -38,7 +38,7 @@ export default function Footer() {
         </div>
         <div className="border-t border-border pt-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted">
           <span>&copy; {year} VayuTransfer. All rights reserved.</span>
-          <span>Made in India 🇮🇳 · Hosted on AWS ap-south-1</span>
+          <span>Made in India 🇮🇳 · Hosted on AWS Mumbai Region</span>
         </div>
       </div>
     </footer>
