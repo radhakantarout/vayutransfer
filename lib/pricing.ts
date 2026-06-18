@@ -17,9 +17,9 @@ function bytesToGB(bytes: number): number {
 
 function getSlabLabel(fileSizeBytes: number, billableGB: number): string {
   if (fileSizeBytes <= SMALL_FILE_THRESHOLD_BYTES) return 'Free (≤500MB)'
-  if (billableGB <= 2)  return '₹29/GB'
-  if (billableGB <= 5)  return '₹25/GB'
-  return '₹22/GB'
+  if (billableGB <= 2)  return '₹5/GB'
+  if (billableGB <= 5)  return '₹4/GB'
+  return '₹3/GB'
 }
 
 export function getDownloadSlotCostPaise(fileSizeBytes: number): number {

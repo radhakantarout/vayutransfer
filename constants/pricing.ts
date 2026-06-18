@@ -5,10 +5,10 @@ export const MINIMUM_CHARGE_PAISE = 0
 export const SMALL_FILE_THRESHOLD_BYTES = 500 * 1024 * 1024  // 500MB
 
 export const PRICE_SLABS = [
-  { maxGB: 0.5,  pricePerGBPaise: 0,    flatPaise: 0 },      // 0–500MB: Free
-  { maxGB: 2,    pricePerGBPaise: 2900,  flatPaise: 0 },      // 500MB–2GB: ₹29/GB
-  { maxGB: 5,    pricePerGBPaise: 2500,  flatPaise: 0 },      // 2GB–5GB: ₹25/GB
-  { maxGB: 10,   pricePerGBPaise: 2200,  flatPaise: 0 },      // 5GB–10GB: ₹22/GB
+  { maxGB: 0.5,  pricePerGBPaise: 0,   flatPaise: 0 },       // 0–500MB: Free
+  { maxGB: 2,    pricePerGBPaise: 500,  flatPaise: 0 },       // 500MB–2GB: ₹5/GB
+  { maxGB: 5,    pricePerGBPaise: 400,  flatPaise: 0 },       // 2GB–5GB: ₹4/GB
+  { maxGB: 10,   pricePerGBPaise: 300,  flatPaise: 0 },       // 5GB–10GB: ₹3/GB
 ] as const
 
 // Download slot cost varies by file size
