@@ -165,7 +165,7 @@ export default function HomePage() {
   const canUpload = pricing && walletId && balancePaise >= pricing.totalPaise && agreedToTerms
 
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="min-h-screen bg-bg w-full overflow-x-hidden">
 
       {/* Dev-only banner */}
       {process.env.NODE_ENV !== 'production' && (
@@ -189,7 +189,7 @@ export default function HomePage() {
         </div>
       )}
 
-      <main className="max-w-xl mx-auto px-4 py-10 space-y-6">
+      <main className="max-w-xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6 w-full">
         {/* Hero */}
         {uploadState === 'idle' && (
           <div className="text-center space-y-2 mb-8">
@@ -266,6 +266,7 @@ export default function HomePage() {
             percent={uploadPercent}
             currentChunk={currentChunk}
             totalChunks={totalChunks}
+            fileSizeBytes={selectedFile.size}
             fileName={selectedFile.name}
             shareableLink={shareableLink ?? undefined}
             onAbort={handleAbort}

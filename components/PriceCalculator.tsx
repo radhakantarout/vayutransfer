@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { calculatePrice, formatPaise } from '@/lib/pricing'
+import { calculatePrice, formatPaise, getDownloadSlotCostPaise } from '@/lib/pricing'
 import type { PriceBreakdown } from '@/types'
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onPricingChange }: Props) {
-  const [downloadSlots, setDownloadSlots] = useState(5)
+  const [downloadSlots, setDownloadSlots] = useState(1)
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
 
   useEffect(() => {
@@ -71,12 +71,14 @@ export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onP
           <span className="text-muted">
             Storage <span className="text-xs opacity-60">({pricing.slabApplied})</span>
           </span>
-          <span className="text-text-primary">{formatPaise(pricing.storageCostPaise)}</span>
+          <span className={pricing.storageCostPaise === 0 ? 'text-success font-semibold' : 'text-text-primary'}>
+            {pricing.storageCostPaise === 0 ? 'Free' : formatPaise(pricing.storageCostPaise)}
+          </span>
         </div>
 
         <div className="flex justify-between">
           <span className="text-muted">
-            Downloads ({downloadSlots} × ₹5)
+            Downloads ({downloadSlots} × {formatPaise(getDownloadSlotCostPaise(fileSizeBytes))})
           </span>
           <span className="text-text-primary">{formatPaise(pricing.downloadCostPaise)}</span>
         </div>

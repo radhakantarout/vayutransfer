@@ -15,7 +15,7 @@ export default function PricingPage() {
         </div>
         <div className="divide-y divide-border">
           {[
-            { range: 'Under 500 MB', rate: '₹19 flat', note: 'Minimum charge' },
+            { range: 'Under 500 MB', rate: 'Free', note: '' },
             { range: '500 MB – 2 GB', rate: '₹29 / GB', note: '' },
             { range: '2 GB – 5 GB', rate: '₹25 / GB', note: 'Volume discount' },
             { range: '5 GB – 10 GB', rate: '₹22 / GB', note: 'Best rate' },
@@ -34,14 +34,21 @@ export default function PricingPage() {
       {/* Download slots */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden mb-10">
         <div className="px-6 py-4 border-b border-border bg-bg/50">
-          <h2 className="font-bold text-text-primary">Download Slots</h2>
+          <h2 className="font-bold text-text-primary">Download Slots — Priced by File Size</h2>
+          <p className="text-xs text-muted mt-1">One slot = one unique download allowed</p>
         </div>
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div>
-            <div className="text-text-primary text-sm">Each download slot</div>
-            <div className="text-xs text-muted mt-1">One slot = one unique download allowed</div>
-          </div>
-          <span className="font-bold text-accent">₹5 / slot</span>
+        <div className="divide-y divide-border">
+          {[
+            { range: '< 500 MB',      slot: '₹7' },
+            { range: '500 MB – 2 GB', slot: '₹14' },
+            { range: '2 GB – 5 GB',   slot: '₹47' },
+            { range: '5 GB – 10 GB',  slot: '₹101' },
+          ].map((row) => (
+            <div key={row.range} className="flex items-center justify-between px-6 py-4 text-sm">
+              <span className="text-text-primary">{row.range}</span>
+              <span className="font-bold text-accent">{row.slot} / slot</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -50,8 +57,8 @@ export default function PricingPage() {
         <h3 className="font-bold text-text-primary mb-4">Example: 1 GB file, 3 downloads</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between"><span className="text-muted">Storage (1 GB at ₹29/GB)</span><span className="text-text-primary">₹29.00</span></div>
-          <div className="flex justify-between"><span className="text-muted">3 download slots (3 × ₹5)</span><span className="text-text-primary">₹15.00</span></div>
-          <div className="border-t border-border pt-2 flex justify-between font-bold"><span className="text-text-primary">Total</span><span className="text-accent">₹44.00</span></div>
+          <div className="flex justify-between"><span className="text-muted">3 download slots (3 × ₹14 — 500MB–2GB tier)</span><span className="text-text-primary">₹42.00</span></div>
+          <div className="border-t border-border pt-2 flex justify-between font-bold"><span className="text-text-primary">Total</span><span className="text-accent">₹71.00</span></div>
         </div>
       </div>
 

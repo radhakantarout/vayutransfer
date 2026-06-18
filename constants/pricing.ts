@@ -1,17 +1,23 @@
 import type { WalletTopupTier } from '@/types'
 
-export const MINIMUM_CHARGE_PAISE = 1900
+export const MINIMUM_CHARGE_PAISE = 0
 
 export const SMALL_FILE_THRESHOLD_BYTES = 500 * 1024 * 1024  // 500MB
 
 export const PRICE_SLABS = [
-  { maxGB: 0.5,  pricePerGBPaise: 0,    flatPaise: 1900 },  // 0–500MB: ₹19 flat
-  { maxGB: 2,    pricePerGBPaise: 2900,  flatPaise: 0 },     // 500MB–2GB: ₹29/GB
-  { maxGB: 5,    pricePerGBPaise: 2500,  flatPaise: 0 },     // 2GB–5GB: ₹25/GB
-  { maxGB: 10,   pricePerGBPaise: 2200,  flatPaise: 0 },     // 5GB–10GB: ₹22/GB
+  { maxGB: 0.5,  pricePerGBPaise: 0,    flatPaise: 0 },      // 0–500MB: Free
+  { maxGB: 2,    pricePerGBPaise: 2900,  flatPaise: 0 },      // 500MB–2GB: ₹29/GB
+  { maxGB: 5,    pricePerGBPaise: 2500,  flatPaise: 0 },      // 2GB–5GB: ₹25/GB
+  { maxGB: 10,   pricePerGBPaise: 2200,  flatPaise: 0 },      // 5GB–10GB: ₹22/GB
 ] as const
 
-export const COST_PER_DOWNLOAD_PAISE = 500   // ₹5 per slot
+// Download slot cost varies by file size
+export const DOWNLOAD_SLOT_TIERS = [
+  { maxBytes: 500 * 1024 * 1024,        costPaise: 700  },   // <500MB:      ₹7/slot
+  { maxBytes: 2 * 1024 * 1024 * 1024,   costPaise: 1400 },   // 500MB–2GB:   ₹14/slot
+  { maxBytes: 5 * 1024 * 1024 * 1024,   costPaise: 4700 },   // 2GB–5GB:     ₹47/slot
+  { maxBytes: 10 * 1024 * 1024 * 1024,  costPaise: 10100 },  // 5GB–10GB:    ₹101/slot
+] as const
 
 export const DEFAULT_EXPIRY_HOURS = 24
 
