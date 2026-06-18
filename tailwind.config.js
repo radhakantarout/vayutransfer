@@ -7,14 +7,15 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        bg: '#0B0F1A',
-        card: '#131929',
-        border: '#1E2D45',
-        accent: '#00C6FF',
-        success: '#00E5A0',
-        danger: '#FF5370',
-        'text-primary': '#E0EAF8',
-        muted: '#5A7090',
+        bg:           'rgb(var(--bg)           / <alpha-value>)',
+        card:         'rgb(var(--card)         / <alpha-value>)',
+        nav:          'rgb(var(--nav)          / <alpha-value>)',
+        border:       'rgb(var(--border)       / <alpha-value>)',
+        accent:       'rgb(var(--accent)       / <alpha-value>)',
+        success:      'rgb(var(--success)      / <alpha-value>)',
+        danger:       'rgb(var(--danger)       / <alpha-value>)',
+        'text-primary':'rgb(var(--text)        / <alpha-value>)',
+        muted:        'rgb(var(--muted)        / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],

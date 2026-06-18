@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 interface Props {
   onFileSelect: (file: File) => void
+  file?: File | null
   disabled?: boolean
 }
 
@@ -14,10 +15,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-export default function UploadZone({ onFileSelect, disabled }: Props) {
+export default function UploadZone({ onFileSelect, file: fileProp, disabled }: Props) {
   const [dragOver, setDragOver] = useState(false)
-  const [selected, setSelected] = useState<File | null>(null)
+  const [selected, setSelected] = useState<File | null>(fileProp ?? null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (fileProp) setSelected(fileProp)
+  }, [fileProp])
 
   const handleFile = useCallback((file: File) => {
     setSelected(file)

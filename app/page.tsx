@@ -189,8 +189,11 @@ export default function HomePage() {
         </div>
       )}
 
-      <main className="max-w-xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6 w-full">
-        {/* Hero */}
+      <main className={`mx-auto px-4 sm:px-6 py-8 sm:py-10 w-full transition-all duration-300 ${
+        uploadState === 'pricing' ? 'max-w-4xl' : 'max-w-xl'
+      }`}>
+
+        {/* Hero — idle only */}
         {uploadState === 'idle' && (
           <div className="text-center space-y-2 mb-8">
             <h1 className="text-3xl font-bold text-text-primary">
@@ -204,60 +207,69 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Upload zone */}
-        {(uploadState === 'idle' || uploadState === 'pricing') && (
+        {/* Idle: single column */}
+        {uploadState === 'idle' && (
           <UploadZone onFileSelect={handleFileSelect} />
         )}
 
-        {/* Price calculator */}
+        {/* Pricing: two-column layout on desktop */}
         {uploadState === 'pricing' && selectedFile && (
-          <>
-            <PriceCalculator
-              fileSizeBytes={selectedFile.size}
-              walletBalancePaise={balancePaise}
-              onPricingChange={setPricing}
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
 
-            <EmailTagInput
-              emails={recipientEmails}
-              onChange={setRecipientEmails}
-            />
+            {/* Left — upload zone + email + terms + button */}
+            <div className="space-y-4">
+              <UploadZone onFileSelect={handleFileSelect} file={selectedFile} />
 
-            {/* Terms consent */}
-            <label className="flex items-start gap-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={agreedToTerms}
-                onChange={(e) => setAgreedToTerms(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-[#00C6FF] flex-shrink-0"
+              <EmailTagInput
+                emails={recipientEmails}
+                onChange={setRecipientEmails}
               />
-              <span className="text-xs text-muted leading-relaxed">
-                I agree to VayuTransfer&apos;s{' '}
-                <a href="/terms" target="_blank" className="text-accent hover:underline">Terms of Service</a>
-                {' '}and{' '}
-                <a href="/privacy" target="_blank" className="text-accent hover:underline">Privacy Policy</a>.
-                I confirm I have the right to transfer this file.
-              </span>
-            </label>
 
-            {error && (
-              <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
-                {error}
-              </div>
-            )}
+              <label className="flex items-start gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-[#00C6FF] flex-shrink-0"
+                />
+                <span className="text-xs text-muted leading-relaxed">
+                  I agree to VayuTransfer&apos;s{' '}
+                  <a href="/terms" target="_blank" className="text-accent hover:underline">Terms of Service</a>
+                  {' '}and{' '}
+                  <a href="/privacy" target="_blank" className="text-accent hover:underline">Privacy Policy</a>.
+                  I confirm I have the right to transfer this file.
+                </span>
+              </label>
 
-            <button
-              onClick={handleUpload}
-              disabled={!canUpload}
-              className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {!agreedToTerms
-                ? 'Agree to terms to upload'
-                : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
-                ? 'Add credits to upload'
-                : 'Upload & Generate Link'}
-            </button>
-          </>
+              {error && (
+                <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
+                  {error}
+                </div>
+              )}
+
+              <button
+                onClick={handleUpload}
+                disabled={!canUpload}
+                className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {!agreedToTerms
+                  ? 'Agree to terms to upload'
+                  : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
+                  ? 'Add credits to upload'
+                  : 'Upload & Generate Link'}
+              </button>
+            </div>
+
+            {/* Right — price calculator, sticky on desktop */}
+            <div className="md:sticky md:top-24">
+              <PriceCalculator
+                fileSizeBytes={selectedFile.size}
+                walletBalancePaise={balancePaise}
+                onPricingChange={setPricing}
+              />
+            </div>
+
+          </div>
         )}
 
         {/* Upload progress */}

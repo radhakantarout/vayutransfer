@@ -104,12 +104,6 @@ export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onP
         </div>
       )}
 
-      {/* Dev margin info */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="text-xs text-muted/50 text-right">
-          Margin: {pricing.marginPercent}%
-        </div>
-      )}
     </div>
   )
 }

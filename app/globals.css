@@ -2,21 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Dark mode (default) — stored as R G B so Tailwind opacity modifiers work */
 :root {
-  --bg: #0B0F1A;
-  --card: #131929;
-  --border: #1E2D45;
-  --accent: #00C6FF;
-  --success: #00E5A0;
-  --danger: #FF5370;
-  --text: #E0EAF8;
-  --muted: #5A7090;
+  --bg:      11  15  26;
+  --card:    19  25  41;
+  --nav:     19  25  41;
+  --border:  30  45  69;
+  --accent:   0 198 255;
+  --success:  0 229 160;
+  --danger:  255  83 112;
+  --text:    224 234 248;
+  --muted:    90 112 144;
+}
+
+/* Light mode — navbar stays dark so white logo stays visible */
+html.light {
+  --bg:      237 242 248;
+  --card:    255 255 255;
+  --nav:      15  32  64;
+  --border:  200 216 236;
+  --accent:    0 153 204;
+  --success:   0 168 112;
+  --danger:  224  48  80;
+  --text:     26  37  53;
+  --muted:    90 112 144;
 }
 
 body {
-  background-color: var(--bg);
-  color: var(--text);
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
   font-family: Inter, system-ui, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 * {

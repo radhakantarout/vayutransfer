@@ -25,7 +25,7 @@ export default function Footer() {
             <h4 className="text-text-primary text-sm font-semibold mb-3">Company</h4>
             <ul className="space-y-2 text-sm text-muted">
               <li><Link href="/about" className="hover:text-text-primary transition-colors">About</Link></li>
-              <li><a href="mailto:support@vayutransfer.com" className="hover:text-text-primary transition-colors">Support</a></li>
+              <li><Link href="/support" className="hover:text-text-primary transition-colors">Support</Link></li>
             </ul>
           </div>
           <div>
