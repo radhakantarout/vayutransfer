@@ -89,12 +89,13 @@ export async function POST(
       await updateItem(
         TRANSFERS_TABLE,
         { fileId },
-        'ADD downloadSlots :slots SET #s = :active, updatedAt = :now',
+        'ADD downloadSlots :slots SET #s = :active, updatedAt = :now, amountDeducted = amountDeducted + :cost',
         {
           ':slots': slots,
           ':active': 'active',
           ':now': new Date().toISOString(),
           ':exhausted': 'exhausted',
+          ':cost': totalCostPaise,
         },
         '#s = :active OR #s = :exhausted',
         { '#s': 'status' }

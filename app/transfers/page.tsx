@@ -4,6 +4,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useWallet } from '@/lib/wallet-context'
 import { getDownloadSlotCostPaise, formatPaise } from '@/lib/pricing'
 import { FREE_DOWNLOAD_THRESHOLD_BYTES, FREE_DOWNLOAD_EXTRA_SLOT_PAISE } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
@@ -31,6 +32,7 @@ function perSlotCost(fileSizeBytes: number): number {
 export default function TransfersPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const { refreshBalance } = useWallet()
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -93,9 +95,10 @@ export default function TransfersPage() {
         setBuyError(data.message ?? 'Failed to add slots')
         return
       }
-      // Refresh transfers list
+      // Refresh transfers list and wallet balance
       const refreshed = await fetch('/api/transfers').then((r) => r.json())
       if (refreshed.success) setTransfers(refreshed.data)
+      refreshBalance()
       closeBuySlots()
     } catch {
       setBuyError('Network error — please try again')
