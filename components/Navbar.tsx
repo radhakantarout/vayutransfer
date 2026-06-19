@@ -24,11 +24,11 @@ export default function Navbar() {
           </Link>
 
           {/* Nav links — desktop */}
-          <div className="hidden md:flex items-center gap-6 text-sm text-muted">
-            <Link href="/" className="hover:text-text-primary transition-colors">Transfer Files</Link>
-            <Link href="/pricing" className="hover:text-text-primary transition-colors">Pricing</Link>
+          <div className="hidden md:flex items-center gap-6 text-sm text-white/70">
+            <Link href="/" className="hover:text-white transition-colors">Transfer Files</Link>
+            <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
             {session && (
-              <Link href="/transfers" className="hover:text-text-primary transition-colors">My Transfers</Link>
+              <Link href="/transfers" className="hover:text-white transition-colors">My Transfers</Link>
             )}
           </div>
 
