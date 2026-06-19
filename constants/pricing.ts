@@ -11,9 +11,12 @@ export const PRICE_SLABS = [
   { maxGB: 10,   pricePerGBPaise: 300,  flatPaise: 0 },       // 5GB–10GB: ₹3/GB
 ] as const
 
+export const FREE_DOWNLOAD_THRESHOLD_BYTES = 200 * 1024 * 1024  // first slot free below this
+export const FREE_DOWNLOAD_EXTRA_SLOT_PAISE = 700               // extra slots above 1 cost this
+
 // Download slot cost varies by file size
 export const DOWNLOAD_SLOT_TIERS = [
-  { maxBytes: 200 * 1024 * 1024,        costPaise: 0    },   // <200MB:      Free
+  { maxBytes: 200 * 1024 * 1024,        costPaise: 0    },   // <200MB:      Free (1st slot only)
   { maxBytes: 500 * 1024 * 1024,        costPaise: 700  },   // 200MB–500MB: ₹7/slot
   { maxBytes: 2 * 1024 * 1024 * 1024,   costPaise: 1400 },   // 500MB–2GB:   ₹14/slot
   { maxBytes: 5 * 1024 * 1024 * 1024,   costPaise: 4700 },   // 2GB–5GB:     ₹47/slot

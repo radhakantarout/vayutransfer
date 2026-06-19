@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { calculatePrice, formatPaise, getDownloadSlotCostPaise } from '@/lib/pricing'
+import { FREE_DOWNLOAD_THRESHOLD_BYTES, FREE_DOWNLOAD_EXTRA_SLOT_PAISE } from '@/constants/pricing'
 import type { PriceBreakdown } from '@/types'
 
 interface Props {
@@ -78,8 +79,10 @@ export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onP
 
         <div className="flex justify-between">
           <span className="text-muted">
-            {getDownloadSlotCostPaise(fileSizeBytes) === 0
-              ? `Downloads (${downloadSlots} slot${downloadSlots > 1 ? 's' : ''})`
+            {fileSizeBytes <= FREE_DOWNLOAD_THRESHOLD_BYTES
+              ? downloadSlots === 1
+                ? 'Downloads (1 slot)'
+                : `Downloads (1 free + ${downloadSlots - 1} × ${formatPaise(FREE_DOWNLOAD_EXTRA_SLOT_PAISE)})`
               : `Downloads (${downloadSlots} × ${formatPaise(getDownloadSlotCostPaise(fileSizeBytes))})`}
           </span>
           <span className={pricing.downloadCostPaise === 0 ? 'text-success font-semibold' : 'text-text-primary'}>
