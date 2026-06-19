@@ -3,6 +3,7 @@ import './globals.css'
 import Providers from '@/components/Providers'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
+import UploadWidget from '@/components/UploadWidget'
 
 export const metadata: Metadata = {
   title: 'VayuTransfer — Secure File Transfer. Prepaid. No surprises.',
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Navbar />
           <div className="flex-1">{children}</div>
           <Footer />
+          <UploadWidget />
         </Providers>
       </body>
     </html>

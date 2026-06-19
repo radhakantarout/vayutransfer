@@ -10,8 +10,25 @@ interface Props {
   totalChunks: number
   fileSizeBytes: number
   fileName: string
+  speedBytesPerSec: number
+  secondsRemaining: number
   shareableLink?: string
+  error?: string | null
   onAbort: () => void
+  onMinimize?: () => void
+}
+
+function formatSpeed(bps: number): string {
+  if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`
+  if (bps >= 1024) return `${(bps / 1024).toFixed(0)} KB/s`
+  return `${bps.toFixed(0)} B/s`
+}
+
+function formatTime(secs: number): string {
+  if (!isFinite(secs) || secs <= 0) return 'Calculating…'
+  if (secs < 60) return `${Math.round(secs)}s remaining`
+  if (secs < 3600) return `${Math.round(secs / 60)} min remaining`
+  return `${(secs / 3600).toFixed(1)}h remaining`
 }
 
 function formatBytes(bytes: number): string {
@@ -59,8 +76,12 @@ export default function UploadProgress({
   totalChunks,
   fileSizeBytes,
   fileName,
+  speedBytesPerSec,
+  secondsRemaining,
   shareableLink,
+  error,
   onAbort,
+  onMinimize,
 }: Props) {
   const [copied, setCopied] = useState(false)
   const [showShare, setShowShare] = useState(false)
@@ -132,12 +153,37 @@ export default function UploadProgress({
     )
   }
 
+  if (error) {
+    return (
+      <div className="bg-card border border-danger/40 rounded-xl p-6 space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">❌</span>
+          <div>
+            <div className="font-semibold text-danger">Upload failed</div>
+            <div className="text-muted text-sm truncate max-w-xs">{fileName}</div>
+          </div>
+        </div>
+        <div className="text-sm text-danger/80 bg-danger/10 rounded-lg px-3 py-2">{error}</div>
+      </div>
+    )
+  }
+
   // r=52, circumference = 2π×52 ≈ 326.73
   const circumference = 326.73
   const strokeOffset = circumference * (1 - percent / 100)
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6 flex flex-col items-center gap-5">
+    <div className="bg-card border border-border rounded-xl p-6 flex flex-col items-center gap-5 relative">
+      {/* Minimize button — top-right */}
+      {onMinimize && (
+        <button
+          onClick={onMinimize}
+          title="Minimize — upload continues in background"
+          className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center rounded-full border border-border text-muted hover:border-accent hover:text-accent transition-colors text-sm"
+        >
+          −
+        </button>
+      )}
       {/* Circular progress ring with logo */}
       <div className="relative w-44 h-44">
         <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
@@ -172,19 +218,32 @@ export default function UploadProgress({
       </div>
 
       {/* File info */}
-      <div className="text-center">
+      <div className="text-center space-y-1">
         <div className="text-sm font-medium text-text-primary truncate max-w-xs">{fileName}</div>
-        <div className="text-xs text-muted mt-1">
-          {formatBytes(Math.min(currentChunk * MULTIPART_CHUNK_SIZE_BYTES, fileSizeBytes))} of {formatBytes(fileSizeBytes)}
+        <div className="text-xs text-muted">
+          ↑ {formatBytes(Math.min(currentChunk * MULTIPART_CHUNK_SIZE_BYTES, fileSizeBytes))} / {formatBytes(fileSizeBytes)} · {formatTime(secondsRemaining)}
         </div>
+        {speedBytesPerSec > 0 && (
+          <div className="text-xs text-accent font-medium">{formatSpeed(speedBytesPerSec)}</div>
+        )}
       </div>
 
-      <button
-        onClick={onAbort}
-        className="text-danger text-sm hover:underline transition-colors"
-      >
-        Cancel & refund
-      </button>
+      <div className="flex flex-col items-center gap-2">
+        <button
+          onClick={onAbort}
+          className="text-danger text-sm hover:underline transition-colors"
+        >
+          Cancel & refund
+        </button>
+        {onMinimize && (
+          <button
+            onClick={onMinimize}
+            className="text-muted text-xs hover:text-accent transition-colors"
+          >
+            Minimize → explore or upload another file
+          </button>
+        )}
+      </div>
     </div>
   )
 }
