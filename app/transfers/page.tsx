@@ -4,16 +4,14 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { getDownloadSlotCostPaise, formatPaise } from '@/lib/pricing'
+import { FREE_DOWNLOAD_THRESHOLD_BYTES, FREE_DOWNLOAD_EXTRA_SLOT_PAISE } from '@/constants/pricing'
 import type { Transfer } from '@/types'
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
-
-function formatPaise(p: number) {
-  return `₹${(p / 100).toFixed(2)}`
 }
 
 function statusColor(s: Transfer['status']) {
@@ -23,6 +21,12 @@ function statusColor(s: Transfer['status']) {
   return 'text-muted'
 }
 
+function perSlotCost(fileSizeBytes: number): number {
+  return fileSizeBytes <= FREE_DOWNLOAD_THRESHOLD_BYTES
+    ? FREE_DOWNLOAD_EXTRA_SLOT_PAISE
+    : getDownloadSlotCostPaise(fileSizeBytes)
+}
+
 export default function TransfersPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
@@ -30,6 +34,12 @@ export default function TransfersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+
+  // Slot-buying state
+  const [buyingFor, setBuyingFor] = useState<string | null>(null)
+  const [slotsToAdd, setSlotsToAdd] = useState(1)
+  const [buying, setBuying] = useState(false)
+  const [buyError, setBuyError] = useState<string | null>(null)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login')
@@ -52,6 +62,42 @@ export default function TransfersPage() {
     await navigator.clipboard.writeText(`${appUrl}/download/${fileId}`)
     setCopied(fileId)
     setTimeout(() => setCopied(null), 2000)
+  }
+
+  const openBuySlots = (fileId: string) => {
+    setBuyingFor(fileId)
+    setSlotsToAdd(1)
+    setBuyError(null)
+  }
+
+  const closeBuySlots = () => {
+    setBuyingFor(null)
+    setBuyError(null)
+  }
+
+  const confirmBuySlots = async (fileId: string) => {
+    setBuying(true)
+    setBuyError(null)
+    try {
+      const res = await fetch(`/api/transfers/${fileId}/add-slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slots: slotsToAdd }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setBuyError(data.message ?? 'Failed to add slots')
+        return
+      }
+      // Refresh transfers list
+      const refreshed = await fetch('/api/transfers').then((r) => r.json())
+      if (refreshed.success) setTransfers(refreshed.data)
+      closeBuySlots()
+    } catch {
+      setBuyError('Network error — please try again')
+    } finally {
+      setBuying(false)
+    }
   }
 
   if (status === 'loading' || !session) {
@@ -98,10 +144,14 @@ export default function TransfersPage() {
       {!loading && transfers.length > 0 && (
         <div className="space-y-3">
           {transfers.map((t) => {
-            const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
             const expired = t.status === 'expired' || new Date(t.expiryTime) < new Date()
+            const canExtend = !expired && (t.status === 'active' || t.status === 'exhausted')
+            const isOpen = buyingFor === t.fileId
+            const costPerSlot = perSlotCost(t.fileSizeBytes)
+            const totalCost = costPerSlot * slotsToAdd
+
             return (
-              <div key={t.fileId} className="bg-card border border-border rounded-2xl p-5">
+              <div key={t.fileId} className="bg-card border border-border rounded-2xl p-5 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -113,22 +163,76 @@ export default function TransfersPage() {
                     <div className="flex items-center gap-3 text-xs text-muted mt-1 flex-wrap">
                       <span>{formatBytes(t.fileSizeBytes)}</span>
                       <span>·</span>
-                      <span>{t.downloadsUsed}/{t.downloadSlots} downloads</span>
+                      <span>{t.downloadsUsed}/{t.downloadSlots} downloads used</span>
                       <span>·</span>
                       <span>{formatPaise(t.amountDeducted)} spent</span>
                       <span>·</span>
                       <span>{new Date(t.createdAt).toLocaleDateString('en-IN')}</span>
                     </div>
                   </div>
-                  {!expired && t.status === 'active' && (
-                    <button
-                      onClick={() => copyLink(t.fileId)}
-                      className="flex-shrink-0 text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
-                    >
-                      {copied === t.fileId ? 'Copied!' : 'Copy Link'}
-                    </button>
-                  )}
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {!expired && t.status === 'active' && (
+                      <button
+                        onClick={() => copyLink(t.fileId)}
+                        className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      >
+                        {copied === t.fileId ? 'Copied!' : 'Copy Link'}
+                      </button>
+                    )}
+                    {canExtend && (
+                      <button
+                        onClick={() => isOpen ? closeBuySlots() : openBuySlots(t.fileId)}
+                        className="text-xs bg-card hover:bg-border text-muted hover:text-text-primary border border-border px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      >
+                        {isOpen ? 'Cancel' : '+ Slots'}
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Inline slot buyer */}
+                {isOpen && (
+                  <div className="border-t border-border pt-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-text-primary font-medium">Buy more download slots</span>
+                      <span className="text-xs text-muted">{formatPaise(costPerSlot)}/slot</span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setSlotsToAdd(Math.max(1, slotsToAdd - 1))}
+                        className="w-8 h-8 rounded-lg border border-border text-text-primary hover:bg-border transition-colors font-bold text-lg leading-none"
+                      >
+                        −
+                      </button>
+                      <span className="text-text-primary font-semibold w-8 text-center">{slotsToAdd}</span>
+                      <button
+                        onClick={() => setSlotsToAdd(Math.min(20, slotsToAdd + 1))}
+                        className="w-8 h-8 rounded-lg border border-border text-text-primary hover:bg-border transition-colors font-bold text-lg leading-none"
+                      >
+                        +
+                      </button>
+                      <span className="text-muted text-sm ml-1">
+                        = <span className="text-text-primary font-semibold">{formatPaise(totalCost)}</span> from wallet
+                      </span>
+                    </div>
+
+                    {buyError && (
+                      <div className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">
+                        {buyError}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => confirmBuySlots(t.fileId)}
+                      disabled={buying}
+                      className="w-full bg-accent text-bg font-semibold py-2.5 rounded-xl text-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {buying ? 'Processing…' : `Confirm — Pay ${formatPaise(totalCost)}`}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}

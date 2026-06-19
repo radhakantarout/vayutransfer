@@ -23,6 +23,7 @@ export type AuditEventType =
   | 'WEBHOOK_VERIFIED'
   | 'WEBHOOK_REJECTED'
   | 'USER_CREATED'
+  | 'SLOTS_ADDED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
