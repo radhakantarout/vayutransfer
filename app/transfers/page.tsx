@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { getDownloadSlotCostPaise, formatPaise } from '@/lib/pricing'
 import { FREE_DOWNLOAD_THRESHOLD_BYTES, FREE_DOWNLOAD_EXTRA_SLOT_PAISE } from '@/constants/pricing'
+import ShareButtons from '@/components/ShareButtons'
 import type { Transfer } from '@/types'
 
 function formatBytes(bytes: number) {
@@ -34,6 +35,9 @@ export default function TransfersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+
+  // Share state
+  const [sharingFor, setSharingFor] = useState<string | null>(null)
 
   // Slot-buying state
   const [buyingFor, setBuyingFor] = useState<string | null>(null)
@@ -147,6 +151,9 @@ export default function TransfersPage() {
             const expired = t.status === 'expired' || new Date(t.expiryTime) < new Date()
             const canExtend = !expired && (t.status === 'active' || t.status === 'exhausted')
             const isOpen = buyingFor === t.fileId
+            const isSharing = sharingFor === t.fileId
+            const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
+            const shareLink = `${appUrl}/download/${t.fileId}`
             const costPerSlot = perSlotCost(t.fileSizeBytes)
             const totalCost = costPerSlot * slotsToAdd
 
@@ -180,6 +187,18 @@ export default function TransfersPage() {
                         {copied === t.fileId ? 'Copied!' : 'Copy Link'}
                       </button>
                     )}
+                    {!expired && t.status === 'active' && (
+                      <button
+                        onClick={() => setSharingFor(isSharing ? null : t.fileId)}
+                        title="Share"
+                        className={`px-2.5 py-1.5 border rounded-lg text-xs transition-colors ${isSharing ? 'bg-accent/10 border-accent text-accent' : 'border-border text-muted hover:border-accent hover:text-accent'}`}
+                      >
+                        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                        </svg>
+                      </button>
+                    )}
                     {canExtend && (
                       <button
                         onClick={() => isOpen ? closeBuySlots() : openBuySlots(t.fileId)}
@@ -190,6 +209,13 @@ export default function TransfersPage() {
                     )}
                   </div>
                 </div>
+
+                {/* Inline share */}
+                {isSharing && (
+                  <div className="border-t border-border pt-3">
+                    <ShareButtons link={shareLink} fileName={t.fileName} size="sm" />
+                  </div>
+                )}
 
                 {/* Inline slot buyer */}
                 {isOpen && (

@@ -38,6 +38,18 @@ export default function HomePage() {
     }
   }, [currentUpload?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Safety: if the tracked upload was dismissed from the widget while page is still in uploading state, reset to idle
+  useEffect(() => {
+    if (currentUploadId && !currentUpload) {
+      setCurrentUploadId(null)
+      setPageState('idle')
+      setEntries([])
+      setPricing(null)
+      setRecipientEmails([])
+      setAgreedToTerms(false)
+    }
+  }, [currentUploadId, currentUpload])
+
   const totalSizeBytes = entries.reduce((s, e) => s + e.file.size, 0)
   const isBundle = entries.length > 1
 
