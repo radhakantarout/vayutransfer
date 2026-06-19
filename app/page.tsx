@@ -171,8 +171,7 @@ export default function HomePage() {
                 </div>
               )}
 
-              {/* EmailTagInput disabled until AWS SES production access is approved */}
-              {/* <EmailTagInput emails={recipientEmails} onChange={setRecipientEmails} /> */}
+              <EmailTagInput emails={recipientEmails} onChange={setRecipientEmails} />
 
               <label className="flex items-start gap-3 cursor-pointer select-none">
                 <input
