@@ -78,9 +78,13 @@ export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onP
 
         <div className="flex justify-between">
           <span className="text-muted">
-            Downloads ({downloadSlots} × {formatPaise(getDownloadSlotCostPaise(fileSizeBytes))})
+            {getDownloadSlotCostPaise(fileSizeBytes) === 0
+              ? `Downloads (${downloadSlots} slot${downloadSlots > 1 ? 's' : ''})`
+              : `Downloads (${downloadSlots} × ${formatPaise(getDownloadSlotCostPaise(fileSizeBytes))})`}
           </span>
-          <span className="text-text-primary">{formatPaise(pricing.downloadCostPaise)}</span>
+          <span className={pricing.downloadCostPaise === 0 ? 'text-success font-semibold' : 'text-text-primary'}>
+            {pricing.downloadCostPaise === 0 ? 'Free' : formatPaise(pricing.downloadCostPaise)}
+          </span>
         </div>
 
         <div className="border-t border-border pt-2 flex justify-between font-semibold text-base">
