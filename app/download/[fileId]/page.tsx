@@ -20,7 +20,7 @@ export default function DownloadPage({ params }: Props) {
 
       <footer className="border-t border-border py-4">
         <p className="text-center text-xs text-muted">
-          © 2024 VayuTransfer · Fast. Secure. Prepaid.
+          © {new Date().getFullYear()} VayuTransfer · Fast. Secure. Prepaid.
         </p>
       </footer>
     </div>
