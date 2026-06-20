@@ -10,7 +10,7 @@ export default function Footer() {
           <div className="col-span-2 md:col-span-1">
             <span className="font-extrabold text-accent text-lg">VayuTransfer</span>
             <p className="text-muted text-sm mt-2 leading-relaxed">
-              Secure file transfers for India. Pay only for what you use. Zero hidden fees.
+              Secure file transfers across the globe. Pay only for what you use. Zero hidden fees.
             </p>
           </div>
           <div>
