@@ -40,14 +40,6 @@ export async function POST(
 
     const now = new Date().toISOString()
 
-    // Mark file as PROCESSING
-    await studioUpdateItem(
-      TABLES.mediafiles,
-      { projectId, fileId },
-      'SET processingStatus = :s, uploadedAt = :now',
-      { ':s': 'PROCESSING', ':now': now }
-    )
-
     // Increment project totalFiles
     await studioUpdateItem(
       TABLES.projects,
@@ -65,10 +57,28 @@ export async function POST(
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
 
-    // Get studio branding for watermark Lambda
+    // Dev mode: skip Lambda, mark READY immediately so files appear in gallery
+    if (process.env.NODE_ENV !== 'production') {
+      await studioUpdateItem(
+        TABLES.mediafiles,
+        { projectId, fileId },
+        'SET processingStatus = :s, uploadedAt = :now',
+        { ':s': 'READY', ':now': now }
+      )
+      console.log(`[DEV] File ${fileId} marked READY (watermark Lambda skipped in development)`)
+      return NextResponse.json({ success: true, data: { fileId, status: 'READY' } })
+    }
+
+    // Production: mark PROCESSING then trigger Lambda
+    await studioUpdateItem(
+      TABLES.mediafiles,
+      { projectId, fileId },
+      'SET processingStatus = :s, uploadedAt = :now',
+      { ':s': 'PROCESSING', ':now': now }
+    )
+
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
 
-    // Trigger watermark Lambda asynchronously (fire-and-forget)
     const lambdaPayload = {
       fileId,
       projectId,
@@ -88,11 +98,9 @@ export async function POST(
     if (process.env.WATERMARK_LAMBDA_ARN) {
       lambda.send(new InvokeCommand({
         FunctionName: process.env.WATERMARK_LAMBDA_ARN,
-        InvocationType: 'Event', // async
+        InvocationType: 'Event',
         Payload: Buffer.from(JSON.stringify(lambdaPayload)),
       })).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
-    } else {
-      console.log('[DEV] Watermark Lambda skipped — WATERMARK_LAMBDA_ARN not set')
     }
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })
