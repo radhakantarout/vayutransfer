@@ -34,19 +34,22 @@ export default function PricingPage() {
       {/* Download slots */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden mb-10">
         <div className="px-6 py-4 border-b border-border bg-bg/50">
-          <h2 className="font-bold text-text-primary">Download Slots — Priced by File Size</h2>
-          <p className="text-xs text-muted mt-1">One slot = one unique download allowed</p>
+          <h2 className="font-bold text-text-primary">Max Downloads — Priced by File Size</h2>
+          <p className="text-xs text-muted mt-1">Choose how many people can download your file</p>
         </div>
         <div className="divide-y divide-border">
           {[
-            { range: '< 500 MB',      slot: '₹7' },
-            { range: '500 MB – 2 GB', slot: '₹14' },
-            { range: '2 GB – 5 GB',   slot: '₹47' },
-            { range: '5 GB – 10 GB',  slot: '₹101' },
+            { range: 'Under 500 MB',  slot: 'Free', free: true },
+            { range: '500 MB – 2 GB', slot: '₹14',  free: false },
+            { range: '2 GB – 5 GB',   slot: '₹47',  free: false },
+            { range: '5 GB – 10 GB',  slot: '₹101', free: false },
           ].map((row) => (
             <div key={row.range} className="flex items-center justify-between px-6 py-4 text-sm">
               <span className="text-text-primary">{row.range}</span>
-              <span className="font-bold text-accent">{row.slot} / slot</span>
+              {row.free
+                ? <span className="font-bold text-success">Free</span>
+                : <span className="font-bold text-accent">{row.slot} / slot</span>
+              }
             </div>
           ))}
         </div>
@@ -57,7 +60,7 @@ export default function PricingPage() {
         <h3 className="font-bold text-text-primary mb-4">Example: 1 GB file, 3 downloads</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between"><span className="text-muted">Storage (1 GB at ₹5/GB)</span><span className="text-text-primary">₹5.00</span></div>
-          <div className="flex justify-between"><span className="text-muted">3 download slots (3 × ₹14 — 500MB–2GB tier)</span><span className="text-text-primary">₹42.00</span></div>
+          <div className="flex justify-between"><span className="text-muted">3 downloads allowed (3 × ₹14 — 500MB–2GB tier)</span><span className="text-text-primary">₹42.00</span></div>
           <div className="border-t border-border pt-2 flex justify-between font-bold"><span className="text-text-primary">Total</span><span className="text-accent">₹47.00</span></div>
         </div>
       </div>

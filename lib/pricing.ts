@@ -3,8 +3,6 @@ import {
   PRICE_SLABS,
   DOWNLOAD_SLOT_TIERS,
   SMALL_FILE_THRESHOLD_BYTES,
-  FREE_DOWNLOAD_THRESHOLD_BYTES,
-  FREE_DOWNLOAD_EXTRA_SLOT_PAISE,
   ESTIMATED_AWS_COST_PER_GB_PAISE,
   RAZORPAY_FEE_PERCENT,
 } from '@/constants/pricing'
@@ -47,8 +45,8 @@ export function calculatePrice(fileSizeBytes: number, downloadSlots: number): Pr
   }
 
   const slotCostPaise = getDownloadSlotCostPaise(fileSizeBytes)
-  const downloadCostPaise = fileSizeBytes <= FREE_DOWNLOAD_THRESHOLD_BYTES
-    ? Math.max(0, downloadSlots - 1) * FREE_DOWNLOAD_EXTRA_SLOT_PAISE
+  const downloadCostPaise = fileSizeBytes <= SMALL_FILE_THRESHOLD_BYTES
+    ? 0
     : downloadSlots * slotCostPaise
   const totalPaise = storageCostPaise + downloadCostPaise
 

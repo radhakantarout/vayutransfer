@@ -7,10 +7,6 @@ import { deductFromWallet } from '@/lib/wallet'
 import { getDownloadSlotCostPaise } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb'
-import {
-  FREE_DOWNLOAD_THRESHOLD_BYTES,
-  FREE_DOWNLOAD_EXTRA_SLOT_PAISE,
-} from '@/constants/pricing'
 import type { ApiResponse, Transfer } from '@/types'
 
 const TRANSFERS_TABLE = process.env.DYNAMO_TRANSFERS_TABLE ?? 'vayu-transfers'
@@ -63,25 +59,22 @@ export async function POST(
       )
     }
 
-    // Cost: for <200MB files extra slots cost FREE_DOWNLOAD_EXTRA_SLOT_PAISE each;
-    // for larger files use the normal per-slot rate for that size tier.
-    const perSlotPaise = transfer.fileSizeBytes <= FREE_DOWNLOAD_THRESHOLD_BYTES
-      ? FREE_DOWNLOAD_EXTRA_SLOT_PAISE
-      : getDownloadSlotCostPaise(transfer.fileSizeBytes)
-
+    const perSlotPaise = getDownloadSlotCostPaise(transfer.fileSizeBytes)
     const totalCostPaise = perSlotPaise * slots
 
-    // Deduct wallet (throws INSUFFICIENT_BALANCE if short)
-    try {
-      await deductFromWallet(user.walletId, totalCostPaise, fileId)
-    } catch (err) {
-      if (err instanceof Error && err.message === 'INSUFFICIENT_BALANCE') {
-        return NextResponse.json<ApiResponse<never>>(
-          { success: false, error: 'INSUFFICIENT_BALANCE', message: 'Insufficient wallet balance' },
-          { status: 402 }
-        )
+    // Deduct wallet only when there's an actual cost (free for <500MB transfers)
+    if (totalCostPaise > 0) {
+      try {
+        await deductFromWallet(user.walletId, totalCostPaise, fileId)
+      } catch (err) {
+        if (err instanceof Error && err.message === 'INSUFFICIENT_BALANCE') {
+          return NextResponse.json<ApiResponse<never>>(
+            { success: false, error: 'INSUFFICIENT_BALANCE', message: 'Insufficient wallet balance' },
+            { status: 402 }
+          )
+        }
+        throw err
       }
-      throw err
     }
 
     // Atomically add slots and reactivate if exhausted

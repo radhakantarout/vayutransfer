@@ -25,7 +25,7 @@ export default function AboutPage() {
         <p className="text-muted leading-relaxed">
           VayuTransfer flips that. You load a wallet with credits and only pay when you actually
           transfer something. Storage under 500 MB is free. Larger files are priced per GB.
-          Download slots are priced by file size. No idle charges. No credit card on file month after month.
+          You choose how many people can download — priced by file size. No idle charges. No credit card on file month after month.
         </p>
         <p className="text-muted leading-relaxed">
           We built this to be the simplest, most honest file transfer service for individuals,
@@ -69,7 +69,7 @@ export default function AboutPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[
             { icon: '₹', title: 'No subscriptions', desc: 'Pay only when you transfer. Your balance never expires.' },
-            { icon: '🔒', title: 'Secure by default', desc: 'Every link expires in 24 hours. Download slots are limited and atomic.' },
+            { icon: '🔒', title: 'Secure by default', desc: 'Every link expires in 24 hours. Download count is capped and tracked atomically.' },
             { icon: '⚡', title: 'Fast uploads', desc: 'Multipart uploads directly to AWS S3 Mumbai — low latency across India.' },
             { icon: '📱', title: 'Share anywhere', desc: 'One-click share to WhatsApp, Gmail, or SMS right from the upload page.' },
             { icon: '🔁', title: 'Refund guarantee', desc: 'If your upload fails or is cancelled, your wallet is refunded immediately.' },

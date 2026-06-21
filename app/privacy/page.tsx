@@ -12,7 +12,7 @@ export default function PrivacyPage() {
             When you sign in with Google, we receive your name, email address, and profile photo from Google OAuth. We store this to associate your wallet and transfer history with your account.
           </p>
           <p className="text-muted leading-relaxed mt-3">
-            When you upload a file, we store metadata about the transfer (file name, size, expiry time, number of download slots) but we do not read or analyse your file contents.
+            When you upload a file, we store metadata about the transfer (file name, size, expiry time, download limit) but we do not read or analyse your file contents.
           </p>
         </section>
 

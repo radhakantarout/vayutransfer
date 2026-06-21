@@ -6,7 +6,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
 import { getDownloadSlotCostPaise, formatPaise } from '@/lib/pricing'
-import { FREE_DOWNLOAD_THRESHOLD_BYTES, FREE_DOWNLOAD_EXTRA_SLOT_PAISE } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
 import type { Transfer } from '@/types'
 
@@ -24,9 +23,7 @@ function statusColor(s: Transfer['status']) {
 }
 
 function perSlotCost(fileSizeBytes: number): number {
-  return fileSizeBytes <= FREE_DOWNLOAD_THRESHOLD_BYTES
-    ? FREE_DOWNLOAD_EXTRA_SLOT_PAISE
-    : getDownloadSlotCostPaise(fileSizeBytes)
+  return getDownloadSlotCostPaise(fileSizeBytes)
 }
 
 export default function TransfersPage() {
@@ -224,7 +221,7 @@ export default function TransfersPage() {
                 {isOpen && (
                   <div className="border-t border-border pt-3 space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-text-primary font-medium">Buy more download slots</span>
+                      <span className="text-sm text-text-primary font-medium">Allow more downloads</span>
                       <span className="text-xs text-muted">{formatPaise(costPerSlot)}/slot</span>
                     </div>
 

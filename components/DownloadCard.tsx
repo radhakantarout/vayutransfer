@@ -116,7 +116,7 @@ export default function DownloadCard({ fileId }: Props) {
         <div className="text-5xl">🔒</div>
         <div className="text-danger font-semibold text-lg">Download Limit Reached</div>
         <div className="text-muted text-sm">
-          All {downloadSlots} download slot{downloadSlots !== 1 ? 's' : ''} have been used.
+          All {downloadSlots} allowed download{downloadSlots !== 1 ? 's' : ''} have been used.
         </div>
       </div>
     )

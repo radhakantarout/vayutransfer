@@ -44,9 +44,9 @@ export default function TermsPage() {
         </section>
 
         <section>
-          <h2 className="text-xl font-bold mb-3">5. Download Slots</h2>
+          <h2 className="text-xl font-bold mb-3">5. Download Limit</h2>
           <p className="text-muted leading-relaxed">
-            Each transfer link has a fixed number of download slots purchased at upload time. Once all slots are consumed, the link is deactivated. Each slot costs ₹5. Unused slots are not refunded after upload completes.
+            Each transfer link has a fixed download limit set at upload time. Once all allowed downloads are used, the link is deactivated automatically. Unused download allowances are not refunded after upload completes.
           </p>
         </section>
 

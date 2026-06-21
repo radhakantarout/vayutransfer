@@ -10,7 +10,7 @@ const faqs = [
   },
   {
     q: 'Is storage under 500 MB really free?',
-    a: 'Yes. Files under 500 MB have zero storage cost. You only pay for download slots (₹7 per slot for files under 500 MB). Download slots control how many unique people can download your file.',
+    a: 'Yes. Files under 500 MB are completely free — zero storage cost and unlimited downloads included.',
   },
   {
     q: 'What happens if my upload fails?',
@@ -22,11 +22,11 @@ const faqs = [
   },
   {
     q: 'Do recipients need an account to download?',
-    a: 'No. Anyone with the link can download the file directly — no sign-up required. Each download uses one slot from the slots you purchased.',
+    a: 'No. Anyone with the link can download the file directly — no sign-up required. Each download counts toward the limit you set at upload time.',
   },
   {
-    q: 'What is a download slot?',
-    a: 'A download slot is one unique download allowed for your file. If you buy 3 slots, exactly 3 people can download the file. Slots are priced by file size — from ₹7 for files under 500 MB up to ₹101 for files between 5–10 GB.',
+    q: 'How many people can download my file?',
+    a: 'You choose when you upload. Set it to 3 and exactly 3 people can download — after that the link closes automatically. For files above 500 MB, each download is priced by file size (₹14 for 500 MB–2 GB, up to ₹101 for 5–10 GB).',
   },
   {
     q: 'What file types and sizes are supported?',
