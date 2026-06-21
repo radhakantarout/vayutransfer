@@ -6,8 +6,10 @@ import {
   AbortMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  PutObjectCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { getSignedUrl as getCFSignedUrl } from '@aws-sdk/cloudfront-signer'
 
 const studioS3 = new S3Client({
   region: process.env.AWS_REGION ?? 'ap-south-1',
@@ -21,6 +23,10 @@ const STUDIO_BUCKET = process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-origi
 
 export function getStudioS3Key(studioId: string, projectId: string, fileId: string, filename: string) {
   return `studios/${studioId}/projects/${projectId}/originals/${fileId}/${filename}`
+}
+
+export function getStudioEditedS3Key(studioId: string, projectId: string, fileId: string, filename: string) {
+  return `studios/${studioId}/projects/${projectId}/edited/${fileId}/${filename}`
 }
 
 export function getStudioZipKey(studioId: string, jobId: string) {
@@ -84,4 +90,25 @@ export async function getStudioSignedDownloadUrl(key: string, filename: string):
     }),
     { expiresIn: 3600 }
   )
+}
+
+export async function getStudioEditedPresignedPutUrl(s3Key: string, mimeType: string): Promise<string> {
+  return getSignedUrl(
+    studioS3,
+    new PutObjectCommand({ Bucket: STUDIO_BUCKET, Key: s3Key, ContentType: mimeType }),
+    { expiresIn: 3600 }
+  )
+}
+
+// CloudFront signed URL for print-quality downloads (originals or edited finals)
+export function getStudioCloudFrontSignedUrl(s3Key: string, expiresInSeconds = 604800): string {
+  const privateKey = (process.env.STUDIO_CLOUDFRONT_PRIVATE_KEY ?? '').replace(/\\n/g, '\n')
+  const keyPairId  = process.env.STUDIO_CLOUDFRONT_KEY_PAIR_ID ?? ''
+  const domain     = (process.env.STUDIO_CLOUDFRONT_DOMAIN ?? '').replace(/\/$/, '')
+  return getCFSignedUrl({
+    url: `${domain}/${s3Key}`,
+    keyPairId,
+    privateKey,
+    dateLessThan: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+  })
 }
