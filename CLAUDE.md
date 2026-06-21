@@ -36,11 +36,10 @@ Zero loss guarantee — wallet deducted before S3 upload begins.
 ## Pricing Logic
 
 ```
-< 500MB   → ₹19 flat (minimum)
-500MB–2GB → ₹29/GB
-2GB–5GB   → ₹25/GB
-5GB–10GB  → ₹22/GB
-Downloads → ₹5/slot always
+< 500MB   → Free (storage + all downloads)
+500MB–2GB → ₹5/GB storage + ₹14/download
+2GB–5GB   → ₹4/GB storage + ₹47/download
+5GB–10GB  → ₹3/GB storage + ₹101/download
 ```
 
 ---
@@ -69,9 +68,18 @@ See REQUIREMENTS.md for full spec. Build in this order:
 
 ---
 
+## Git Workflow
+
+- **main** — production branch, deployed to https://vayutransfer.com via Vercel. Never commit directly.
+- **develop** — active development branch. All commits and pushes go here.
+- To ship: open a PR from `develop` → `main`, merge when ready.
+- Commits must NOT include Co-Authored-By lines — causes Vercel Hobby plan block.
+
+---
+
 ## Current Build Status
 
-Last updated: 2026-06-17
+Last updated: 2026-06-21
 
 ```
 [x] STEP 1 — Types + Constants
@@ -98,12 +106,13 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - Commits must NOT include Co-Authored-By lines — causes Vercel Hobby plan block
 - GitHub repo: radhakantarout/vayutransfer (public, new repo fixed Vercel deploy)
 - Google Console needs BOTH: https://vayutransfer.com AND https://www.vayutransfer.com callback URIs
+- Files under 500 MB are completely free (storage + all downloads). Default download count = 10 for free transfers.
+- "Download slots" renamed to plain English ("how many people can download") across all UI
 
 ### Next Session Priorities
-1. Extend download slots feature (uploader buys more slots for existing transfer)
-2. Razorpay live keys (when account approved)
-3. SES production access request (submit to AWS)
-4. Test full upload → download flow on production with real Google account
+1. Razorpay live keys (when account approved)
+2. SES production access request (submit to AWS)
+3. Test full upload → download flow on production with real Google account
 
 ---
 
@@ -111,8 +120,9 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 
 1. Read this file (CLAUDE.md)
 2. Check "Next Session Priorities" above
-3. Run `npm run dev` to start local server
-4. Wallet needs dev credits — use the yellow banner button on the page
+3. `git checkout develop` — always work on develop, never main
+4. Run `npm run dev` to start local server
+5. Wallet needs dev credits — use the yellow banner button on the page
 
 ---
 
@@ -124,4 +134,4 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 
 ---
 
-*Always commit after each step. Update build status above.*
+*Always commit after each step to `develop`. Update build status above. Merge to `main` only when ready to release.*
