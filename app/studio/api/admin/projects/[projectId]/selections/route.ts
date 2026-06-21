@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import type { Selection, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -17,7 +17,7 @@ export async function GET(
 
     const [allSelections, allFiles] = await Promise.all([
       studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId),
-      studioQueryByIndex<MediaFile>(TABLES.mediafiles, 'projectId-index', 'projectId = :pid', { ':pid': projectId }),
+      studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId),
     ])
 
     const fileMap = new Map(allFiles.map((f) => [f.fileId, f]))
