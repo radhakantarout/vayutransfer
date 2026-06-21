@@ -28,8 +28,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { studioName, plan = 'STARTER', adminName, adminEmail, adminPassword } = await req.json()
-    if (!studioName || !adminName || !adminEmail || !adminPassword) {
+    const { studioName, plan = 'STARTER', adminName, adminEmail, adminPhone, adminPassword } = await req.json()
+    if (!studioName || !adminName || !adminEmail || !adminPhone || !adminPassword) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
 
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       userId,
       role: 'ADMIN',
       email: adminEmail,
-      phone: '',
+      phone: adminPhone,
       name: adminName,
       passwordHash,
       linkedStudioId: studioId,
