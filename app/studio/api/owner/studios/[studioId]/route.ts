@@ -16,7 +16,7 @@ export async function GET(
     const { studioId } = params
     const [studio, users] = await Promise.all([
       studioGetItem<Studio>(TABLES.studios, { studioId }),
-      studioQueryByIndex<StudioUser>(TABLES.users, 'studioId-index', 'linkedStudioId = :sid', { ':sid': studioId }).catch(() => [] as StudioUser[]),
+      studioQueryByIndex<StudioUser>(TABLES.users, 'linkedStudioId-index', 'linkedStudioId = :sid', { ':sid': studioId }).catch(() => [] as StudioUser[]),
     ])
 
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -57,7 +57,7 @@ export async function PATCH(
 
     // Suspend/reactivate the studio's admin users too
     const adminUsers = await studioQueryByIndex<StudioUser>(
-      TABLES.users, 'email-index',
+      TABLES.users, 'linkedStudioId-index',
       'linkedStudioId = :sid',
       { ':sid': studioId }
     ).catch(() => [] as StudioUser[])

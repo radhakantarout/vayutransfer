@@ -30,13 +30,8 @@ export async function GET(
     const allSelections = await studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId)
     const selectedIds = new Set(allSelections.filter((s) => s.isSelected).map((s) => s.fileId))
 
-    // Get all media files and filter to selected
-    const allFiles = await studioQueryByIndex<MediaFile>(
-      TABLES.mediafiles,
-      'projectId-index',
-      'projectId = :pid',
-      { ':pid': projectId }
-    )
+    // projectId is the table PK — query main table directly
+    const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
     const selectedFiles = allFiles
       .filter((f) => selectedIds.has(f.fileId))
       .sort((a, b) => a.displayOrder - b.displayOrder)

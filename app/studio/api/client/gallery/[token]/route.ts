@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -32,12 +32,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const files = await studioQueryByIndex<MediaFile>(
-      TABLES.mediafiles,
-      'projectId-index',
-      'projectId = :pid',
-      { ':pid': project.projectId }
-    )
+    const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId)
 
     const readyFiles = files
       .filter((f) => f.processingStatus === 'READY')
