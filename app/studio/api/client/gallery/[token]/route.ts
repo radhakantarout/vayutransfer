@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { getStudioSignedViewUrl } from '@/lib/studio/s3'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -38,7 +39,22 @@ export async function GET(
       .filter((f) => f.processingStatus === 'READY')
       .sort((a, b) => a.displayOrder - b.displayOrder)
 
-    return NextResponse.json({ success: true, data: { project, files: readyFiles } })
+    // Fallback to presigned S3 view URL when R2 preview not yet generated (dev / pre-Lambda)
+    const enriched = await Promise.all(
+      readyFiles.map(async (f) => {
+        if (f.fileType === 'IMAGE' && !f.r2PreviewUrl) {
+          try {
+            const viewUrl = await getStudioSignedViewUrl(f.s3Key)
+            return { ...f, r2PreviewUrl: viewUrl }
+          } catch {
+            return f
+          }
+        }
+        return f
+      })
+    )
+
+    return NextResponse.json({ success: true, data: { project, files: enriched } })
   } catch (err) {
     console.error('[client-gallery GET]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
