@@ -28,7 +28,7 @@ export default function OwnerStudiosPage() {
 
   const [form, setForm] = useState({
     studioName: '', plan: 'STARTER' as StudioPlan,
-    adminName: '', adminEmail: '', adminPassword: '',
+    adminName: '', adminEmail: '', adminPhone: '', adminPassword: '',
   })
   const [creating, setCreating] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -57,7 +57,7 @@ export default function OwnerStudiosPage() {
     setCreating(false)
     if (!res.success) { setFormError(res.message ?? 'Failed to create studio'); return }
     setShowForm(false)
-    setForm({ studioName: '', plan: 'STARTER', adminName: '', adminEmail: '', adminPassword: '' })
+    setForm({ studioName: '', plan: 'STARTER', adminName: '', adminEmail: '', adminPhone: '', adminPassword: '' })
     load()
   }
 
@@ -112,6 +112,7 @@ export default function OwnerStudiosPage() {
               { label: 'Studio name',     key: 'studioName',     type: 'text',     placeholder: 'Ravi Clicks' },
               { label: 'Admin name',      key: 'adminName',      type: 'text',     placeholder: 'Ravi Kumar' },
               { label: 'Admin email',     key: 'adminEmail',     type: 'email',    placeholder: 'ravi@raviphotos.com' },
+              { label: 'Admin phone',     key: 'adminPhone',     type: 'tel',      placeholder: '9876543210' },
               { label: 'Admin password',  key: 'adminPassword',  type: 'password', placeholder: 'Min 8 characters' },
             ].map(({ label, key, type, placeholder }) => (
               <div key={key} className="space-y-1.5">
