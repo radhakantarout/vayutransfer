@@ -5,6 +5,8 @@ import {
   UpdateItemCommand,
   QueryCommand,
   DeleteItemCommand,
+  ScanCommand,
+  AttributeValue,
 } from '@aws-sdk/client-dynamodb'
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb'
 
@@ -86,6 +88,20 @@ export async function studioQueryByIndex<T>(
     ...(limit ? { Limit: limit } : {}),
   }))
   return (res.Items ?? []).map((i) => unmarshall(i) as T)
+}
+
+export async function studioScanTable<T>(table: string): Promise<T[]> {
+  const items: T[] = []
+  let lastKey: Record<string, AttributeValue> | undefined
+  do {
+    const res = await client.send(new ScanCommand({
+      TableName: table,
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) items.push(unmarshall(item) as T)
+    lastKey = res.LastEvaluatedKey as Record<string, AttributeValue> | undefined
+  } while (lastKey)
+  return items
 }
 
 export async function studioQueryByPK<T>(
