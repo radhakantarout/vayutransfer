@@ -80,6 +80,15 @@ export async function deleteStudioS3Object(key: string): Promise<void> {
   await studioS3.send(new DeleteObjectCommand({ Bucket: STUDIO_BUCKET, Key: key }))
 }
 
+// Inline view URL — no Content-Disposition. Used as fallback when R2 preview isn't available (dev mode / pre-Lambda).
+export async function getStudioSignedViewUrl(key: string): Promise<string> {
+  return getSignedUrl(
+    studioS3,
+    new GetObjectCommand({ Bucket: STUDIO_BUCKET, Key: key }),
+    { expiresIn: 3600 }
+  )
+}
+
 export async function getStudioSignedDownloadUrl(key: string, filename: string): Promise<string> {
   return getSignedUrl(
     studioS3,
