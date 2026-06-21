@@ -25,7 +25,7 @@ export async function GET(
     if (!project) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
-    if (new Date(project.clientShareExpiresAt) < new Date()) {
+    if (!project.clientShareExpiresAt || new Date(project.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
     if (auth.projectId !== project.projectId) {

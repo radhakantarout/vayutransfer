@@ -57,8 +57,8 @@ export interface StudioProject {
   selectedFilesCount: number
   editingRequiredCount: number
   commentsCount: number
-  clientShareToken: string
-  clientShareExpiresAt: string
+  clientShareToken?: string
+  clientShareExpiresAt?: string
   printShareToken?: string
   printShareExpiresAt?: string
   selectionSubmittedAt?: string
