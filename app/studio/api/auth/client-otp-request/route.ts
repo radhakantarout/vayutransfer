@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     if (!project) {
       return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 404 })
     }
-    if (new Date(project.clientShareExpiresAt) < new Date()) {
+    if (!project.clientShareExpiresAt || new Date(project.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
 

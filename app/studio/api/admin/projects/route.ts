@@ -60,8 +60,6 @@ export async function POST(req: NextRequest) {
       selectedFilesCount: 0,
       editingRequiredCount: 0,
       commentsCount: 0,
-      clientShareToken: '',
-      clientShareExpiresAt: '',
       createdAt: now,
       updatedAt: now,
     }

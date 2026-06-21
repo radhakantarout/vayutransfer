@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       { ':token': projectToken }
     )
     const project = projects[0]
-    if (!project || new Date(project.clientShareExpiresAt) < new Date()) {
+    if (!project || !project.clientShareExpiresAt || new Date(project.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 404 })
     }
 
