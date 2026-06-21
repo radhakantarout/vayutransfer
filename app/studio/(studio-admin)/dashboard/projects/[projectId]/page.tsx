@@ -155,7 +155,15 @@ export default function ProjectDetailPage() {
             </div>
           </div>
           <div className="flex gap-2">
-            {project.totalFiles > 0 && (
+            {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
+              <a
+                href={`/studio/dashboard/projects/${projectId}/selections`}
+                className="bg-yellow-400 text-bg text-sm font-semibold px-4 py-2 rounded-lg hover:bg-yellow-300 transition-colors"
+              >
+                View Selections
+              </a>
+            )}
+            {project.totalFiles > 0 && project.status !== 'COMPLETED' && (
               <button
                 onClick={generateShareLink}
                 disabled={sharing}

@@ -78,6 +78,7 @@ export interface MediaFile {
   s3Key: string
   r2PreviewKey?: string
   r2PreviewUrl?: string
+  editedS3Key?: string
   watermarkEnabled: boolean
   displayOrder: number
   uploadedAt: string
