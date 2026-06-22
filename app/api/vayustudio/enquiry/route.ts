@@ -28,8 +28,8 @@ export async function POST(req: NextRequest) {
       .setExpirationTime('7d')
       .sign(getEnquirySecret())
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://vayutransfer.com'
-    const approveUrl = `${appUrl}/api/vayustudio/approve?token=${encodeURIComponent(token)}`
+    const origin = req.nextUrl.origin
+    const approveUrl = `${origin}/api/vayustudio/approve?token=${encodeURIComponent(token)}`
 
     const ownerEmail = process.env.PLATFORM_OWNER_EMAIL ?? 'radhakanta.rout16@gmail.com'
     const fromEmail  = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
