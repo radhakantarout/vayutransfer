@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioSignedViewUrl } from '@/lib/studio/s3'
 import type { Selection, MediaFile } from '@/types/studio'
 
@@ -20,6 +20,23 @@ export async function GET(
       studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId),
       studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId),
     ])
+
+    // Auto-heal stuck PROCESSING files when Lambda not configured
+    if (!process.env.WATERMARK_LAMBDA_ARN) {
+      const stuckFiles = allFiles.filter((f) => f.processingStatus === 'PROCESSING')
+      if (stuckFiles.length > 0) {
+        const now = new Date().toISOString()
+        await Promise.all(
+          stuckFiles.map((f) =>
+            studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId },
+              'SET processingStatus = :s, uploadedAt = :now',
+              { ':s': 'READY', ':now': f.uploadedAt ?? now }
+            ).catch(() => {})
+          )
+        )
+        stuckFiles.forEach((f) => { f.processingStatus = 'READY' })
+      }
+    }
 
     const fileMap = new Map(allFiles.map((f) => [f.fileId, f]))
     const selected = allSelections
