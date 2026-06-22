@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioSignedViewUrl } from '@/lib/studio/s3'
 import type { MediaFile } from '@/types/studio'
 
@@ -18,6 +18,24 @@ export async function GET(
 
     // projectId is the table PK — query main table directly, no GSI needed
     const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+
+    // Auto-heal: if Lambda not configured and any files are stuck PROCESSING, mark them READY now
+    if (!process.env.WATERMARK_LAMBDA_ARN) {
+      const stuckFiles = files.filter((f) => f.processingStatus === 'PROCESSING')
+      if (stuckFiles.length > 0) {
+        const now = new Date().toISOString()
+        await Promise.all(
+          stuckFiles.map((f) =>
+            studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId },
+              'SET processingStatus = :s, uploadedAt = :now',
+              { ':s': 'READY', ':now': f.uploadedAt ?? now }
+            ).catch(() => {})
+          )
+        )
+        stuckFiles.forEach((f) => { f.processingStatus = 'READY' })
+        console.log(`[auto-heal] Marked ${stuckFiles.length} stuck files READY for project ${projectId}`)
+      }
+    }
 
     // Sort by displayOrder then uploadedAt
     files.sort((a, b) => {
