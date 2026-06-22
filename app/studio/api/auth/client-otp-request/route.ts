@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { generateOTP, storeOTP } from '@/lib/studio/otp'
+import { sendOtpEmail } from '@/lib/aws/ses'
 import type { StudioProject } from '@/types/studio'
 
 const sns = new SNSClient({ region: process.env.SNS_REGION ?? 'ap-south-1' })
@@ -36,14 +37,18 @@ export async function POST(req: NextRequest) {
 
     await storeOTP(sessionId, otp, phone, projectToken)
 
-    // Send OTP via SNS SMS
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.TEST_EMAIL_OVERRIDE) {
+      // Test environment — email OTP instead of SMS
+      await sendOtpEmail(phone, otp)
+      console.log(`[TEST] OTP for ${phone}: ${otp} — emailed to ${process.env.TEST_EMAIL_OVERRIDE}`)
+    } else if (process.env.SNS_PRODUCTION_ENABLED === 'true') {
+      // Production SMS via SNS (only when explicitly enabled)
       await sns.send(new PublishCommand({
         PhoneNumber: phone.startsWith('+') ? phone : `+91${phone}`,
         Message: `Your VayuStudio OTP is ${otp}. Valid for 10 minutes. Do not share this with anyone.`,
       }))
     } else {
-      // Dev mode — log OTP to console
+      // Local dev — log to console
       console.log(`[DEV] OTP for ${phone}: ${otp}`)
     }
 
