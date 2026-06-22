@@ -23,7 +23,7 @@ function generatePassword(): string {
   return `Studio@${digits}`
 }
 
-function html(title: string, body: string, isError = false): NextResponse {
+function html(title: string, body: string, loginUrl: string, isError = false): NextResponse {
   const color = isError ? '#F87171' : '#00C6FF'
   const icon  = isError ? '❌' : '✅'
   return new NextResponse(
@@ -35,7 +35,7 @@ function html(title: string, body: string, isError = false): NextResponse {
         <div style="font-size:22px;font-weight:700;color:${color};margin-bottom:12px;">${title}</div>
         <div style="color:#8BAAB8;font-size:14px;line-height:1.6;">${body}</div>
         <div style="margin-top:28px;">
-          <a href="https://vayutransfer.com/studio/login"
+          <a href="${loginUrl}"
              style="display:inline-block;background:#00C6FF;color:#0B0F1A;font-weight:700;font-size:13px;padding:12px 28px;border-radius:8px;text-decoration:none;">
             Go to Studio Login
           </a>
@@ -47,8 +47,9 @@ function html(title: string, body: string, isError = false): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
+  const loginUrl = `${req.nextUrl.origin}/studio/login`
   const token = req.nextUrl.searchParams.get('token')
-  if (!token) return html('Invalid link', 'No approval token found in this link.', true)
+  if (!token) return html('Invalid link', 'No approval token found in this link.', loginUrl, true)
 
   // Verify signed token
   let payload: { name: string; studioName: string; email: string; phone: string }
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
     const { payload: p } = await jwtVerify(token, getEnquirySecret())
     payload = p as typeof payload
   } catch {
-    return html('Link expired or invalid', 'This approval link has expired (7-day limit) or is invalid. Ask the photographer to resubmit the enquiry form.', true)
+    return html('Link expired or invalid', 'This approval link has expired (7-day limit) or is invalid. Ask the photographer to resubmit the enquiry form.', loginUrl, true)
   }
 
   const { name, studioName, email, phone } = payload
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
   // Idempotency — check if this email is already onboarded
   const existing = await studioQueryByIndex<StudioUser>(TABLES.users, 'email-index', 'email = :e', { ':e': email })
   if (existing.length > 0) {
-    return html('Already approved', `A studio account for <strong>${email}</strong> already exists. The photographer can log in at vayutransfer.com/studio/login.`)
+    return html('Already approved', `A studio account for <strong>${email}</strong> already exists. The photographer can log in using the link below.`, loginUrl)
   }
 
   // Generate credentials
@@ -112,9 +113,6 @@ export async function GET(req: NextRequest) {
   }
   await studioPutItem(TABLES.users, adminUser as unknown as Record<string, unknown>)
 
-  // Send welcome email to photographer
-  const studioUrl  = process.env.NEXT_PUBLIC_APP_URL ?? 'https://vayutransfer.com'
-  const loginUrl   = `${studioUrl}/studio/login`
   const fromEmail  = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
   const ownerEmail = process.env.PLATFORM_OWNER_EMAIL ?? 'radhakanta.rout16@gmail.com'
 
@@ -176,6 +174,7 @@ export async function GET(req: NextRequest) {
 
   return html(
     'Studio approved!',
-    `<strong>${studioName}</strong> has been created and login credentials have been sent to <strong>${email}</strong>.`
+    `<strong>${studioName}</strong> has been created and login credentials have been sent to <strong>${email}</strong>.`,
+    loginUrl
   )
 }
