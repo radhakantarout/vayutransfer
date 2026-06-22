@@ -57,19 +57,19 @@ export async function POST(
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
 
-    // Dev mode: skip Lambda, mark READY immediately so files appear in gallery
-    if (process.env.NODE_ENV !== 'production') {
+    // No Lambda configured — mark READY immediately (local dev + test environments)
+    if (!process.env.WATERMARK_LAMBDA_ARN) {
       await studioUpdateItem(
         TABLES.mediafiles,
         { projectId, fileId },
         'SET processingStatus = :s, uploadedAt = :now',
         { ':s': 'READY', ':now': now }
       )
-      console.log(`[DEV] File ${fileId} marked READY (watermark Lambda skipped in development)`)
+      console.log(`[SKIP] File ${fileId} marked READY (WATERMARK_LAMBDA_ARN not configured)`)
       return NextResponse.json({ success: true, data: { fileId, status: 'READY' } })
     }
 
-    // Production: mark PROCESSING then trigger Lambda
+    // Lambda configured — mark PROCESSING and invoke async
     await studioUpdateItem(
       TABLES.mediafiles,
       { projectId, fileId },
@@ -95,13 +95,11 @@ export async function POST(
       fileType: mediaFile.fileType,
     }
 
-    if (process.env.WATERMARK_LAMBDA_ARN) {
-      lambda.send(new InvokeCommand({
-        FunctionName: process.env.WATERMARK_LAMBDA_ARN,
-        InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify(lambdaPayload)),
-      })).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
-    }
+    lambda.send(new InvokeCommand({
+      FunctionName: process.env.WATERMARK_LAMBDA_ARN,
+      InvocationType: 'Event',
+      Payload: Buffer.from(JSON.stringify(lambdaPayload)),
+    })).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })
   } catch (err) {
