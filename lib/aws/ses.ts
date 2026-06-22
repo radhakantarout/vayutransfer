@@ -11,7 +11,7 @@ const sesClient = new SESClient({
       : undefined,
 })
 
-const FROM_EMAIL = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.in'
+const FROM_EMAIL = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
 
 function formatPaise(paise: number): string {
   return `₹${(paise / 100).toFixed(2)}`
