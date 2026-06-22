@@ -50,8 +50,10 @@ export async function GET(
         if (f.processingStatus === 'READY' && f.fileType === 'IMAGE' && !f.r2PreviewUrl) {
           try {
             const viewUrl = await getStudioSignedViewUrl(f.s3Key)
+            console.log(`[files] presigned URL generated for ${f.fileId}: ${viewUrl.substring(0, 80)}...`)
             return { ...f, r2PreviewUrl: viewUrl }
-          } catch {
+          } catch (err) {
+            console.error(`[files] presigned URL FAILED for fileId=${f.fileId} s3Key=${f.s3Key}`, err)
             return f
           }
         }
