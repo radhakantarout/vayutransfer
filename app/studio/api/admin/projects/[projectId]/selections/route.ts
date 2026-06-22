@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { getStudioSignedViewUrl } from '@/lib/studio/s3'
 import type { Selection, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -33,7 +34,22 @@ export async function GET(
       return a.file.displayOrder - b.file.displayOrder
     })
 
-    return NextResponse.json({ success: true, data: selected })
+    // Fallback to presigned S3 view URL when R2 preview not yet generated
+    const enriched = await Promise.all(
+      selected.map(async ({ selection, file }) => {
+        if (file.fileType === 'IMAGE' && !file.r2PreviewUrl) {
+          try {
+            const viewUrl = await getStudioSignedViewUrl(file.s3Key)
+            return { selection, file: { ...file, r2PreviewUrl: viewUrl } }
+          } catch {
+            return { selection, file }
+          }
+        }
+        return { selection, file }
+      })
+    )
+
+    return NextResponse.json({ success: true, data: enriched })
   } catch (err) {
     console.error('[admin selections GET]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
