@@ -24,7 +24,9 @@ export default function OwnerStudiosPage() {
   const [stats, setStats]       = useState<Stats | null>(null)
   const [loading, setLoading]   = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [toggling, setToggling] = useState<string | null>(null)
+  const [toggling, setToggling]       = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleting, setDeleting]       = useState<string | null>(null)
 
   const [form, setForm] = useState({
     studioName: '', plan: 'STARTER' as StudioPlan,
@@ -61,6 +63,15 @@ export default function OwnerStudiosPage() {
     load()
   }
 
+  const handleDelete = async (s: Studio) => {
+    if (confirmDelete !== s.studioId) { setConfirmDelete(s.studioId); return }
+    setDeleting(s.studioId)
+    setConfirmDelete(null)
+    await fetch(`/studio/api/owner/studios/${s.studioId}`, { method: 'DELETE' })
+    setDeleting(null)
+    load()
+  }
+
   const toggleStatus = async (s: Studio) => {
     setToggling(s.studioId)
     const next = s.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE'
@@ -75,6 +86,7 @@ export default function OwnerStudiosPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10 space-y-8">
+      {confirmDelete && <div className="fixed inset-0 z-10" onClick={() => setConfirmDelete(null)} />}
       {/* Stats bar */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -177,7 +189,7 @@ export default function OwnerStudiosPage() {
                   <span>Created {new Date(s.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0 relative z-20">
                 <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
                   s.status === 'ACTIVE' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
                 }`}>
@@ -190,6 +202,24 @@ export default function OwnerStudiosPage() {
                 >
                   {toggling === s.studioId ? '…' : s.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
                 </button>
+                {confirmDelete === s.studioId ? (
+                  <button
+                    onClick={() => handleDelete(s)}
+                    disabled={deleting === s.studioId}
+                    className="text-xs bg-danger text-white font-semibold px-3 py-1.5 rounded-lg hover:bg-danger/80 transition-colors whitespace-nowrap"
+                  >
+                    {deleting === s.studioId ? '…' : 'Confirm delete'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleDelete(s)}
+                    disabled={deleting === s.studioId}
+                    className="text-xs border border-border text-muted hover:text-danger hover:border-danger px-3 py-1.5 rounded-lg transition-colors"
+                    title="Delete studio permanently"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}
