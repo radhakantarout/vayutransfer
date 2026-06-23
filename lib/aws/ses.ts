@@ -13,16 +13,6 @@ const sesClient = new SESClient({
 
 const FROM_EMAIL = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
 
-// When set, ALL outbound emails are redirected to this address (test/preview environments).
-const TEST_EMAIL_OVERRIDE = process.env.TEST_EMAIL_OVERRIDE
-
-function resolveRecipient(realEmail: string): { to: string; subjectPrefix: string } {
-  if (TEST_EMAIL_OVERRIDE) {
-    return { to: TEST_EMAIL_OVERRIDE, subjectPrefix: `[TEST → ${realEmail}] ` }
-  }
-  return { to: realEmail, subjectPrefix: '' }
-}
-
 function formatPaise(paise: number): string {
   return `₹${(paise / 100).toFixed(2)}`
 }
@@ -70,13 +60,12 @@ export async function sendTransferLinkEmail(
 </html>
   `.trim()
 
-  const { to, subjectPrefix } = resolveRecipient(recipient)
   await sesClient.send(
     new SendEmailCommand({
       Source: `VayuTransfer <${FROM_EMAIL}>`,
-      Destination: { ToAddresses: [to] },
+      Destination: { ToAddresses: [recipient] },
       Message: {
-        Subject: { Data: `${subjectPrefix}Your file "${fileName}" is ready to download` },
+        Subject: { Data: `Your file "${fileName}" is ready to download` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: {
@@ -130,41 +119,18 @@ export async function sendWalletCreditedEmail(
 </html>
   `.trim()
 
-  const { to, subjectPrefix } = resolveRecipient(email)
   await sesClient.send(
     new SendEmailCommand({
       Source: `VayuTransfer <${FROM_EMAIL}>`,
-      Destination: { ToAddresses: [to] },
+      Destination: { ToAddresses: [email] },
       Message: {
-        Subject: { Data: `${subjectPrefix}Wallet credited — ${formatPaise(amountPaise + bonusPaise)} added` },
+        Subject: { Data: `Wallet credited — ${formatPaise(amountPaise + bonusPaise)} added` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: {
             Data: `Wallet credited.\n\nAmount paid: ${formatPaise(amountPaise)}${bonusPaise > 0 ? `\nBonus: ${formatPaise(bonusPaise)}` : ''}\nNew balance: ${formatPaise(newBalancePaise)}`,
             Charset: 'UTF-8',
           },
-        },
-      },
-    })
-  )
-}
-
-// Only used when TEST_EMAIL_OVERRIDE is set — delivers OTP via email instead of SMS.
-export async function sendOtpEmail(phone: string, otp: string): Promise<void> {
-  const override = TEST_EMAIL_OVERRIDE
-  if (!override) return
-  await sesClient.send(
-    new SendEmailCommand({
-      Source: `VayuStudio <${FROM_EMAIL}>`,
-      Destination: { ToAddresses: [override] },
-      Message: {
-        Subject: { Data: `[TEST OTP for ${phone}] Your VayuStudio OTP is ${otp}` },
-        Body: {
-          Html: {
-            Data: `<p style="font-family:monospace;font-size:32px;letter-spacing:4px;color:#00C6FF;">${otp}</p><p>Phone: ${phone}<br>Valid for 10 minutes.</p>`,
-            Charset: 'UTF-8',
-          },
-          Text: { Data: `OTP for ${phone}: ${otp}\nValid for 10 minutes.`, Charset: 'UTF-8' },
         },
       },
     })
