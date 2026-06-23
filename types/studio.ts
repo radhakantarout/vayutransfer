@@ -8,9 +8,9 @@ export type StudioPlan = 'STARTER' | 'PRO' | 'STUDIO' | 'ENTERPRISE'
 export interface StudioUser {
   userId: string
   role: StudioRole
-  email: string
-  phone: string
-  name: string
+  email?: string
+  phone?: string
+  name?: string
   passwordHash?: string
   linkedStudioId?: string
   linkedProjectIds?: string[]

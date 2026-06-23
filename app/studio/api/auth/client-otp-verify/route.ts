@@ -7,7 +7,7 @@ import type { StudioProject, StudioUser } from '@/types/studio'
 
 export async function POST(req: NextRequest) {
   try {
-    const { sessionId, otp, projectToken } = await req.json()
+    const { sessionId, otp, projectToken, name, phone } = await req.json()
 
     if (!sessionId || !otp || !projectToken) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
@@ -18,7 +18,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'INVALID_OTP' }, { status: 401 })
     }
 
-    // Get project to extract projectId
+    const { email } = verified
+
     const projects = await studioQueryByIndex<StudioProject>(
       TABLES.projects,
       'clientShareToken-index',
@@ -30,12 +31,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 404 })
     }
 
-    // Find or create CLIENT user record by phone
+    // Find or create CLIENT user by email (primary identifier)
     const existingUsers = await studioQueryByIndex<StudioUser>(
       TABLES.users,
-      'phone-index',
-      'phone = :phone',
-      { ':phone': verified.phone }
+      'email-index',
+      'email = :e',
+      { ':e': email }
     )
 
     let user = existingUsers[0]
@@ -46,7 +47,9 @@ export async function POST(req: NextRequest) {
       user = {
         userId,
         role: 'CLIENT',
-        phone: verified.phone,
+        email,
+        name:  name  || project.clientName,
+        phone: phone || undefined,
         linkedProjectIds: [project.projectId],
         status: 'ACTIVE',
         lastLoginAt: now,
@@ -55,15 +58,27 @@ export async function POST(req: NextRequest) {
       }
       await studioPutItem(TABLES.users, user as unknown as Record<string, unknown>)
     } else {
-      // Add projectId to linkedProjectIds if not already there
+      // Merge new project + update profile fields if provided
       const ids = new Set(user.linkedProjectIds ?? [])
       ids.add(project.projectId)
+      const updates: string[] = [
+        'SET linkedProjectIds = :ids',
+        'lastLoginAt = :now',
+        'updatedAt = :now',
+      ]
+      const values: Record<string, unknown> = { ':ids': Array.from(ids), ':now': now }
+
+      if (name && !user.name)   { updates.push('  #n = :name');  values[':name']  = name;  }
+      if (phone && !user.phone) { updates.push('  phone = :phone'); values[':phone'] = phone; }
+
       await studioUpdateItem(
         TABLES.users,
         { userId: user.userId },
-        'SET linkedProjectIds = :ids, lastLoginAt = :now, updatedAt = :now',
-        { ':ids': Array.from(ids), ':now': now }
+        updates.join(', '),
+        values,
+        name && !user.name ? { '#n': 'name' } : undefined
       )
+      user = { ...user, linkedProjectIds: Array.from(ids) }
     }
 
     const token = await signStudioJWT({
@@ -78,7 +93,7 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30, // 30d
+      maxAge: 60 * 60 * 24 * 30,
       path: '/',
     })
     return response

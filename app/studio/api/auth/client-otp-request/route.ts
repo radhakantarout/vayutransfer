@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns'
 import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { generateOTP, storeOTP } from '@/lib/studio/otp'
+import { sendClientOtpEmail } from '@/lib/aws/ses'
 import type { StudioProject } from '@/types/studio'
-
-const sns = new SNSClient({ region: process.env.SNS_REGION ?? 'ap-south-1' })
 
 export async function POST(req: NextRequest) {
   try {
-    const { phone, projectToken } = await req.json()
+    const { email, projectToken } = await req.json()
 
-    if (!phone || !projectToken) {
+    if (!email || !projectToken) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
 
-    // Validate project token exists and is not expired
     const projects = await studioQueryByIndex<StudioProject>(
       TABLES.projects,
       'clientShareToken-index',
@@ -34,16 +31,10 @@ export async function POST(req: NextRequest) {
     const otp = generateOTP()
     const sessionId = randomUUID()
 
-    await storeOTP(sessionId, otp, phone, projectToken)
+    await storeOTP(sessionId, otp, email, projectToken)
+    await sendClientOtpEmail(email, project.clientName, otp)
 
-    if (process.env.SNS_PRODUCTION_ENABLED === 'true') {
-      await sns.send(new PublishCommand({
-        PhoneNumber: phone.startsWith('+') ? phone : `+91${phone}`,
-        Message: `Your VayuStudio OTP is ${otp}. Valid for 10 minutes. Do not share this with anyone.`,
-      }))
-    } else {
-      console.log(`[OTP] ${phone}: ${otp}`)
-    }
+    console.log(`[OTP] ${email}: ${otp}`)
 
     return NextResponse.json({ success: true, data: { sessionId } })
   } catch (err) {

@@ -22,14 +22,42 @@ export async function GET(req: NextRequest) {
       return acc
     }, {})
 
+    // Client stats
+    const clients = users.filter((u) => u.role === 'CLIENT')
+    const projectStudioMap = new Map(projects.map((p) => [p.projectId, p.studioId]))
+
+    const crossStudioClients = clients.filter((c) => {
+      if (!c.linkedProjectIds?.length) return false
+      const studioIds = new Set(
+        c.linkedProjectIds.map((pid) => projectStudioMap.get(pid)).filter(Boolean)
+      )
+      return studioIds.size > 1
+    }).length
+
+    // Per-studio client count
+    const clientsPerStudio: Record<string, number> = {}
+    for (const client of clients) {
+      const seen = new Set<string>()
+      for (const pid of client.linkedProjectIds ?? []) {
+        const sid = projectStudioMap.get(pid)
+        if (sid && !seen.has(sid)) {
+          seen.add(sid)
+          clientsPerStudio[sid] = (clientsPerStudio[sid] ?? 0) + 1
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
-        totalStudios:    studios.length,
-        activeStudios:   studios.filter((s) => s.status === 'ACTIVE').length,
-        totalProjects:   projects.length,
-        totalStorageGB:  +(totalStorageBytes / (1024 ** 3)).toFixed(2),
-        totalUsers:      users.length,
+        totalStudios:       studios.length,
+        activeStudios:      studios.filter((s) => s.status === 'ACTIVE').length,
+        totalProjects:      projects.length,
+        totalStorageGB:     +(totalStorageBytes / (1024 ** 3)).toFixed(2),
+        totalUsers:         users.length,
+        totalClients:       clients.length,
+        crossStudioClients,
+        clientsPerStudio,
         usersByRole,
       },
     })
