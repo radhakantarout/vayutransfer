@@ -47,8 +47,6 @@ export async function POST(req: NextRequest) {
         userId,
         role: 'CLIENT',
         phone: verified.phone,
-        email: '',
-        name: '',
         linkedProjectIds: [project.projectId],
         status: 'ACTIVE',
         lastLoginAt: now,
