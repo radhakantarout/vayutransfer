@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import type { StudioProject } from '@/types/studio'
+import { sendGalleryShareEmail } from '@/lib/aws/ses'
+import type { StudioProject, Studio } from '@/types/studio'
 
 export async function POST(
   req: NextRequest,
@@ -18,11 +19,14 @@ export async function POST(
     const { projectId } = params
     const studioId = auth.studioId!
 
-    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
+    const [project, studio] = await Promise.all([
+      studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId }),
+      studioGetItem<Studio>(TABLES.studios, { studioId }),
+    ])
+
     if (!project) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
-
     if (project.totalFiles === 0) {
       return NextResponse.json(
         { success: false, error: 'NO_FILES', message: 'Upload at least one photo before generating a share link' },
@@ -42,8 +46,20 @@ export async function POST(
       { '#s': 'status' }
     )
 
-    const studioUrl = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
-    const shareUrl = `${studioUrl}/studio/gallery/${token}`
+    const shareUrl = `${req.nextUrl.origin}/studio/gallery/${token}`
+
+    // Send email to client
+    if (project.clientEmail) {
+      sendGalleryShareEmail(
+        project.clientEmail,
+        project.clientName,
+        studio?.name ?? 'Your photographer',
+        project.eventType,
+        project.eventDate,
+        shareUrl,
+        expiryDays
+      ).catch((err) => console.error('[share-link] email send failed', err))
+    }
 
     return NextResponse.json({ success: true, data: { shareUrl, expiresAt } })
   } catch (err) {

@@ -16,6 +16,9 @@ interface Stats {
   totalProjects: number
   totalStorageGB: number
   totalUsers: number
+  totalClients: number
+  crossStudioClients: number
+  clientsPerStudio: Record<string, number>
   usersByRole: Record<string, number>
 }
 
@@ -89,16 +92,19 @@ export default function OwnerStudiosPage() {
       {confirmDelete && <div className="fixed inset-0 z-10" onClick={() => setConfirmDelete(null)} />}
       {/* Stats bar */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
-            { label: 'Studios',  value: stats.totalStudios },
-            { label: 'Projects', value: stats.totalProjects },
-            { label: 'Storage',  value: `${stats.totalStorageGB} GB` },
-            { label: 'Users',    value: stats.totalUsers },
-          ].map(({ label, value }) => (
+            { label: 'Studios',         value: stats.totalStudios },
+            { label: 'Projects',        value: stats.totalProjects },
+            { label: 'Storage',         value: `${stats.totalStorageGB} GB` },
+            { label: 'Clients',         value: stats.totalClients },
+            { label: 'Cross-studio',    value: stats.crossStudioClients, hint: 'clients in 2+ studios' },
+            { label: 'Admins',          value: stats.usersByRole['ADMIN'] ?? 0 },
+          ].map(({ label, value, hint }) => (
             <div key={label} className="bg-card border border-border rounded-xl px-4 py-3">
               <div className="text-xl font-bold text-text-primary">{value}</div>
               <div className="text-xs text-muted mt-0.5">{label}</div>
+              {hint && <div className="text-xs text-muted/60 mt-0.5">{hint}</div>}
             </div>
           ))}
         </div>
@@ -183,6 +189,8 @@ export default function OwnerStudiosPage() {
                   <span>{s.plan}</span>
                   <span>·</span>
                   <span>{s.projectCount} projects</span>
+                  <span>·</span>
+                  <span>{stats?.clientsPerStudio?.[s.studioId] ?? 0} clients</span>
                   <span>·</span>
                   <span>{formatBytes(s.storageUsedBytes ?? 0)}</span>
                   <span>·</span>

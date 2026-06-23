@@ -13,6 +13,95 @@ const sesClient = new SESClient({
 
 const FROM_EMAIL = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
 
+export async function sendGalleryShareEmail(
+  to: string,
+  clientName: string,
+  studioName: string,
+  eventType: string,
+  eventDate: string,
+  shareUrl: string,
+  expiryDays: number
+): Promise<void> {
+  const expiry = new Date(Date.now() + expiryDays * 86400_000).toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata',
+  })
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudio</div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">${studioName}</div>
+    <p style="font-size:16px;font-weight:600;color:#E0EAF8;margin:0 0 8px;">Hi ${clientName},</p>
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 28px;">
+      Your photos from <strong style="color:#E0EAF8;">${eventType.replace('_', ' ')}</strong> are ready!
+      Click below to view and select your favourites.
+    </p>
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:16px 20px;margin-bottom:28px;">
+      <div style="color:#5A7090;font-size:12px;">Event date</div>
+      <div style="font-size:14px;color:#E0EAF8;font-weight:600;margin-top:2px;">${new Date(eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+      <div style="color:#5A7090;font-size:12px;margin-top:10px;">Gallery expires</div>
+      <div style="font-size:14px;color:#E0EAF8;font-weight:600;margin-top:2px;">${expiry}</div>
+    </div>
+    <a href="${shareUrl}"
+       style="display:block;background:#00C6FF;color:#0B0F1A;text-align:center;padding:14px;border-radius:10px;font-weight:700;font-size:15px;text-decoration:none;margin-bottom:20px;">
+      View Your Gallery →
+    </a>
+    <p style="color:#5A7090;font-size:12px;line-height:1.6;margin:0;">
+      You'll be asked to verify your email when you open the link. This keeps your photos private and secure.
+    </p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `${studioName} via VayuStudio <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `Your photos are ready — ${studioName}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Hi ${clientName},\n\nYour photos from ${eventType.replace('_', ' ')} are ready.\n\nView gallery: ${shareUrl}\n\nExpires: ${expiry}`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+export async function sendClientOtpEmail(
+  to: string,
+  clientName: string,
+  otp: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:400px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;text-align:center;">
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:24px;">VayuStudio</div>
+    <p style="color:#8BAAB8;font-size:14px;margin:0 0 24px;">Hi ${clientName}, here is your one-time code to access your gallery:</p>
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:20px;margin-bottom:24px;">
+      <div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#00C6FF;font-family:monospace;">${otp}</div>
+    </div>
+    <p style="color:#5A7090;font-size:12px;margin:0;">Valid for 10 minutes. Do not share this with anyone.</p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudio <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `${otp} is your VayuStudio verification code` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Your VayuStudio OTP: ${otp}\n\nValid for 10 minutes. Do not share this with anyone.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
 function formatPaise(paise: number): string {
   return `₹${(paise / 100).toFixed(2)}`
 }
