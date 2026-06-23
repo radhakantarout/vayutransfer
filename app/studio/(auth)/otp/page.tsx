@@ -1,7 +1,15 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { useState, Suspense, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+
+const OTP_TTL_SECONDS = 600 // 10 minutes, must match server
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 
 function OTPForm() {
   const router = useRouter()
@@ -14,28 +22,72 @@ function OTPForm() {
   const [sessionId, setSessionId] = useState('')
   const [error, setError]         = useState<string | null>(null)
   const [loading, setLoading]     = useState(false)
+  const [resending, setResending] = useState(false)
+  const [timeLeft, setTimeLeft]   = useState(OTP_TTL_SECONDS)
+
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const startTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    setTimeLeft(OTP_TTL_SECONDS)
+    timerRef.current = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          clearInterval(timerRef.current!)
+          return 0
+        }
+        return t - 1
+      })
+    }, 1000)
+  }, [])
+
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
+
+  const sendOTP = async (phoneNumber: string): Promise<string | null> => {
+    const res = await fetch('/studio/api/auth/client-otp-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: phoneNumber, projectToken }),
+    })
+    const data = await res.json()
+    if (!data.success) {
+      if (data.error === 'TOKEN_EXPIRED') setError('This gallery link has expired.')
+      else setError('Failed to send OTP. Try again.')
+      return null
+    }
+    return data.data.sessionId
+  }
 
   const requestOTP = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      const res = await fetch('/studio/api/auth/client-otp-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, projectToken }),
-      })
-      const data = await res.json()
-      if (!data.success) {
-        setError(data.error === 'TOKEN_EXPIRED' ? 'This gallery link has expired.' : 'Failed to send OTP. Try again.')
-        return
-      }
-      setSessionId(data.data.sessionId)
+      const sid = await sendOTP(phone)
+      if (!sid) return
+      setSessionId(sid)
       setStep('otp')
+      startTimer()
     } catch {
       setError('Network error — please try again')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const resendOTP = async () => {
+    setError(null)
+    setResending(true)
+    setOtp('')
+    try {
+      const sid = await sendOTP(phone)
+      if (!sid) return
+      setSessionId(sid)
+      startTimer()
+    } catch {
+      setError('Network error — please try again')
+    } finally {
+      setResending(false)
     }
   }
 
@@ -108,9 +160,12 @@ function OTPForm() {
             </form>
           ) : (
             <form onSubmit={verifyOTP} className="space-y-5">
-              <h1 className="text-lg font-bold text-text-primary">Enter the OTP</h1>
-              <p className="text-sm text-muted">Sent to +91 {phone}. Valid for 10 minutes.</p>
+              <div>
+                <h1 className="text-lg font-bold text-text-primary">Enter the OTP</h1>
+                <p className="text-sm text-muted mt-1">Sent to +91 {phone}</p>
+              </div>
 
+              {/* OTP input */}
               <div className="space-y-2">
                 <label className="text-sm text-muted">6-digit code</label>
                 <input
@@ -120,9 +175,34 @@ function OTPForm() {
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   required
                   pattern="[0-9]{6}"
-                  placeholder="482910"
-                  className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent tracking-widest text-center text-lg"
+                  placeholder="_ _ _ _ _ _"
+                  autoFocus
+                  className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent tracking-[0.5em] text-center text-xl font-mono"
                 />
+              </div>
+
+              {/* Countdown + resend */}
+              <div className="flex items-center justify-between text-sm">
+                {timeLeft > 0 ? (
+                  <>
+                    <span className="text-muted">OTP expires in</span>
+                    <span className={`font-mono font-semibold tabular-nums ${timeLeft <= 60 ? 'text-danger' : 'text-accent'}`}>
+                      {formatTime(timeLeft)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-muted">Didn't receive it?</span>
+                    <button
+                      type="button"
+                      onClick={resendOTP}
+                      disabled={resending}
+                      className="text-accent font-semibold hover:underline disabled:opacity-50"
+                    >
+                      {resending ? 'Sending…' : 'Resend OTP'}
+                    </button>
+                  </>
+                )}
               </div>
 
               {error && (
@@ -139,10 +219,10 @@ function OTPForm() {
 
               <button
                 type="button"
-                onClick={() => { setStep('phone'); setOtp(''); setError(null) }}
+                onClick={() => { setStep('phone'); setOtp(''); setError(null); if (timerRef.current) clearInterval(timerRef.current) }}
                 className="w-full text-sm text-muted hover:text-text-primary transition-colors"
               >
-                Change number
+                ← Change number
               </button>
             </form>
           )}
