@@ -170,7 +170,7 @@ export default function HomePage() {
 
         {pageState === 'idle' && (
           <a
-            href={process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'}
+            href={process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/studio/home`}
             className="mt-6 flex items-center justify-between bg-card border border-border hover:border-accent/40 rounded-2xl px-5 py-4 group transition-colors"
           >
             <div className="flex items-center gap-4">
