@@ -168,6 +168,28 @@ export default function HomePage() {
           <UploadZone onFilesSelect={handleFilesSelect} />
         )}
 
+        {pageState === 'idle' && (
+          <a
+            href={process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'}
+            className="mt-6 flex items-center justify-between bg-card border border-border hover:border-accent/40 rounded-2xl px-5 py-4 group transition-colors"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent font-bold text-sm flex-shrink-0">
+                VS
+              </div>
+              <div className="text-left">
+                <div className="font-semibold text-text-primary text-sm group-hover:text-accent transition-colors">
+                  VayuStudio — for photographers
+                </div>
+                <div className="text-xs text-muted mt-0.5">
+                  Share private galleries · Let clients choose their favourites
+                </div>
+              </div>
+            </div>
+            <div className="text-muted group-hover:text-accent transition-colors text-lg flex-shrink-0">→</div>
+          </a>
+        )}
+
         {pageState === 'pricing' && entries.length > 0 && !session && (
           <div className="space-y-4">
             <UploadZone onFilesSelect={handleFilesSelect} entries={entries} />

@@ -5,12 +5,15 @@ export async function middleware(request: NextRequest) {
   const host = request.headers.get('host') ?? ''
   const path = request.nextUrl.pathname
 
-  // Subdomain routing — studio.vayutransfer.com → /studio/*
-  if (
-    (host === 'studio.vayutransfer.com' || host === 'studio.localhost:3000') &&
-    !path.startsWith('/studio')
-  ) {
-    return NextResponse.rewrite(new URL(`/studio${path}`, request.url))
+  const isStudioSubdomain =
+    host === 'studio.vayutransfer.com' ||
+    host === 'www.studio.vayutransfer.com' ||
+    host === 'studio.localhost:3000'
+
+  // Subdomain routing — studio.vayutransfer.com/* → /studio/*
+  if (isStudioSubdomain && !path.startsWith('/studio')) {
+    const target = path === '/' ? '/studio/home' : `/studio${path}`
+    return NextResponse.rewrite(new URL(target, request.url))
   }
 
   // Platform Owner routes — OWNER role only
@@ -33,5 +36,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/studio/:path*'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
 }
