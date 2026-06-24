@@ -123,7 +123,7 @@ export default function StudioHomePage() {
 
           <div className="flex flex-col sm:flex-row gap-3 animate-fade-up-delay-2">
             <Link
-              href="/studio/login"
+              href="/studio/register"
               className="inline-flex items-center justify-center gap-2 font-bold px-7 py-3.5 rounded-xl text-base transition-all"
               style={{ backgroundColor: 'rgb(0 153 204)', color: 'rgb(15 32 64)' }}
             >
@@ -431,7 +431,7 @@ export default function StudioHomePage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
-              href="/studio/login"
+              href="/studio/register"
               className="inline-flex items-center justify-center gap-2 font-bold px-8 py-4 rounded-xl text-base transition-all shadow-lg hover:shadow-accent/30 hover:scale-105"
               style={{ backgroundColor: 'rgb(0 153 204)', color: 'white' }}
             >
