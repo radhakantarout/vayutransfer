@@ -292,8 +292,7 @@ export async function sendStudioCredentialsEmail(
   adminName: string,
   studioName: string,
   email: string,
-  password: string,
-  loginUrl: string
+  setupUrl: string
 ): Promise<void> {
   const html = `
 <!DOCTYPE html>
@@ -304,26 +303,21 @@ export async function sendStudioCredentialsEmail(
     <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
     <div style="color:#5A7090;font-size:13px;margin-bottom:32px;">Your studio is ready 🎉</div>
 
+    <p style="font-size:22px;font-weight:700;margin:0 0 8px;color:#E0EAF8;">Congratulations! 🎉🎁</p>
     <h2 style="font-size:18px;font-weight:700;margin:0 0 8px;color:#E0EAF8;">Welcome, ${adminName}!</h2>
-    <p style="color:#5A7090;font-size:14px;margin:0 0 28px;">Your studio <strong style="color:#E0EAF8;">${studioName}</strong> has been approved and set up. Here are your login credentials:</p>
+    <p style="color:#5A7090;font-size:14px;margin:0 0 28px;">Your studio <strong style="color:#E0EAF8;">${studioName}</strong> has been approved and is ready to use. Click the button below to set your password and sign in.</p>
 
     <div style="background:#0B0F1A;border-radius:10px;padding:20px;margin-bottom:28px;border:1px solid #1E2D45;">
-      <div style="margin-bottom:12px;">
-        <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Email</div>
-        <div style="font-size:15px;font-weight:600;">${email}</div>
-      </div>
-      <div>
-        <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Temporary Password</div>
-        <div style="font-size:18px;font-weight:800;color:#00C6FF;letter-spacing:0.08em;">${password}</div>
-      </div>
+      <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Your login email</div>
+      <div style="font-size:15px;font-weight:600;">${email}</div>
     </div>
 
-    <a href="${loginUrl}"
+    <a href="${setupUrl}"
       style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;margin-bottom:20px;">
-      Sign in to your studio →
+      Set your password &amp; sign in →
     </a>
 
-    <p style="color:#5A7090;font-size:12px;">Please change your password after your first login. If you have any questions, reply to this email.</p>
+    <p style="color:#5A7090;font-size:12px;">The link above takes you directly to the password setup screen. If you have any questions, reply to this email.</p>
   </div>
 </body>
 </html>`.trim()
@@ -336,7 +330,7 @@ export async function sendStudioCredentialsEmail(
         Subject: { Data: `Your VayuStudio is ready — ${studioName}` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
-          Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nEmail: ${email}\nPassword: ${password}\n\nLogin: ${loginUrl}`, Charset: 'UTF-8' },
+          Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nYour login email: ${email}\n\nSet your password and sign in: ${setupUrl}`, Charset: 'UTF-8' },
         },
       },
     })
