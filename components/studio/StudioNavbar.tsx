@@ -262,7 +262,7 @@ export default function StudioNavbar() {
                 </div>
 
                 <Link
-                  href="/studio/login"
+                  href="/studio/register"
                   className="text-sm font-bold px-4 py-2 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors"
                 >
                   Get Started
@@ -357,7 +357,7 @@ export default function StudioNavbar() {
                   Login
                 </button>
                 <Link
-                  href="/studio/login"
+                  href="/studio/register"
                   onClick={closeAll}
                   className="py-3 rounded-xl bg-accent text-bg text-sm font-bold text-center hover:bg-accent/90 transition-colors"
                 >

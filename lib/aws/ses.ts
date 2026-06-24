@@ -225,3 +225,120 @@ export async function sendWalletCreditedEmail(
     })
   )
 }
+
+export async function sendEnquiryNotificationEmail(
+  to: string,
+  studioName: string,
+  adminName: string,
+  adminEmail: string,
+  adminPhone: string,
+  message: string,
+  approveUrl: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>New Studio Enquiry</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:560px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:32px;">Platform Owner Alert</div>
+
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;color:#E0EAF8;">New Studio Registration Request</h2>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+      ${[
+        ['Studio Name', studioName],
+        ['Contact Name', adminName],
+        ['Email', adminEmail],
+        ['Phone', adminPhone],
+        ...(message ? [['About', message]] : []),
+      ].map(([label, value]) => `
+      <tr>
+        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:120px;border-bottom:1px solid #1E2D45;">${label}</td>
+        <td style="padding:10px 0;font-size:14px;font-weight:500;border-bottom:1px solid #1E2D45;">${value}</td>
+      </tr>`).join('')}
+    </table>
+
+    <a href="${approveUrl}"
+      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;margin-bottom:16px;">
+      ✓ Approve &amp; Create Studio
+    </a>
+
+    <p style="color:#5A7090;font-size:12px;margin-top:20px;">
+      This link expires in 7 days. Clicking it will create the studio and email login credentials to the photographer.
+    </p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: `New studio enquiry — ${studioName}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: `New studio enquiry\n\nStudio: ${studioName}\nContact: ${adminName}\nEmail: ${adminEmail}\nPhone: ${adminPhone}${message ? `\nAbout: ${message}` : ''}\n\nApprove: ${approveUrl}`, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}
+
+export async function sendStudioCredentialsEmail(
+  to: string,
+  adminName: string,
+  studioName: string,
+  email: string,
+  password: string,
+  loginUrl: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Your VayuStudio is ready</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:32px;">Your studio is ready 🎉</div>
+
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 8px;color:#E0EAF8;">Welcome, ${adminName}!</h2>
+    <p style="color:#5A7090;font-size:14px;margin:0 0 28px;">Your studio <strong style="color:#E0EAF8;">${studioName}</strong> has been approved and set up. Here are your login credentials:</p>
+
+    <div style="background:#0B0F1A;border-radius:10px;padding:20px;margin-bottom:28px;border:1px solid #1E2D45;">
+      <div style="margin-bottom:12px;">
+        <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Email</div>
+        <div style="font-size:15px;font-weight:600;">${email}</div>
+      </div>
+      <div>
+        <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Temporary Password</div>
+        <div style="font-size:18px;font-weight:800;color:#00C6FF;letter-spacing:0.08em;">${password}</div>
+      </div>
+    </div>
+
+    <a href="${loginUrl}"
+      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;margin-bottom:20px;">
+      Sign in to your studio →
+    </a>
+
+    <p style="color:#5A7090;font-size:12px;">Please change your password after your first login. If you have any questions, reply to this email.</p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: `Your VayuStudio is ready — ${studioName}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nEmail: ${email}\nPassword: ${password}\n\nLogin: ${loginUrl}`, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}
