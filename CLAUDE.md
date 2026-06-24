@@ -98,7 +98,8 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 ### AWS Infrastructure (ap-south-1)
 - S3 bucket: vayu-transfer-files (CORS + lifecycle configured)
 - DynamoDB: all 6 tables active (including vayu-users)
-- SES: sandbox mode, FROM = noreply@vayutransfer.com (domain verified + DKIM)
+- SES: PRODUCTION (approved 2026-06-22), FROM = noreply@vayutransfer.com (domain verified + DKIM)
+- SNS: PENDING production access (OTP SMS not working in production yet — dev logs OTP to console)
 
 ### Key Decisions Made
 - Google OAuth users get ₹50 bonus only (dev seed skipped via skipDevSeed=true)
@@ -108,11 +109,14 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - Google Console needs BOTH: https://vayutransfer.com AND https://www.vayutransfer.com callback URIs
 - Files under 500 MB are completely free (storage + all downloads). Default download count = 10 for free transfers.
 - "Download slots" renamed to plain English ("how many people can download") across all UI
+- VayuStudio enquiry approve flow: one-click link in email creates studio + emails credentials to photographer
+- test.vayutransfer.com deploys develop branch (Vercel preview, public access, same AWS infra)
 
 ### Next Session Priorities
 1. Razorpay live keys (when account approved)
-2. SES production access request (submit to AWS)
-3. Test full upload → download flow on production with real Google account
+2. SNS production access request (submit to AWS — needed for client OTP SMS)
+3. Watermark Lambda — build real implementation (currently placeholder, marks files READY in dev)
+4. Test full VayuTransfer upload → download flow on production with real Google account
 
 ---
 
