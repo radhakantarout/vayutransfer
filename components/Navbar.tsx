@@ -27,12 +27,11 @@ const STUDIO_URL = process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUB
 
 export default function Navbar() {
   const { data: session, status } = useSession()
-  const [menuOpen, setMenuOpen]   = useState(false)
+  const [menuOpen, setMenuOpen]     = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { walletId, balancePaise, refreshBalance, topupOpen, openTopup, closeTopup } = useWallet()
   const { theme, toggle } = useTheme()
 
-  /* Lock body scroll when mobile drawer is open */
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
@@ -42,23 +41,24 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className="border-b border-border bg-nav/90 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+      {/* ── Navbar ── same bg-card / border-border as VayuStudio ── */}
+      <nav className="sticky top-0 z-50 bg-card border-b border-border">
+        <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between gap-4">
 
           {/* Logo */}
           <Link href="/" onClick={closeAll} className="flex items-center gap-2 flex-shrink-0">
             <Image src="/logo.png" alt="VayuTransfer" width={36} height={36} className="h-9 w-9 flex-shrink-0" />
-            <span className="text-lg font-extrabold text-white leading-none">
+            <span className="text-lg font-extrabold text-text-primary leading-none">
               Vayu<span className="text-accent">Transfer</span>
             </span>
           </Link>
 
           {/* Desktop nav links */}
-          <div className="hidden md:flex items-center gap-6 text-sm text-white/70">
-            <Link href="/" className="hover:text-white transition-colors">Transfer Files</Link>
-            <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
+          <div className="hidden md:flex items-center gap-7 text-sm">
+            <Link href="/" className="text-muted hover:text-text-primary transition-colors">Transfer Files</Link>
+            <Link href="/pricing" className="text-muted hover:text-text-primary transition-colors">Pricing</Link>
             {session && (
-              <Link href="/transfers" className="hover:text-white transition-colors">My Transfers</Link>
+              <Link href="/transfers" className="text-muted hover:text-text-primary transition-colors">My Transfers</Link>
             )}
             <a
               href={STUDIO_URL}
@@ -70,13 +70,13 @@ export default function Navbar() {
           </div>
 
           {/* Right side */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto">
 
-            {/* Theme toggle — always visible */}
+            {/* Theme toggle */}
             <button
               onClick={toggle}
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="w-8 h-8 flex items-center justify-center rounded-full border border-white/15 hover:border-accent text-white/50 hover:text-accent transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-border text-muted hover:border-accent hover:text-accent transition-colors"
             >
               {theme === 'dark' ? (
                 <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -93,10 +93,10 @@ export default function Navbar() {
               )}
             </button>
 
-            {/* Desktop auth controls — hidden on mobile */}
+            {/* Desktop auth — hidden on mobile */}
             <div className="hidden md:flex items-center gap-2">
               {status === 'loading' ? (
-                <div className="w-8 h-8 rounded-full bg-white/10 animate-pulse" />
+                <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
               ) : session ? (
                 <>
                   {/* Wallet balance */}
@@ -126,14 +126,14 @@ export default function Navbar() {
                           src={session.user.image}
                           alt={session.user.name ?? 'User'}
                           width={32} height={32}
-                          className="rounded-full border border-white/20"
+                          className="rounded-full border border-border"
                         />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent text-sm font-bold">
                           {session.user?.name?.[0]?.toUpperCase() ?? 'U'}
                         </div>
                       )}
-                      <svg className="w-3.5 h-3.5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-3.5 h-3.5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </button>
@@ -181,7 +181,7 @@ export default function Navbar() {
             {/* Mobile hamburger */}
             <button
               onClick={() => setMobileOpen((v) => !v)}
-              className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg border border-white/20 text-white/80 hover:border-white/40 hover:text-white transition-colors"
+              className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg border border-border text-text-primary hover:bg-border/40 transition-colors"
               aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
             >
               {mobileOpen ? <CloseIcon /> : <HamburgerIcon />}
@@ -193,17 +193,16 @@ export default function Navbar() {
       {/* Mobile backdrop */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer — same bg-card as VayuStudio */}
       <div
-        className={`fixed top-16 left-0 right-0 z-50 md:hidden border-b border-white/10 shadow-2xl
+        className={`fixed top-14 left-0 right-0 z-50 md:hidden bg-card border-b border-border shadow-2xl
           transition-all duration-200 ease-out
           ${mobileOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
-        style={{ backgroundColor: 'rgb(15 32 64)' }}
       >
         <div className="px-5 pb-6 pt-3">
 
@@ -217,10 +216,10 @@ export default function Navbar() {
               key={href}
               href={href}
               onClick={closeAll}
-              className="flex items-center justify-between py-3.5 text-base font-medium text-white/75 border-b border-white/10 hover:text-white transition-colors"
+              className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors"
             >
               {label}
-              <span className="text-white/30 text-sm">→</span>
+              <span className="text-muted text-sm">→</span>
             </Link>
           ))}
 
@@ -228,7 +227,7 @@ export default function Navbar() {
           <a
             href={STUDIO_URL}
             onClick={closeAll}
-            className="flex items-center justify-between py-3.5 text-base font-semibold text-accent border-b border-white/10 hover:text-accent/80 transition-colors"
+            className="flex items-center justify-between py-3.5 text-base font-semibold text-accent border-b border-border/40 hover:text-accent/80 transition-colors"
           >
             <span className="flex items-center gap-2">
               VayuStudio
@@ -240,20 +239,20 @@ export default function Navbar() {
           {/* Auth section */}
           <div className="mt-4">
             {status === 'loading' ? (
-              <div className="h-12 bg-white/5 rounded-xl animate-pulse" />
+              <div className="h-12 bg-border/40 rounded-xl animate-pulse" />
             ) : session ? (
               <div className="space-y-1">
-                {/* User info */}
-                <div className="flex items-center gap-3 py-3 border-b border-white/10 mb-2">
+                {/* User info row */}
+                <div className="flex items-center gap-3 py-3 border-b border-border mb-2">
                   {session.user?.image ? (
-                    <Image src={session.user.image} alt={session.user.name ?? ''} width={36} height={36} className="rounded-full border border-white/20" />
+                    <Image src={session.user.image} alt={session.user.name ?? ''} width={36} height={36} className="rounded-full border border-border" />
                   ) : (
                     <div className="w-9 h-9 rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent font-bold">
                       {session.user?.name?.[0]?.toUpperCase() ?? 'U'}
                     </div>
                   )}
                   <div>
-                    <div className="text-sm font-semibold text-white">{session.user?.name}</div>
+                    <div className="text-sm font-semibold text-text-primary">{session.user?.name}</div>
                     {walletId && (
                       <div className="text-xs text-success font-medium">₹{(balancePaise / 100).toFixed(2)} balance</div>
                     )}
@@ -269,12 +268,12 @@ export default function Navbar() {
                 </div>
 
                 <Link href="/profile" onClick={closeAll}
-                  className="flex items-center justify-between py-2.5 text-sm text-white/70 hover:text-white transition-colors">
-                  Profile <span className="text-white/30">→</span>
+                  className="flex items-center justify-between py-2.5 text-sm text-muted hover:text-text-primary transition-colors">
+                  Profile <span className="text-muted">→</span>
                 </Link>
                 <Link href="/transfers" onClick={closeAll}
-                  className="flex items-center justify-between py-2.5 text-sm text-white/70 hover:text-white transition-colors">
-                  My Transfers <span className="text-white/30">→</span>
+                  className="flex items-center justify-between py-2.5 text-sm text-muted hover:text-text-primary transition-colors">
+                  My Transfers <span className="text-muted">→</span>
                 </Link>
 
                 <button
@@ -287,7 +286,7 @@ export default function Navbar() {
             ) : (
               <button
                 onClick={() => { closeAll(); signIn('google') }}
-                className="w-full flex items-center justify-center gap-2 bg-white text-gray-800 font-semibold py-3 rounded-xl hover:bg-gray-100 transition-colors text-sm"
+                className="w-full flex items-center justify-center gap-2 bg-white text-gray-800 font-semibold py-3 rounded-xl hover:bg-gray-100 transition-colors text-sm border border-gray-200"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
