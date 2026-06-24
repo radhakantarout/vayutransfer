@@ -33,7 +33,9 @@ export async function GET(req: NextRequest) {
       TABLES.users, 'email-index', 'email = :e', { ':e': email }
     )
     if (existing.length > 0) {
-      return NextResponse.redirect(new URL('/studio/admin/studios?notice=already_approved', req.url))
+      return NextResponse.redirect(
+        new URL(`/studio/approved?status=already_active&email=${encodeURIComponent(email)}`, req.url)
+      )
     }
 
     const studioId = randomUUID()
@@ -85,9 +87,11 @@ export async function GET(req: NextRequest) {
     )
 
     console.log(`[approve] Studio created: ${studioName} (${studioId}) for ${email}`)
-    return NextResponse.redirect(new URL(`/studio/admin/studios?approved=${studioId}`, req.url))
+    return NextResponse.redirect(
+      new URL(`/studio/approved?status=created&name=${encodeURIComponent(studioName)}&email=${encodeURIComponent(email)}`, req.url)
+    )
   } catch (err) {
     console.error('[approve GET]', err)
-    return NextResponse.redirect(new URL('/studio/home?error=invalid_token', req.url))
+    return NextResponse.redirect(new URL('/studio/approved?status=error', req.url))
   }
 }
