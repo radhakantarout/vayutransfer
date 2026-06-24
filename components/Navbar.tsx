@@ -30,13 +30,13 @@ export default function Navbar() {
             {session && (
               <Link href="/transfers" className="hover:text-white transition-colors">My Transfers</Link>
             )}
-            <Link
-              href="/vayustudio"
+            <a
+              href={process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/studio/home`}
               className="flex items-center gap-1.5 text-accent hover:text-accent/80 font-semibold transition-colors"
             >
               VayuStudio
               <span className="text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-bold leading-none">NEW</span>
-            </Link>
+            </a>
           </div>
 
           {/* Right section */}
