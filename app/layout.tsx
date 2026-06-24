@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import Providers from '@/components/Providers'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
+import { ConditionalNavbar, ConditionalFooter } from '@/components/ConditionalNavbar'
 import UploadWidget from '@/components/UploadWidget'
 
 export const metadata: Metadata = {
@@ -47,9 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full">
         <Providers>
-          <Navbar />
+          <ConditionalNavbar />
           <div className="flex-1">{children}</div>
-          <Footer />
+          <ConditionalFooter />
           <UploadWidget />
         </Providers>
       </body>
