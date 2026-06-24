@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import type { StudioRole } from '@/lib/studio/auth'
 
@@ -135,9 +136,12 @@ export default function StudioNavbar() {
           <Link
             href="/studio/home"
             onClick={closeAll}
-            className="text-lg font-extrabold text-text-primary flex-shrink-0"
+            className="flex items-center gap-2 flex-shrink-0"
           >
-            Vayu<span className="text-accent">Studio</span>
+            <Image src="/logo.png" alt="VayuStudio" width={36} height={36} className="h-9 w-9 flex-shrink-0" />
+            <span className="text-lg font-extrabold text-text-primary leading-none">
+              Vayu<span className="text-accent">Studio</span>
+            </span>
           </Link>
 
           {/* Desktop centre links */}
