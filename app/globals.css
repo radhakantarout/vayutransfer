@@ -38,3 +38,36 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* VayuStudio — floating photo grid animations */
+@keyframes float-col {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-24px); }
+}
+
+.float-col-1 {
+  animation: float-col 9s ease-in-out infinite;
+}
+.float-col-2 {
+  animation: float-col 11s ease-in-out infinite 3.5s;
+}
+.float-col-3 {
+  animation: float-col 8s ease-in-out infinite 6s;
+}
+
+/* Fade-up entrance for section content */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fade-up 0.7s ease-out forwards;
+}
+.animate-fade-up-delay {
+  animation: fade-up 0.7s ease-out 0.2s forwards;
+  opacity: 0;
+}
+.animate-fade-up-delay-2 {
+  animation: fade-up 0.7s ease-out 0.4s forwards;
+  opacity: 0;
+}
