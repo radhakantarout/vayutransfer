@@ -82,9 +82,8 @@ export async function GET(req: NextRequest) {
       studioPutItem(TABLES.users,   adminUser as unknown as Record<string, unknown>),
     ])
 
-    void sendStudioCredentialsEmail(
-      email, adminName, studioName, email, password, `${origin}/studio/login`
-    )
+    const setupUrl = `${origin}/studio/login?setup=1&email=${encodeURIComponent(email)}`
+    void sendStudioCredentialsEmail(email, adminName, studioName, email, setupUrl)
 
     console.log(`[approve] Studio created: ${studioName} (${studioId}) for ${email}`)
     return NextResponse.redirect(

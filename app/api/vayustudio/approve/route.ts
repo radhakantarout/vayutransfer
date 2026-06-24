@@ -125,7 +125,8 @@ export async function GET(req: NextRequest) {
     <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudio</div>
     <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">Your studio is ready</div>
 
-    <p style="color:#E0EAF8;font-size:15px;margin:0 0 24px;">Hi ${name},</p>
+    <p style="color:#E0EAF8;font-size:22px;font-weight:700;margin:0 0 8px;">Congratulations! 🎉🎁</p>
+    <p style="color:#E0EAF8;font-size:15px;margin:0 0 16px;">Hi ${name},</p>
     <p style="color:#8BAAB8;font-size:14px;line-height:1.6;margin:0 0 28px;">
       Your VayuStudio account has been set up. Use the credentials below to sign in and start uploading your first project.
     </p>
