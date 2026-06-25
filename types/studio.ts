@@ -58,6 +58,8 @@ export interface StudioProject {
   editingRequiredCount: number
   commentsCount: number
   eventLocation?: string
+  selectionMin?: number
+  selectionMax?: number
   clientShareToken?: string
   clientShareExpiresAt?: string
   printShareToken?: string

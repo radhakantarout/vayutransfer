@@ -15,7 +15,7 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { expiryDays = 30 } = await req.json().catch(() => ({}))
+    const { expiryDays = 30, selectionMin, selectionMax } = await req.json().catch(() => ({}))
     const { projectId } = params
     const studioId = auth.studioId!
 
@@ -38,11 +38,16 @@ export async function POST(
     const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
     const now = new Date().toISOString()
 
+    const hasRange = typeof selectionMin === 'number' && typeof selectionMax === 'number' && selectionMax > 0
     await studioUpdateItem(
       TABLES.projects,
       { studioId, projectId },
-      'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active',
-      { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' },
+      hasRange
+        ? 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active, selectionMin = :smin, selectionMax = :smax'
+        : 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active',
+      hasRange
+        ? { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE', ':smin': selectionMin, ':smax': selectionMax }
+        : { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' },
       { '#s': 'status' }
     )
 
