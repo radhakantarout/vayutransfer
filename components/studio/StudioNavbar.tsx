@@ -62,20 +62,22 @@ export default function StudioNavbar() {
   const router                      = useRouter()
   const pathname                    = usePathname()
 
-  // Re-fetch on every pathname change so login/logout reflects immediately.
-  // cache: 'no-store' prevents the browser from returning a stale cached
-  // "not logged in" response after the user has just signed in.
+  // Read the studio_ui cookie synchronously — set by the login API, cleared by logout.
+  // No async fetch needed: instant, no caching issues, always reflects real auth state.
   useEffect(() => {
-    const controller = new AbortController()
-    setAuth('loading')
-    fetch('/studio/api/auth/me', {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then((r) => r.json())
-      .then((d) => setAuth(d.data ?? null))
-      .catch((e) => { if (e.name !== 'AbortError') setAuth(null) })
-    return () => controller.abort()
+    const match = document.cookie
+      .split('; ')
+      .find((c) => c.startsWith('studio_ui='))
+    if (match) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(match.split('=').slice(1).join('=')))
+        setAuth({ role: parsed.role, userId: '', studioId: parsed.studioId ?? '', name: parsed.name ?? '', email: parsed.email ?? '' })
+      } catch {
+        setAuth(null)
+      }
+    } else {
+      setAuth(null)
+    }
   }, [pathname])
 
   // Close profile dropdown on outside click
