@@ -232,7 +232,7 @@ export default function ClientGalleryPage() {
                 {editCount} edits
               </span>
             )}
-            <span className="flex items-center gap-1.5 text-sm font-semibold text-pink-400">
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-rose-600">
               <HeartIcon filled className="w-4 h-4" />
               {selectedCount}
             </span>
@@ -247,8 +247,8 @@ export default function ClientGalleryPage() {
             <p className="text-xs font-bold text-muted uppercase tracking-wider mb-3">How to use your gallery</p>
             <div className="grid grid-cols-3 gap-3">
               <div className="flex flex-col items-center gap-1.5 text-center">
-                <div className="w-9 h-9 rounded-xl bg-pink-400/10 border border-pink-400/20 flex items-center justify-center">
-                  <HeartIcon filled className="w-5 h-5 text-pink-400" />
+                <div className="w-9 h-9 rounded-xl bg-rose-600/10 border border-rose-600/20 flex items-center justify-center">
+                  <HeartIcon filled className="w-5 h-5 text-rose-600" />
                 </div>
                 <p className="text-[11px] font-semibold text-text-primary">Tap to select</p>
                 <p className="text-[10px] text-muted leading-tight">Tap any photo to add it to your selection</p>
@@ -290,7 +290,7 @@ export default function ClientGalleryPage() {
                 <div
                   className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none transition-all duration-150
                     ${f.isSelected
-                      ? 'ring-2 ring-pink-400 ring-offset-2 ring-offset-bg shadow-md shadow-pink-400/20'
+                      ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-bg shadow-md shadow-rose-600/20'
                       : 'ring-1 ring-border hover:ring-2 hover:ring-border'
                     }`}
                   onClick={() => toggleSelect(f.fileId)}
@@ -314,11 +314,11 @@ export default function ClientGalleryPage() {
                     <div className="absolute inset-0 bg-black/15 pointer-events-none" />
                   )}
 
-                  {/* Heart — pops in on select, bottom-left */}
-                  <div className={`absolute bottom-2 left-2 transition-all duration-200 pointer-events-none ${
+                  {/* Heart — pops in on select, centered */}
+                  <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${
                     f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
                   }`}>
-                    <HeartIcon filled className="w-7 h-7 text-pink-400 drop-shadow-lg" />
+                    <HeartIcon filled className="w-14 h-14 text-rose-600 drop-shadow-lg" />
                   </div>
 
                   {/* Edit-required badge — top-left, visible when marked */}
@@ -338,22 +338,24 @@ export default function ClientGalleryPage() {
                   </button>
                 </div>
 
-                {/* ── 3-dot button — outside overflow-hidden ── */}
-                <button
-                  data-photomenu
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setOpenMenu(openMenu === f.fileId ? null : f.fileId)
-                  }}
-                  className={`absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full flex items-center justify-center transition-colors
-                    ${openMenu === f.fileId
-                      ? 'bg-accent text-bg'
-                      : 'bg-black/50 text-white hover:bg-black/75'
-                    }`}
-                  title="Photo options"
-                >
-                  <DotsIcon />
-                </button>
+                {/* ── 3-dot button — only when selected ── */}
+                {f.isSelected && (
+                  <button
+                    data-photomenu
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenMenu(openMenu === f.fileId ? null : f.fileId)
+                    }}
+                    className={`absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full flex items-center justify-center transition-colors
+                      ${openMenu === f.fileId
+                        ? 'bg-accent text-bg'
+                        : 'bg-black/50 text-white hover:bg-black/75'
+                      }`}
+                    title="Photo options"
+                  >
+                    <DotsIcon />
+                  </button>
+                )}
 
                 {/* ── Popover ── */}
                 {openMenu === f.fileId && (
@@ -479,7 +481,7 @@ export default function ClientGalleryPage() {
                 'Tap a photo to begin'
               ) : (
                 <>
-                  <HeartIcon filled className="w-4 h-4 text-pink-400" />
+                  <HeartIcon filled className="w-4 h-4 text-rose-600" />
                   {selectedCount} photo{selectedCount !== 1 ? 's' : ''} selected
                 </>
               )}
