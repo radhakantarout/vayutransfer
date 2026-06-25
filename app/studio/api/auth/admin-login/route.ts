@@ -28,7 +28,14 @@ export async function POST(req: NextRequest) {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        maxAge: 60 * 60 * 24, // 24h
+        maxAge: 60 * 60 * 24,
+        path: '/',
+      })
+      response.cookies.set('studio_ui', JSON.stringify({ role: 'OWNER', name: 'Platform Owner', email: ownerEmail ?? '' }), {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24,
         path: '/',
       })
       return response
@@ -72,10 +79,17 @@ export async function POST(req: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
-      data: { token, role: 'ADMIN', studioId: user.linkedStudioId },
+      data: { token, role: user.role, studioId: user.linkedStudioId },
     })
     response.cookies.set('studio_token', token, {
       httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24,
+      path: '/',
+    })
+    response.cookies.set('studio_ui', JSON.stringify({ role: user.role, name: user.name ?? '', email: user.email ?? '' }), {
+      httpOnly: false,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 60 * 60 * 24,
