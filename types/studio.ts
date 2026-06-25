@@ -2,7 +2,7 @@ export type StudioRole = 'OWNER' | 'ADMIN' | 'CLIENT' | 'PRINT'
 export type StudioStatus = 'ACTIVE' | 'SUSPENDED'
 export type ProjectStatus = 'DRAFT' | 'ACTIVE' | 'SELECTION_RECEIVED' | 'COMPLETED'
 export type ProcessingStatus = 'UPLOADING' | 'PROCESSING' | 'READY' | 'FAILED'
-export type EventType = 'WEDDING' | 'PRE_WEDDING' | 'CORPORATE' | 'SCHOOL' | 'OTHER'
+export type EventType = 'WEDDING' | 'MEHENDI' | 'RECEPTION' | 'ENGAGEMENT' | 'PRE_WEDDING' | 'BIRTHDAY' | 'CORPORATE' | 'SCHOOL' | 'OTHER'
 export type StudioPlan = 'STARTER' | 'PRO' | 'STUDIO' | 'ENTERPRISE'
 
 export interface StudioUser {
@@ -57,6 +57,7 @@ export interface StudioProject {
   selectedFilesCount: number
   editingRequiredCount: number
   commentsCount: number
+  eventLocation?: string
   clientShareToken?: string
   clientShareExpiresAt?: string
   printShareToken?: string

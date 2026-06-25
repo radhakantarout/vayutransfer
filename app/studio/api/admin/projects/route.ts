@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}))
     const studioId = auth.studioId ?? body.studioId
-    const { clientName, clientEmail, clientPhone, eventDate, eventType } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation } = body
 
     if (!studioId || !clientName || !eventDate || !eventType) {
       return NextResponse.json(
@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
       clientPhone: clientPhone ?? '',
       eventDate,
       eventType,
+      ...(eventLocation ? { eventLocation } : {}),
       status: 'DRAFT',
       totalFiles: 0,
       selectedFilesCount: 0,
