@@ -22,7 +22,7 @@ export async function PATCH(
 
     const { projectId } = params
     const body = await req.json().catch(() => ({}))
-    const { clientName, clientEmail, clientPhone, eventDate, eventType } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation } = body
 
     if (!clientName || !eventDate || !eventType) {
       return NextResponse.json(
@@ -40,18 +40,16 @@ export async function PATCH(
     }
 
     const now = new Date().toISOString()
+    const hasLocation = typeof eventLocation === 'string' && eventLocation.trim().length > 0
     await studioUpdateItem(
       TABLES.projects,
       { studioId: auth.studioId, projectId },
-      'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, updatedAt = :now',
-      {
-        ':cn': clientName,
-        ':ce': clientEmail ?? '',
-        ':cp': clientPhone ?? '',
-        ':ed': eventDate,
-        ':et': eventType,
-        ':now': now,
-      }
+      hasLocation
+        ? 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, eventLocation = :el, updatedAt = :now'
+        : 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, updatedAt = :now',
+      hasLocation
+        ? { ':cn': clientName, ':ce': clientEmail ?? '', ':cp': clientPhone ?? '', ':ed': eventDate, ':et': eventType, ':el': eventLocation.trim(), ':now': now }
+        : { ':cn': clientName, ':ce': clientEmail ?? '', ':cp': clientPhone ?? '', ':ed': eventDate, ':et': eventType, ':now': now }
     )
 
     return NextResponse.json({ success: true, data: { projectId } })

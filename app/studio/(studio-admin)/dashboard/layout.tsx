@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import type { StudioProject } from '@/types/studio'
 import AddEventModal from './AddEventModal'
+import EditEventModal from './EditEventModal'
+import EventSection from './EventSection'
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -17,61 +19,97 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 
-function ClientBranch({ clientName, projects, onAddEvent }: {
+function CheckIcon() {
+  return (
+    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  )
+}
+
+function ClientBranch({
+  clientName, projects, selectedIds, onToggle, onAddEvent, onEditEvent,
+}: {
   clientName: string
   projects: StudioProject[]
-  onAddEvent: (clientName: string) => void
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  onAddEvent: (name: string) => void
+  onEditEvent: (p: StudioProject) => void
 }) {
-  const [open, setOpen] = useState(false)
-  const pathname        = usePathname()
+  const anySelected = projects.some(p => selectedIds.includes(p.projectId))
+  const [open, setOpen] = useState(anySelected)
+
+  // Auto-open branch when an event inside gets selected externally
+  useEffect(() => { if (anySelected) setOpen(true) }, [anySelected])
 
   return (
     <div className="group/branch">
+      {/* Client row */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-border/50 transition-colors">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
-        >
-          <svg
-            className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}
-          >
+        <button onClick={() => setOpen(v => !v)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+          <svg className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
           <span className="text-xs font-semibold text-text-primary truncate flex-1">{clientName}</span>
         </button>
-        <span className="text-[10px] text-muted flex-shrink-0">{projects.length}</span>
-        <button
-          onClick={() => onAddEvent(clientName)}
-          title={`Add event for ${clientName}`}
-          className="opacity-0 group-hover/branch:opacity-100 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all"
-        >
+        <span className="text-[10px] text-muted">{projects.length}</span>
+        <button onClick={() => onAddEvent(clientName)} title="Add event"
+          className="opacity-0 group-hover/branch:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
         </button>
       </div>
 
+      {/* Event rows */}
       {open && (
         <div className="ml-3 pl-2.5 border-l border-border/50 space-y-px mt-px">
-          {projects.map((p) => {
-            const active = pathname === `/studio/dashboard/projects/${p.projectId}`
+          {projects.map(p => {
+            const selected = selectedIds.includes(p.projectId)
             return (
-              <Link
+              <div
                 key={p.projectId}
-                href={`/studio/dashboard/projects/${p.projectId}`}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${
-                  active ? 'bg-accent/15 text-accent' : 'hover:bg-border/50 text-muted hover:text-text-primary'
-                }`}
+                onClick={() => onToggle(p.projectId)}
+                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors group/event
+                  ${selected ? 'bg-accent/15' : 'hover:bg-border/50'}`}
               >
+                {/* Checkbox */}
+                <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors
+                  ${selected ? 'bg-accent border-accent text-bg' : 'border-muted group-hover/event:border-text-primary'}`}>
+                  {selected && <CheckIcon />}
+                </div>
+
+                {/* Status dot */}
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
+
+                {/* Event info */}
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs truncate leading-tight">
+                  <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
                     {p.eventType.replace(/_/g, ' ')}
                   </div>
                   <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
                 </div>
-              </Link>
+
+                {/* File count badge */}
+                {p.totalFiles > 0 && (
+                  <span className="text-[9px] text-muted bg-border/60 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
+                    {p.totalFiles}
+                  </span>
+                )}
+
+                {/* Edit icon — on hover */}
+                <button
+                  onClick={e => { e.stopPropagation(); onEditEvent(p) }}
+                  title="Edit event"
+                  className="opacity-0 group-hover/event:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              </div>
             )
           })}
         </div>
@@ -85,32 +123,48 @@ const SIDEBAR_KEY = 'studio_sidebar_open'
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname  = usePathname()
   const router    = useRouter()
-  const [projects, setProjects]       = useState<StudioProject[]>([])
-  const [treeOpen, setTreeOpen]       = useState(true)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [modalClient, setModalClient] = useState<string | null>(null)
 
-  // Restore sidebar state from localStorage
+  const [projects, setProjects]         = useState<StudioProject[]>([])
+  const [treeOpen, setTreeOpen]         = useState(true)
+  const [sidebarOpen, setSidebarOpen]   = useState(true)
+  const [selectedIds, setSelectedIds]   = useState<string[]>([])
+  const [modalClient, setModalClient]   = useState<string | null>(null)
+  const [editProject, setEditProject]   = useState<StudioProject | null>(null)
+
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
     if (saved === 'false') setSidebarOpen(false)
   }, [])
 
+  // Initialise selection from URL on first load
+  useEffect(() => {
+    const match = pathname.match(/\/studio\/dashboard\/projects\/([^/]+)$/)
+    if (match && match[1] && match[1] !== 'new') {
+      setSelectedIds([match[1]])
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // mount only
+
   const toggleSidebar = () => {
-    setSidebarOpen((v) => {
-      localStorage.setItem(SIDEBAR_KEY, String(!v))
-      return !v
-    })
+    setSidebarOpen(v => { localStorage.setItem(SIDEBAR_KEY, String(!v)); return !v })
   }
 
   const fetchProjects = () => {
     fetch('/studio/api/admin/projects')
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setProjects(d.data) })
+      .then(r => r.json())
+      .then(d => { if (d.success) setProjects(d.data) })
       .catch(() => {})
   }
 
   useEffect(() => { fetchProjects() }, [pathname])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+
+  const clearSelection = () => setSelectedIds([])
 
   const clientGroups = (() => {
     const map = new Map<string, StudioProject[]>()
@@ -120,27 +174,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       map.get(key)!.push(p)
     }
     return Array.from(map.entries()).sort((a, b) => {
-      const la = Math.max(...a[1].map((p) => new Date(p.updatedAt).getTime()))
-      const lb = Math.max(...b[1].map((p) => new Date(p.updatedAt).getTime()))
+      const la = Math.max(...a[1].map(p => new Date(p.updatedAt).getTime()))
+      const lb = Math.max(...b[1].map(p => new Date(p.updatedAt).getTime()))
       return lb - la
     })
   })()
 
+  const selectedProjects = selectedIds
+    .map(id => projects.find(p => p.projectId === id))
+    .filter((p): p is StudioProject => !!p)
+
   return (
     <div className="flex flex-1 overflow-hidden">
 
-      {/* ── Sidebar ────────────────────────────────────────────── */}
-      <aside
-        className={`bg-card border-r border-border flex-shrink-0 flex flex-col overflow-hidden
-          transition-all duration-200 ease-in-out
-          ${sidebarOpen ? 'w-56' : 'w-0'}`}
-      >
-        {/* Top nav links */}
+      {/* ── Sidebar ──────────────────────────────────────────── */}
+      <aside className={`bg-card border-r border-border flex-shrink-0 flex flex-col overflow-hidden transition-all duration-200 ease-in-out ${sidebarOpen ? 'w-56' : 'w-0'}`}>
+
+        {/* Dashboard nav */}
         <nav className="px-2 pt-3 pb-2 space-y-0.5 border-b border-border">
-          <Link
-            href="/studio/dashboard"
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname === '/studio/dashboard'
+          <button
+            onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              pathname === '/studio/dashboard' && selectedIds.length === 0
                 ? 'bg-accent/10 text-accent'
                 : 'text-muted hover:text-text-primary hover:bg-border/50'
             }`}
@@ -152,32 +207,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <rect x="14" y="14" width="7" height="7" rx="1" />
             </svg>
             Dashboard
-          </Link>
+          </button>
         </nav>
 
-        {/* Explorer section */}
+        {/* Projects tree */}
         <div className="flex-1 overflow-y-auto">
           <div className="flex items-center px-3 py-2 group/header">
-            <button
-              onClick={() => setTreeOpen((v) => !v)}
-              className="flex items-center gap-1.5 flex-1 min-w-0 hover:opacity-80 transition-opacity"
-            >
-              <svg
-                className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${treeOpen ? 'rotate-90' : ''}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}
-              >
+            <button onClick={() => setTreeOpen(v => !v)} className="flex items-center gap-1.5 flex-1 min-w-0 hover:opacity-80 transition-opacity">
+              <svg className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${treeOpen ? 'rotate-90' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
-              <span className="text-[11px] font-bold text-muted uppercase tracking-widest">
-                Projects
-              </span>
+              <span className="text-[11px] font-bold text-muted uppercase tracking-widest">Projects</span>
             </button>
             <span className="text-[10px] text-muted mr-1.5">{projects.length}</span>
-            <Link
-              href="/studio/dashboard/projects/new"
-              title="New project"
-              className="opacity-0 group-hover/header:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0"
-            >
+            <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
+              className="opacity-0 group-hover/header:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
               </svg>
@@ -194,7 +239,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     key={clientName}
                     clientName={clientName}
                     projects={clientProjects}
+                    selectedIds={selectedIds}
+                    onToggle={toggleSelect}
                     onAddEvent={setModalClient}
+                    onEditEvent={setEditProject}
                   />
                 ))
               )}
@@ -202,13 +250,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
-        {/* New project — icon only */}
+        {/* Bottom — new project icon */}
         <div className="p-2 border-t border-border flex justify-center">
-          <Link
-            href="/studio/dashboard/projects/new"
-            title="New project"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors"
-          >
+          <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
             </svg>
@@ -216,31 +261,52 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {/* ── Sidebar toggle tab ─────────────────────────────────── */}
+      {/* ── Sidebar toggle tab ───────────────────────────────── */}
       <div className="relative flex-shrink-0">
-        <button
-          onClick={toggleSidebar}
-          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="absolute top-4 -left-px z-10 flex items-center justify-center
-            w-4 h-8 bg-card border border-border rounded-r-md
-            text-muted hover:text-text-primary hover:bg-border/60
-            transition-colors shadow-sm"
-        >
-          <svg
-            className={`w-3 h-3 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-          >
+        <button onClick={toggleSidebar} title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          className="absolute top-4 -left-px z-10 flex items-center justify-center w-4 h-8 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
+          <svg className={`w-3 h-3 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
       </div>
 
-      {/* ── Main content ───────────────────────────────────────── */}
-      <main className="flex-1 overflow-auto bg-bg">
-        {children}
-      </main>
+      {/* ── Main content ─────────────────────────────────────── */}
+      {selectedIds.length > 0 ? (
+        <main className="flex-1 overflow-auto bg-bg">
+          <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+            {/* Selection bar */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-text-primary">
+                  {selectedIds.length === 1
+                    ? selectedProjects[0]?.clientName
+                    : `${selectedIds.length} events selected`}
+                </span>
+                {selectedIds.length > 1 && (
+                  <span className="text-xs text-muted">
+                    · {Array.from(new Set(selectedProjects.map(p => p.clientName))).join(', ')}
+                  </span>
+                )}
+              </div>
+              <button onClick={clearSelection}
+                className="text-xs text-muted hover:text-text-primary border border-border px-2.5 py-1 rounded-lg hover:bg-border/40 transition-colors">
+                Clear
+              </button>
+            </div>
 
-      {/* ── Add Event Modal ────────────────────────────────────── */}
+            {/* Event sections */}
+            {selectedProjects.map(p => (
+              <EventSection key={p.projectId} project={p} onUpdated={fetchProjects} />
+            ))}
+          </div>
+        </main>
+      ) : (
+        <main className="flex-1 overflow-auto bg-bg">{children}</main>
+      )}
+
+      {/* ── Modals ───────────────────────────────────────────── */}
       {modalClient && (
         <AddEventModal
           clientName={modalClient}
@@ -249,8 +315,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onCreated={(projectId) => {
             setModalClient(null)
             fetchProjects()
-            router.push(`/studio/dashboard/projects/${projectId}`)
+            setSelectedIds([projectId])
           }}
+        />
+      )}
+
+      {editProject && (
+        <EditEventModal
+          project={editProject}
+          onClose={() => setEditProject(null)}
+          onSaved={() => { setEditProject(null); fetchProjects() }}
         />
       )}
     </div>
