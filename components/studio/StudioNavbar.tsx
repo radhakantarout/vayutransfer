@@ -6,7 +6,7 @@ import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
 import type { StudioRole } from '@/lib/studio/auth'
 
-type Auth = { role: StudioRole; userId: string; studioId?: string; name: string; email: string }
+type Auth = { role: StudioRole; userId: string; studioId?: string; name: string; email: string; projectToken?: string }
 
 const ROLE_LABEL: Record<StudioRole, string> = {
   OWNER: 'Platform Owner',
@@ -71,7 +71,14 @@ export default function StudioNavbar() {
     if (match) {
       try {
         const parsed = JSON.parse(decodeURIComponent(match.split('=').slice(1).join('=')))
-        setAuth({ role: parsed.role, userId: '', studioId: parsed.studioId ?? '', name: parsed.name ?? '', email: parsed.email ?? '' })
+        setAuth({
+          role:         parsed.role,
+          userId:       '',
+          studioId:     parsed.studioId     ?? '',
+          name:         parsed.name         ?? '',
+          email:        parsed.email        ?? '',
+          projectToken: parsed.projectToken ?? undefined,
+        })
       } catch {
         setAuth(null)
       }
@@ -100,10 +107,11 @@ export default function StudioNavbar() {
   const closeAll = () => { setMobileOpen(false); setProfileOpen(false) }
 
   const handleLogout = async () => {
+    const wasClient = auth && auth !== 'loading' && (auth as Auth).role === 'CLIENT'
     await fetch('/studio/api/auth/logout', { method: 'POST' })
     closeAll()
     setAuth(null)
-    router.push('/studio/home')
+    router.push(wasClient ? '/studio/home' : '/studio/home')
     router.refresh()
   }
 
@@ -135,6 +143,9 @@ export default function StudioNavbar() {
                 )}
                 {((auth as Auth).role === 'ADMIN' || (auth as Auth).role === 'PRINT') && (
                   <Link href="/studio/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
+                )}
+                {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
+                  <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} className="text-muted hover:text-text-primary transition-colors">My Gallery</Link>
                 )}
               </>
             ) : (
@@ -198,6 +209,18 @@ export default function StudioNavbar() {
                             <rect x="14" y="14" width="7" height="7" rx="1" />
                           </svg>
                           Dashboard
+                        </Link>
+                      )}
+                      {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
+                        <Link
+                          href={`/studio/gallery/${(auth as Auth).projectToken}`}
+                          onClick={closeAll}
+                          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm text-text-primary hover:bg-border/50 transition-colors"
+                        >
+                          <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          My Gallery
                         </Link>
                       )}
                       {(auth as Auth).role === 'OWNER' && (
@@ -298,6 +321,12 @@ export default function StudioNavbar() {
                 <Link href="/studio/dashboard" onClick={closeAll}
                   className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
                   Dashboard <span className="text-muted text-sm">→</span>
+                </Link>
+              )}
+              {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
+                <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} onClick={closeAll}
+                  className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                  My Gallery <span className="text-muted text-sm">→</span>
                 </Link>
               )}
               <button

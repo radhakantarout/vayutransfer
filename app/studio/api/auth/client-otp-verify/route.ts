@@ -88,14 +88,20 @@ export async function POST(req: NextRequest) {
       studioId: project.studioId,
     })
 
-    const response = NextResponse.json({ success: true, data: { token, role: 'CLIENT' } })
-    response.cookies.set('studio_token', token, {
-      httpOnly: true,
+    const cookieOpts = {
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'lax' as const,
       maxAge: 60 * 60 * 24 * 30,
       path: '/',
-    })
+    }
+    const response = NextResponse.json({ success: true, data: { token, role: 'CLIENT' } })
+    response.cookies.set('studio_token', token, { ...cookieOpts, httpOnly: true })
+    response.cookies.set('studio_ui', JSON.stringify({
+      role: 'CLIENT',
+      name:         user.name  ?? '',
+      email:        user.email ?? '',
+      projectToken,
+    }), { ...cookieOpts, httpOnly: false })
     return response
   } catch (err) {
     console.error('[client-otp-verify]', err)
