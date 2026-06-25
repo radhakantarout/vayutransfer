@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import type { StudioProject } from '@/types/studio'
+import AddEventModal from './AddEventModal'
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -16,10 +17,13 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 
-function ClientBranch({ clientName, projects }: { clientName: string; projects: StudioProject[] }) {
+function ClientBranch({ clientName, projects, onAddEvent }: {
+  clientName: string
+  projects: StudioProject[]
+  onAddEvent: (clientName: string) => void
+}) {
   const [open, setOpen] = useState(false)
   const pathname        = usePathname()
-  const newEventHref    = `/studio/dashboard/projects/new?client=${encodeURIComponent(clientName)}`
 
   return (
     <div className="group/branch">
@@ -37,16 +41,15 @@ function ClientBranch({ clientName, projects }: { clientName: string; projects: 
           <span className="text-xs font-semibold text-text-primary truncate flex-1">{clientName}</span>
         </button>
         <span className="text-[10px] text-muted flex-shrink-0">{projects.length}</span>
-        <Link
-          href={newEventHref}
+        <button
+          onClick={() => onAddEvent(clientName)}
           title={`Add event for ${clientName}`}
-          onClick={(e) => e.stopPropagation()}
           className="opacity-0 group-hover/branch:opacity-100 flex-shrink-0 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all"
         >
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
-        </Link>
+        </button>
       </div>
 
       {open && (
@@ -80,10 +83,12 @@ function ClientBranch({ clientName, projects }: { clientName: string; projects: 
 const SIDEBAR_KEY = 'studio_sidebar_open'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
-  const [projects, setProjects] = useState<StudioProject[]>([])
-  const [treeOpen, setTreeOpen] = useState(true)
+  const pathname  = usePathname()
+  const router    = useRouter()
+  const [projects, setProjects]       = useState<StudioProject[]>([])
+  const [treeOpen, setTreeOpen]       = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [modalClient, setModalClient] = useState<string | null>(null)
 
   // Restore sidebar state from localStorage
   useEffect(() => {
@@ -98,12 +103,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })
   }
 
-  useEffect(() => {
+  const fetchProjects = () => {
     fetch('/studio/api/admin/projects')
       .then((r) => r.json())
       .then((d) => { if (d.success) setProjects(d.data) })
       .catch(() => {})
-  }, [pathname])
+  }
+
+  useEffect(() => { fetchProjects() }, [pathname])
 
   const clientGroups = (() => {
     const map = new Map<string, StudioProject[]>()
@@ -187,6 +194,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     key={clientName}
                     clientName={clientName}
                     projects={clientProjects}
+                    onAddEvent={setModalClient}
                   />
                 ))
               )}
@@ -231,6 +239,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <main className="flex-1 overflow-auto bg-bg">
         {children}
       </main>
+
+      {/* ── Add Event Modal ────────────────────────────────────── */}
+      {modalClient && (
+        <AddEventModal
+          clientName={modalClient}
+          existingProjects={projects}
+          onClose={() => setModalClient(null)}
+          onCreated={(projectId) => {
+            setModalClient(null)
+            fetchProjects()
+            router.push(`/studio/dashboard/projects/${projectId}`)
+          }}
+        />
+      )}
     </div>
   )
 }
