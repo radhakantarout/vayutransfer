@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import type { StudioRole } from '@/lib/studio/auth'
 
-type Auth = { role: StudioRole; userId: string; studioId?: string }
+type Auth = { role: StudioRole; userId: string; studioId?: string; name: string; email: string }
 
 const ROLE_LABEL: Record<StudioRole, string> = {
   OWNER: 'Platform Owner',
@@ -14,7 +14,6 @@ const ROLE_LABEL: Record<StudioRole, string> = {
   CLIENT: 'Client',
   PRINT: 'Print Admin',
 }
-
 
 const MARKETING_LINKS = [
   { label: 'Products',       href: '/studio/home#features' },
@@ -39,24 +38,57 @@ function CloseIcon() {
   )
 }
 
+function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
+  const initials = name
+    .split(' ')
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || '?'
+  return (
+    <div className={`rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center font-bold text-accent flex-shrink-0 ${
+      size === 'sm' ? 'w-7 h-7 text-xs' : 'w-9 h-9 text-sm'
+    }`}>
+      {initials}
+    </div>
+  )
+}
+
 export default function StudioNavbar() {
   const [auth, setAuth]             = useState<Auth | null | 'loading'>('loading')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const profileRef                  = useRef<HTMLDivElement>(null)
   const router                      = useRouter()
+  const pathname                    = usePathname()
 
+  // Re-fetch on every pathname change so login/logout reflects immediately
   useEffect(() => {
+    setAuth('loading')
     fetch('/studio/api/auth/me')
       .then((r) => r.json())
       .then((d) => setAuth(d.data ?? null))
       .catch(() => setAuth(null))
-  }, [])
+  }, [pathname])
+
+  // Close profile dropdown on outside click
+  useEffect(() => {
+    if (!profileOpen) return
+    const handler = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [profileOpen])
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [mobileOpen])
 
-  const closeAll = () => setMobileOpen(false)
+  const closeAll = () => { setMobileOpen(false); setProfileOpen(false) }
 
   const handleLogout = async () => {
     await fetch('/studio/api/auth/logout', { method: 'POST' })
@@ -92,10 +124,7 @@ export default function StudioNavbar() {
                     <Link href="/studio/admin/users"   className="text-muted hover:text-text-primary transition-colors">Users</Link>
                   </>
                 )}
-                {(auth as Auth).role === 'ADMIN' && (
-                  <Link href="/studio/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
-                )}
-                {(auth as Auth).role === 'PRINT' && (
+                {((auth as Auth).role === 'ADMIN' || (auth as Auth).role === 'PRINT') && (
                   <Link href="/studio/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
                 )}
               </>
@@ -111,19 +140,82 @@ export default function StudioNavbar() {
           {/* Desktop right */}
           <div className="hidden md:flex items-center gap-2">
             {auth === 'loading' ? (
-              <div className="w-28 h-8 bg-border rounded-lg animate-pulse" />
+              <div className="w-9 h-9 rounded-full bg-border animate-pulse" />
             ) : isLoggedIn ? (
-              <>
-                <span className="text-xs font-medium text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1">
-                  {ROLE_LABEL[(auth as Auth).role]}
-                </span>
+              /* Profile icon + dropdown */
+              <div className="relative" ref={profileRef}>
                 <button
-                  onClick={handleLogout}
-                  className="text-sm text-muted hover:text-danger transition-colors px-3 py-1.5 rounded-lg hover:bg-danger/10"
+                  onClick={() => setProfileOpen((v) => !v)}
+                  className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-border/40 transition-colors"
+                  aria-label="Profile menu"
                 >
-                  Sign out
+                  <Avatar name={(auth as Auth).name || (auth as Auth).email || 'U'} />
+                  <svg
+                    className={`w-3.5 h-3.5 text-muted transition-transform ${profileOpen ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
                 </button>
-              </>
+
+                {profileOpen && (
+                  <div className="absolute right-0 top-12 w-64 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
+                    {/* Profile info */}
+                    <div className="px-4 py-4 border-b border-border flex items-center gap-3">
+                      <Avatar name={(auth as Auth).name || (auth as Auth).email || 'U'} size="md" />
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-text-primary truncate">
+                          {(auth as Auth).name || 'Studio User'}
+                        </div>
+                        <div className="text-xs text-muted truncate">{(auth as Auth).email}</div>
+                        <span className="inline-block mt-1 text-[10px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5">
+                          {ROLE_LABEL[(auth as Auth).role]}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="p-2">
+                      {((auth as Auth).role === 'ADMIN' || (auth as Auth).role === 'PRINT') && (
+                        <Link
+                          href="/studio/dashboard"
+                          onClick={closeAll}
+                          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm text-text-primary hover:bg-border/50 transition-colors"
+                        >
+                          <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <rect x="3" y="3" width="7" height="7" rx="1" />
+                            <rect x="14" y="3" width="7" height="7" rx="1" />
+                            <rect x="3" y="14" width="7" height="7" rx="1" />
+                            <rect x="14" y="14" width="7" height="7" rx="1" />
+                          </svg>
+                          Dashboard
+                        </Link>
+                      )}
+                      {(auth as Auth).role === 'OWNER' && (
+                        <Link
+                          href="/studio/admin/studios"
+                          onClick={closeAll}
+                          className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm text-text-primary hover:bg-border/50 transition-colors"
+                        >
+                          <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3" />
+                          </svg>
+                          Admin Panel
+                        </Link>
+                      )}
+                      <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm text-danger hover:bg-danger/10 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Sign out
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <>
                 <Link
@@ -150,7 +242,6 @@ export default function StudioNavbar() {
           >
             {mobileOpen ? <CloseIcon /> : <HamburgerIcon />}
           </button>
-
         </div>
       </nav>
 
@@ -168,11 +259,20 @@ export default function StudioNavbar() {
         <div className="px-5 pb-6 pt-3">
           {isLoggedIn ? (
             <>
-              <div className="py-3 mb-2 border-b border-border">
-                <span className="text-xs font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1">
+              {/* Profile info strip */}
+              <div className="flex items-center gap-3 py-3 mb-2 border-b border-border">
+                <Avatar name={(auth as Auth).name || (auth as Auth).email || 'U'} />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-text-primary truncate">
+                    {(auth as Auth).name || 'Studio User'}
+                  </div>
+                  <div className="text-xs text-muted truncate">{(auth as Auth).email}</div>
+                </div>
+                <span className="ml-auto text-[10px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5 flex-shrink-0">
                   {ROLE_LABEL[(auth as Auth).role]}
                 </span>
               </div>
+
               {(auth as Auth).role === 'OWNER' && (
                 <>
                   <Link href="/studio/admin/studios" onClick={closeAll}
