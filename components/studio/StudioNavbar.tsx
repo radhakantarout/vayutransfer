@@ -62,13 +62,20 @@ export default function StudioNavbar() {
   const router                      = useRouter()
   const pathname                    = usePathname()
 
-  // Re-fetch on every pathname change so login/logout reflects immediately
+  // Re-fetch on every pathname change so login/logout reflects immediately.
+  // cache: 'no-store' prevents the browser from returning a stale cached
+  // "not logged in" response after the user has just signed in.
   useEffect(() => {
+    const controller = new AbortController()
     setAuth('loading')
-    fetch('/studio/api/auth/me')
+    fetch('/studio/api/auth/me', {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
       .then((r) => r.json())
       .then((d) => setAuth(d.data ?? null))
-      .catch(() => setAuth(null))
+      .catch((e) => { if (e.name !== 'AbortError') setAuth(null) })
+    return () => controller.abort()
   }, [pathname])
 
   // Close profile dropdown on outside click
