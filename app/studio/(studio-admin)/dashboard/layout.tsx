@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const NAV = [
-  { href: '/studio/dashboard', label: 'Projects', icon: '📁' },
+  { href: '/studio/dashboard',              label: 'Dashboard', icon: '📊' },
+  { href: '/studio/dashboard/projects/new', label: 'New Project', icon: '＋' },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
