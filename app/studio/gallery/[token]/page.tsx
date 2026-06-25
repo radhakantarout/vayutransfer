@@ -137,8 +137,12 @@ export default function ClientGalleryPage() {
     setFiles((prev) =>
       prev.map((f) => {
         if (f.fileId !== fileId) return f
-        const next = { ...f, isSelected: !f.isSelected }
-        saveSelection(fileId, { isSelected: next.isSelected })
+        const selecting = !f.isSelected
+        // Deselecting — reset edit flags too so nothing lingers
+        const next = selecting
+          ? { ...f, isSelected: true }
+          : { ...f, isSelected: false, editingRequired: false, comment: '' }
+        saveSelection(fileId, { isSelected: next.isSelected, editingRequired: next.editingRequired, comment: next.comment })
         return next
       })
     )
@@ -318,7 +322,7 @@ export default function ClientGalleryPage() {
                   <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${
                     f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
                   }`}>
-                    <HeartIcon filled className="w-14 h-14 text-rose-600 drop-shadow-lg" />
+                    <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
                   </div>
 
                   {/* Edit-required badge — top-left, visible when marked */}
