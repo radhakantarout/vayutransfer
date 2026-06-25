@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
+import { Suspense } from 'react'
 
 type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
@@ -20,8 +21,9 @@ const ROLE_REDIRECT: Record<string, string> = {
   PRINT: '/studio/dashboard',
 }
 
-export default function StudioLoginPage() {
-  const router = useRouter()
+function LoginPageInner() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()
 
   /* ── Login state ─────────────────────────────── */
   const [role, setRole]         = useState<Role>('ADMIN')
@@ -42,6 +44,16 @@ export default function StudioLoginPage() {
   const [fpError, setFpError]           = useState<string | null>(null)
   const [fpLoading, setFpLoading]       = useState(false)
   const [fpDone, setFpDone]             = useState(false)
+
+  /* ── Auto-open setup flow from email link ────── */
+  useEffect(() => {
+    const isSetup    = searchParams.get('setup') === '1'
+    const setupEmail = searchParams.get('email')
+    if (isSetup && setupEmail) {
+      setFpEmail(setupEmail)
+      setShowForgot(true)
+    }
+  }, [])
 
   /* ── Login submit ────────────────────────────── */
   const handleLogin = async (e: React.FormEvent) => {
@@ -416,5 +428,13 @@ export default function StudioLoginPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function StudioLoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-[80vh] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" /></div>}>
+      <LoginPageInner />
+    </Suspense>
   )
 }
