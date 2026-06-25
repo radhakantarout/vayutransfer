@@ -37,9 +37,12 @@ export default function ProjectDetailPage() {
   const [project, setProject]     = useState<StudioProject | null>(null)
   const [files, setFiles]         = useState<MediaFile[]>([])
   const [uploads, setUploads]     = useState<UploadItem[]>([])
-  const [shareUrl, setShareUrl]   = useState<string | null>(null)
-  const [sharing, setSharing]     = useState(false)
-  const [copied, setCopied]       = useState(false)
+  const [shareUrl, setShareUrl]       = useState<string | null>(null)
+  const [sharing, setSharing]         = useState(false)
+  const [copied, setCopied]           = useState(false)
+  const [showShareSetup, setShowShareSetup] = useState(false)
+  const [selMin, setSelMin]           = useState(0)
+  const [selMax, setSelMax]           = useState(0)
   const [loading, setLoading]     = useState(true)
   const [editOpen, setEditOpen]   = useState(false)
   const [editForm, setEditForm]   = useState<EditForm | null>(null)
@@ -159,12 +162,17 @@ export default function ProjectDetailPage() {
 
   const generateShareLink = async () => {
     setSharing(true)
+    const hasRange = selMax > 0
     const res = await fetch(`/studio/api/admin/projects/${projectId}/share-link`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiryDays: 30 }),
+      body: JSON.stringify({
+        expiryDays: 30,
+        ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
+      }),
     }).then((r) => r.json())
     setSharing(false)
+    setShowShareSetup(false)
     if (res.success) setShareUrl(res.data.shareUrl)
   }
 
@@ -308,18 +316,106 @@ export default function ProjectDetailPage() {
                 View Selections
               </a>
             )}
-            {project.totalFiles > 0 && project.status !== 'COMPLETED' && (
+            {project.totalFiles > 0 && project.status !== 'COMPLETED' && !showShareSetup && (
               <button
-                onClick={generateShareLink}
-                disabled={sharing}
-                className="bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50"
+                onClick={() => setShowShareSetup(true)}
+                className="bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
               >
-                {sharing ? 'Generating…' : 'Share with Client'}
+                Share with Client
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* Share setup panel */}
+      {showShareSetup && (
+        <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-text-primary">Set selection target</h3>
+              <p className="text-xs text-muted mt-0.5">How many photos should the client select for their album?</p>
+            </div>
+            <button onClick={() => setShowShareSetup(false)} className="text-muted hover:text-text-primary transition-colors flex-shrink-0">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted uppercase tracking-wider">Minimum</label>
+              <div className="relative">
+                <input
+                  type="number" min={0} max={1000} value={selMin}
+                  onChange={(e) => {
+                    const v = Math.min(1000, Math.max(0, Number(e.target.value)))
+                    setSelMin(v)
+                    if (selMax > 0 && v > selMax) setSelMax(v)
+                  }}
+                  className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors pr-10"
+                  placeholder="0"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">photos</span>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted uppercase tracking-wider">Maximum</label>
+              <div className="relative">
+                <input
+                  type="number" min={0} max={1000} value={selMax}
+                  onChange={(e) => {
+                    const v = Math.min(1000, Math.max(0, Number(e.target.value)))
+                    setSelMax(v)
+                    if (selMin > v && v > 0) setSelMin(v)
+                  }}
+                  className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors pr-10"
+                  placeholder="0"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">photos</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual range bar */}
+          {selMax > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-[10px] text-muted">
+                <span>0</span><span>500</span><span>1000</span>
+              </div>
+              <div className="h-2 bg-border rounded-full overflow-hidden relative">
+                <div
+                  className="absolute h-full bg-accent/30 rounded-full"
+                  style={{ left: `${(selMin / 1000) * 100}%`, width: `${((selMax - selMin) / 1000) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted text-center">
+                Client must select between <span className="font-semibold text-accent">{selMin}</span> and <span className="font-semibold text-accent">{selMax}</span> photos
+              </p>
+            </div>
+          )}
+
+          <p className="text-[11px] text-muted">Leave maximum at 0 to send without a selection target.</p>
+
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={() => { setSelMin(0); setSelMax(0); generateShareLink() }}
+              disabled={sharing}
+              className="text-sm text-muted hover:text-text-primary border border-border px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            >
+              Skip target
+            </button>
+            <button
+              onClick={generateShareLink}
+              disabled={sharing}
+              className="flex-1 bg-accent text-bg text-sm font-semibold py-2 rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50"
+            >
+              {sharing ? 'Generating…' : selMax > 0 ? `Generate & Share (${selMin}–${selMax} photos)` : 'Generate & Share'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Share link */}
       {shareUrl && (

@@ -236,10 +236,17 @@ export default function ClientGalleryPage() {
                 {editCount} edits
               </span>
             )}
-            <span className="flex items-center gap-1.5 text-sm font-semibold text-rose-600">
-              <HeartIcon filled className="w-4 h-4" />
-              {selectedCount}
-            </span>
+            <div className="flex flex-col items-end">
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-rose-600">
+                <HeartIcon filled className="w-4 h-4" />
+                {selectedCount}
+              </span>
+              {project?.selectionMin !== undefined && project?.selectionMax !== undefined && project.selectionMax > 0 && (
+                <span className="text-[10px] text-muted">
+                  Required: {project.selectionMin}–{project.selectionMax}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -477,35 +484,69 @@ export default function ClientGalleryPage() {
       )}
 
       {/* ── Sticky bottom bar ───────────────────────────────── */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-bg/95 backdrop-blur border-t border-border px-4 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
-          <div>
-            <div className="text-text-primary font-semibold text-sm flex items-center gap-1.5">
-              {selectedCount === 0 ? (
-                'Tap a photo to begin'
-              ) : (
-                <>
-                  <HeartIcon filled className="w-4 h-4 text-rose-600" />
-                  {selectedCount} photo{selectedCount !== 1 ? 's' : ''} selected
-                </>
-              )}
+      <div className="fixed bottom-0 inset-x-0 z-30 bg-bg/95 backdrop-blur border-t border-border px-4 py-3">
+        <div className="max-w-6xl mx-auto space-y-2">
+
+          {/* Selection range progress bar — only when target is set */}
+          {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
+            const min = project.selectionMin ?? 0
+            const max = project.selectionMax
+            const pct = Math.min(100, (selectedCount / max) * 100)
+            const inRange = selectedCount >= min && selectedCount <= max
+            const under   = selectedCount < min
+            return (
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-muted">
+                  <span>
+                    {under
+                      ? `Select ${min - selectedCount} more to reach minimum`
+                      : inRange
+                        ? `✓ In range — ${max - selectedCount} more allowed`
+                        : `${selectedCount - max} over maximum`}
+                  </span>
+                  <span className="font-semibold">{selectedCount} / {min}–{max}</span>
+                </div>
+                <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      inRange ? 'bg-success' : under ? 'bg-accent' : 'bg-yellow-400'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })()}
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-text-primary font-semibold text-sm flex items-center gap-1.5">
+                {selectedCount === 0 ? (
+                  'Tap a photo to begin'
+                ) : (
+                  <>
+                    <HeartIcon filled className="w-4 h-4 text-rose-600" />
+                    {selectedCount} photo{selectedCount !== 1 ? 's' : ''} selected
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-muted mt-0.5">
+                {editCount > 0
+                  ? `${editCount} marked for editing · Tap ··· on a photo to edit`
+                  : selectedCount > 0
+                    ? 'Tap ··· on any photo to request retouching'
+                    : 'Tap any photo to add it to your selection'
+                }
+              </div>
             </div>
-            <div className="text-xs text-muted mt-0.5">
-              {editCount > 0
-                ? `${editCount} marked for editing · Tap ··· on a photo to edit`
-                : selectedCount > 0
-                  ? 'Tap ··· on any photo to request retouching'
-                  : 'Tap any photo to add it to your selection'
-              }
-            </div>
+            <button
+              onClick={() => setShowSubmit(true)}
+              disabled={selectedCount === 0}
+              className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+            >
+              Submit →
+            </button>
           </div>
-          <button
-            onClick={() => setShowSubmit(true)}
-            disabled={selectedCount === 0}
-            className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
-          >
-            Submit →
-          </button>
         </div>
       </div>
 
