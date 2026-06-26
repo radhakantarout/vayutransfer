@@ -10,7 +10,8 @@ interface GalleryFile extends MediaFile {
   comment: string
 }
 
-type ViewMode = 'grid' | 'lightbox'
+type ViewMode   = 'grid' | 'lightbox'
+type ViewFilter = 'all' | 'loved' | 'edit'
 
 function HeartIcon({ filled, className }: { filled?: boolean; className?: string }) {
   return (
@@ -45,6 +46,8 @@ export default function ClientGalleryPage() {
   const [submitting, setSubmitting]   = useState(false)
   const [submitted, setSubmitted]     = useState(false)
   const [openMenu, setOpenMenu]       = useState<string | null>(null)
+  const [zoomLevel, setZoomLevel]     = useState(3)
+  const [viewFilter, setViewFilter]   = useState<ViewFilter>('all')
   const saveQueue                     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Close 3-dot menu on outside click
@@ -138,7 +141,6 @@ export default function ClientGalleryPage() {
       prev.map((f) => {
         if (f.fileId !== fileId) return f
         const selecting = !f.isSelected
-        // Deselecting — reset edit flags too so nothing lingers
         const next = selecting
           ? { ...f, isSelected: true }
           : { ...f, isSelected: false, editingRequired: false, comment: '' }
@@ -164,6 +166,11 @@ export default function ClientGalleryPage() {
     saveSelection(fileId, { comment })
   }
 
+  const toggleFilter = (filter: 'loved' | 'edit') => {
+    setViewFilter(prev => prev === filter ? 'all' : filter)
+    if (viewMode === 'lightbox') setViewMode('grid')
+  }
+
   const openLightbox = (idx: number, e: React.MouseEvent) => {
     e.stopPropagation()
     setLightboxIdx(idx)
@@ -184,6 +191,10 @@ export default function ClientGalleryPage() {
 
   const selectedCount  = files.filter((f) => f.isSelected).length
   const editCount      = files.filter((f) => f.editingRequired).length
+
+  const displayFiles: GalleryFile[] = viewFilter === 'all' ? files
+    : viewFilter === 'loved' ? files.filter(f => f.isSelected)
+    : files.filter(f => f.editingRequired)
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -230,15 +241,29 @@ export default function ClientGalleryPage() {
               })} · {files.length} photos
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {/* Edit-required filter button */}
             {editCount > 0 && (
-              <span className="text-xs font-semibold text-yellow-400 bg-yellow-400/10 border border-yellow-400/20 rounded-full px-2.5 py-1">
-                {editCount} edits
-              </span>
+              <button
+                onClick={() => toggleFilter('edit')}
+                className={`text-xs font-semibold border rounded-full px-2.5 py-1 transition-colors
+                  ${viewFilter === 'edit'
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'text-orange-400 bg-orange-400/10 border-orange-400/20 hover:bg-orange-400/20'}`}
+              >
+                ✏️ {editCount}
+              </button>
             )}
-            <div className="flex flex-col items-end">
-              <span className="flex items-center gap-1.5 text-sm font-semibold text-rose-600">
-                <HeartIcon filled className="w-4 h-4" />
+            {/* Loved filter button */}
+            <button
+              onClick={() => toggleFilter('loved')}
+              disabled={selectedCount === 0}
+              className={`flex flex-col items-end transition-colors disabled:opacity-40 disabled:cursor-default
+                ${viewFilter === 'loved' ? 'opacity-100' : ''}`}
+            >
+              <span className={`flex items-center gap-1.5 text-sm font-semibold transition-colors
+                ${viewFilter === 'loved' ? 'text-rose-400' : 'text-rose-600'}`}>
+                <HeartIcon filled className={`w-4 h-4 transition-transform ${viewFilter === 'loved' ? 'scale-125' : ''}`} />
                 {selectedCount}
               </span>
               {project?.selectionMin !== undefined && project?.selectionMax !== undefined && project.selectionMax > 0 && (
@@ -246,7 +271,7 @@ export default function ClientGalleryPage() {
                   Required: {project.selectionMin}–{project.selectionMax}
                 </span>
               )}
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -285,19 +310,72 @@ export default function ClientGalleryPage() {
         </div>
       )}
 
+      {/* ── Grid toolbar ────────────────────────────────────── */}
+      {files.length > 0 && (
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1 flex items-center justify-between gap-3">
+          {/* Active filter banner */}
+          {viewFilter !== 'all' ? (
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold flex-1
+              ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
+              {viewFilter === 'loved'
+                ? <><HeartIcon filled className="w-3.5 h-3.5 flex-shrink-0" /> Loved photos</>
+                : <>✏️ Needs editing</>}
+              <span className="font-normal text-current/70">— {displayFiles.length}</span>
+              <button onClick={() => setViewFilter('all')} className="ml-auto opacity-60 hover:opacity-100 transition-opacity">
+                All ×
+              </button>
+            </div>
+          ) : (
+            <span className="text-xs text-muted">{files.length} photos</span>
+          )}
+
+          {/* Zoom slider */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => setZoomLevel(v => Math.min(5, v + 1))} title="Zoom out"
+              className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
+              </svg>
+            </button>
+            <input
+              type="range" min={2} max={5} value={zoomLevel}
+              onChange={e => setZoomLevel(Number(e.target.value))}
+              className="w-16 h-1 cursor-pointer accent-accent"
+            />
+            <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
+              className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Photo grid ──────────────────────────────────────── */}
-      <div className="max-w-6xl mx-auto px-4 pt-4">
+      <div className="max-w-6xl mx-auto px-4 pt-2">
         {files.length === 0 ? (
           <div className="text-center py-20 text-muted">No photos are ready yet. Check back soon!</div>
+        ) : displayFiles.length === 0 ? (
+          <div className="text-center py-16 space-y-3">
+            <div className="text-4xl">{viewFilter === 'loved' ? '❤️' : '✏️'}</div>
+            <p className="text-muted text-sm">
+              {viewFilter === 'loved' ? 'No photos selected yet — tap any photo to love it.' : 'No photos marked for editing yet.'}
+            </p>
+            <button onClick={() => setViewFilter('all')} className="text-xs text-accent hover:underline">
+              Show all photos
+            </button>
+          </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-            {files.map((f, idx) => (
-              // Outer wrapper: no overflow-hidden so 3-dot popover can bleed out
+          <div
+            style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '8px' }}
+          >
+            {displayFiles.map((f, idx) => (
               <div
                 key={f.fileId}
                 className={`relative ${openMenu === f.fileId ? 'z-20' : 'z-0'}`}
               >
-                {/* Inner card: overflow-hidden clips image to rounded corners */}
+                {/* Inner card */}
                 <div
                   className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none transition-all duration-150
                     ${f.isSelected
@@ -306,7 +384,6 @@ export default function ClientGalleryPage() {
                     }`}
                   onClick={() => toggleSelect(f.fileId)}
                 >
-                  {/* Photo */}
                   {f.r2PreviewUrl ? (
                     <img
                       src={f.r2PreviewUrl}
@@ -320,26 +397,25 @@ export default function ClientGalleryPage() {
                     </div>
                   )}
 
-                  {/* Subtle dark tint when selected */}
                   {f.isSelected && (
                     <div className="absolute inset-0 bg-black/15 pointer-events-none" />
                   )}
 
-                  {/* Heart — pops in on select, centered */}
+                  {/* Heart — centered on select */}
                   <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${
                     f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
                   }`}>
                     <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
                   </div>
 
-                  {/* Edit-required badge — top-left, visible when marked */}
+                  {/* Edit-required badge */}
                   {f.editingRequired && (
                     <div className="absolute top-1.5 left-1.5 bg-yellow-400 text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">
                       Edits
                     </div>
                   )}
 
-                  {/* Expand to lightbox — bottom-right */}
+                  {/* Expand to lightbox */}
                   <button
                     onClick={(e) => openLightbox(idx, e)}
                     className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs flex items-center justify-center hover:bg-black/70 transition-opacity opacity-0 hover:opacity-100"
@@ -349,7 +425,7 @@ export default function ClientGalleryPage() {
                   </button>
                 </div>
 
-                {/* ── 3-dot button — only when selected ── */}
+                {/* 3-dot — only when selected */}
                 {f.isSelected && (
                   <button
                     data-photomenu
@@ -368,14 +444,13 @@ export default function ClientGalleryPage() {
                   </button>
                 )}
 
-                {/* ── Popover ── */}
+                {/* Popover */}
                 {openMenu === f.fileId && (
                   <div
                     data-photomenu
                     className="absolute top-9 right-0 z-30 w-56 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {/* Popover header */}
                     <div className="flex items-center justify-between px-3 py-2.5 border-b border-border bg-border/20">
                       <span className="text-xs font-bold text-text-primary">Editing Required?</span>
                       <button
@@ -389,7 +464,6 @@ export default function ClientGalleryPage() {
                     </div>
 
                     <div className="p-3 space-y-3">
-                      {/* Yes / No toggle */}
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           onClick={() => setEditing(f.fileId, false)}
@@ -413,7 +487,6 @@ export default function ClientGalleryPage() {
                         </button>
                       </div>
 
-                      {/* Comment field — only visible when editing required */}
                       <div className={`transition-all duration-200 overflow-hidden ${f.editingRequired ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'}`}>
                         <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">
                           What edits are needed?
@@ -429,7 +502,6 @@ export default function ClientGalleryPage() {
                         <p className="text-[9px] text-muted mt-1">Auto-saved as you type</p>
                       </div>
 
-                      {/* Hint when No is selected */}
                       {!f.editingRequired && (
                         <p className="text-[10px] text-muted leading-relaxed">
                           Tap <span className="font-semibold text-yellow-400">Yes</span> if this photo needs retouching, colour correction, or any other edit.
@@ -465,20 +537,20 @@ export default function ClientGalleryPage() {
           </button>
           <button
             className="absolute right-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20"
-            disabled={lightboxIdx === files.length - 1}
+            disabled={lightboxIdx === displayFiles.length - 1}
             onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i + 1) }}
           >
             ›
           </button>
           <img
-            src={files[lightboxIdx]?.r2PreviewUrl ?? ''}
-            alt={files[lightboxIdx]?.originalFilename}
+            src={displayFiles[lightboxIdx]?.r2PreviewUrl ?? ''}
+            alt={displayFiles[lightboxIdx]?.originalFilename}
             className="max-h-screen max-w-full object-contain px-16"
             onClick={(e) => e.stopPropagation()}
             draggable={false}
           />
           <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-4">
-            <span className="text-white/50 text-sm">{lightboxIdx + 1} / {files.length}</span>
+            <span className="text-white/50 text-sm">{lightboxIdx + 1} / {displayFiles.length}</span>
           </div>
         </div>
       )}
@@ -487,7 +559,7 @@ export default function ClientGalleryPage() {
       <div className="fixed bottom-0 inset-x-0 z-30 bg-bg/95 backdrop-blur border-t border-border px-4 py-3">
         <div className="max-w-6xl mx-auto space-y-2">
 
-          {/* Selection range progress bar — only when target is set */}
+          {/* Selection range progress bar */}
           {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
             const min = project.selectionMin ?? 0
             const max = project.selectionMax
