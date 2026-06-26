@@ -415,17 +415,23 @@ export default function EventSection({ project, onUpdated }: Props) {
                   </button>
                   {/* Zoom slider */}
                   <div className="flex items-center gap-1 ml-1">
-                    <svg className="w-3 h-3 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
-                    </svg>
+                    <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="Zoom out"
+                      className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
+                      </svg>
+                    </button>
                     <input
                       type="range" min={2} max={10} value={zoomLevel}
                       onChange={e => setZoomLevel(Number(e.target.value))}
                       className="w-20 h-1 cursor-pointer accent-accent"
                     />
-                    <svg className="w-3.5 h-3.5 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                    </svg>
+                    <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
+                      className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               </div>
