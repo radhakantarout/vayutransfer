@@ -39,16 +39,15 @@ async function streamToBuffer(stream) {
 }
 
 async function updateJob(jobId, patch) {
-  const sets = Object.entries(patch)
-    .map(([k], i) => `${k} = :v${i}`)
-    .join(', ')
-  const vals = Object.fromEntries(
-    Object.values(patch).map((v, i) => [`:v${i}`, v])
-  )
+  const entries = Object.entries(patch)
+  const names = Object.fromEntries(entries.map(([k], i) => [`#k${i}`, k]))
+  const sets  = entries.map(([,], i) => `#k${i} = :v${i}`).join(', ')
+  const vals  = Object.fromEntries(entries.map(([,v], i) => [`:v${i}`, v]))
   await ddb.send(new UpdateCommand({
     TableName: JOBS_TABLE,
     Key: { jobId },
     UpdateExpression: `SET ${sets}`,
+    ExpressionAttributeNames:  names,
     ExpressionAttributeValues: vals,
   }))
 }
@@ -78,18 +77,22 @@ async function uploadToR2(buffer, key, contentType = 'image/jpeg') {
 // ─── main face indexer for one file ─────────────────────────────────────────
 
 async function indexFileFaces(projectId, studioId, file) {
+  // Download the original once
   const s3Obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: file.s3Key }))
-  const imageBuffer = await streamToBuffer(s3Obj.Body)
-  const meta = await sharp(imageBuffer).metadata()
-  const imgW = meta.width
-  const imgH = meta.height
+  const originalBuffer = await streamToBuffer(s3Obj.Body)
 
-  // Index faces — ExternalImageId links each face back to its fileId
+  // Resize to 1200px for Rekognition — well under 5MB, still good enough for face detection.
+  // Bounding boxes from Rekognition are fractional (0–1), so they map back to any resolution.
+  const rekBuffer = await sharp(originalBuffer)
+    .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer()
+
   let indexResult
   try {
     indexResult = await rek.send(new IndexFacesCommand({
       CollectionId: `vayustudio-${projectId}`,
-      Image: { Bytes: imageBuffer },
+      Image: { Bytes: rekBuffer },
       ExternalImageId: file.fileId,
       MaxFaces: 20,
       QualityFilter: 'MEDIUM',
@@ -102,15 +105,21 @@ async function indexFileFaces(projectId, studioId, file) {
 
   if (!indexResult.FaceRecords?.length) return []
 
+  // Use original full-resolution buffer for thumbnail cropping (quality matters)
+  const origMeta = await sharp(originalBuffer).metadata()
+  const imgW = origMeta.width
+  const imgH = origMeta.height
+
   const canonicalFaceIds = []
   const now = new Date().toISOString()
 
   for (const faceRecord of indexResult.FaceRecords) {
     const { FaceId, BoundingBox, Confidence } = faceRecord.Face
 
+    // BoundingBox fractions are resolution-independent — apply to original dimensions
     let thumbnailBuffer
     try {
-      thumbnailBuffer = await cropFaceThumbnail(imageBuffer, BoundingBox, imgW, imgH)
+      thumbnailBuffer = await cropFaceThumbnail(originalBuffer, BoundingBox, imgW, imgH)
     } catch (err) {
       console.warn(`[indexfaces] Crop failed for face ${FaceId}:`, err.message)
       continue
@@ -198,9 +207,9 @@ exports.handler = async (event) => {
     }
 
     // Query all READY image files not yet face-indexed
+    // projectId is the table's own PK — no GSI needed
     const filesRes = await ddb.send(new QueryCommand({
       TableName: MEDIAFILES_TABLE,
-      IndexName: 'projectId-status-index',
       KeyConditionExpression: 'projectId = :pid',
       FilterExpression: 'processingStatus = :ready AND fileType = :img AND (attribute_not_exists(faceIndexed) OR faceIndexed = :false)',
       ExpressionAttributeValues: {
