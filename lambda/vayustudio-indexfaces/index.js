@@ -237,12 +237,17 @@ exports.handler = async (event) => {
       }
     }
 
-    await updateJob(jobId, {
-      status: 'READY',
-      completedAt: new Date().toISOString(),
-      'outputPayload.indexedCount': indexed,
-      'outputPayload.totalFiles': files.length,
-    })
+    await ddb.send(new UpdateCommand({
+      TableName: JOBS_TABLE,
+      Key: { jobId },
+      UpdateExpression: 'SET #s = :s, completedAt = :ca, outputPayload = :op',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: {
+        ':s':  'READY',
+        ':ca': new Date().toISOString(),
+        ':op': { indexedCount: indexed, totalFiles: files.length },
+      },
+    }))
 
     console.log(`[indexfaces] DONE — indexed ${indexed}/${files.length}`)
     return { statusCode: 200, body: `Indexed ${indexed}/${files.length}` }
