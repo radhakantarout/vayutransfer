@@ -7,7 +7,7 @@ import EditEventModal from './EditEventModal'
 const CHUNK_SIZE = 50 * 1024 * 1024
 
 interface UploadItem {
-  id: string; file: File; progress: number
+  id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
 }
 
@@ -22,6 +22,19 @@ const EVENT_ICON: Record<string, string> = {
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function fmtEta(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
 type DeleteMode = 'selected' | 'all' | null
@@ -42,7 +55,9 @@ export default function EventSection({ project, onUpdated }: Props) {
   const [showShareSetup, setShowShareSetup] = useState(false)
   const [selMin, setSelMin]         = useState(project.selectionMin ?? 0)
   const [selMax, setSelMax]         = useState(project.selectionMax ?? 0)
-  const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadOpen, setUploadOpen]       = useState(false)
+  const [uploadExpanded, setUploadExpanded] = useState(false)
+  const [uploadSpeed, setUploadSpeed]       = useState(0)
 
   // Photo grid
   const [zoomLevel, setZoomLevel]       = useState(6)
@@ -62,6 +77,7 @@ export default function EventSection({ project, onUpdated }: Props) {
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
+  const speedRef = useRef<{ bytes: number; time: number }>({ bytes: 0, time: 0 })
 
   const loadFiles = useCallback(async () => {
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files`).then(r => r.json())
@@ -72,6 +88,29 @@ export default function EventSection({ project, onUpdated }: Props) {
   useEffect(() => { loadFiles() }, [loadFiles])
 
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
+
+  // Upload speed tracking
+  useEffect(() => {
+    const hasActive = uploads.some(u => u.status === 'uploading')
+    if (!hasActive) { speedRef.current = { bytes: 0, time: 0 }; setUploadSpeed(0); return }
+    const currentBytes = uploads.reduce((s, u) => s + u.uploadedBytes, 0)
+    const now = Date.now()
+    if (speedRef.current.time === 0) { speedRef.current = { bytes: currentBytes, time: now }; return }
+    const elapsed = (now - speedRef.current.time) / 1000
+    if (elapsed >= 0.5) {
+      setUploadSpeed(Math.max(0, (currentBytes - speedRef.current.bytes) / elapsed))
+      speedRef.current = { bytes: currentBytes, time: now }
+    }
+  }, [uploads])
+
+  // Auto-dismiss upload panel 3s after all files finish
+  useEffect(() => {
+    if (uploads.length === 0) return
+    const allDone = uploads.every(u => u.status === 'done' || u.status === 'error')
+    if (!allDone) return
+    const t = setTimeout(() => { setUploads([]); setUploadExpanded(false) }, 3000)
+    return () => clearTimeout(t)
+  }, [uploads])
 
   // Global mouse handlers for rubber-band drag select
   useEffect(() => {
@@ -175,14 +214,14 @@ export default function EventSection({ project, onUpdated }: Props) {
         const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
         const res   = await fetch(presignedUrls[i], { method: 'PUT', body: chunk })
         parts.push({ PartNumber: i + 1, ETag: res.headers.get('ETag') ?? '' })
-        update({ progress: Math.round(((i + 1) / partCount) * 100) })
+        update({ progress: Math.round(((i + 1) / partCount) * 100), uploadedBytes: Math.min((i + 1) * CHUNK_SIZE, file.size) })
       }
       const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
       }).then(r => r.json())
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
-      update({ status: 'done', progress: 100 })
+      update({ status: 'done', progress: 100, uploadedBytes: file.size })
       loadFiles(); onUpdated()
     } catch (err) {
       update({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
@@ -192,7 +231,7 @@ export default function EventSection({ project, onUpdated }: Props) {
   const handleFiles = (selected: FileList | null) => {
     if (!selected) return
     const items: UploadItem[] = Array.from(selected).map(f => ({
-      id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const,
+      id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0,
     }))
     setUploads(prev => [...prev, ...items])
     items.forEach(item => uploadFile(item.file, item.id))
@@ -228,7 +267,6 @@ export default function EventSection({ project, onUpdated }: Props) {
     ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
     : new Map()
 
-  const activeUploads   = uploads.filter(u => u.status !== 'done')
   const selectedCount   = gridSelected.size
   const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(gridSelected)
 
@@ -430,26 +468,77 @@ export default function EventSection({ project, onUpdated }: Props) {
           </div>
         )}
 
-        {/* ── Active uploads ────────────────────────────────────── */}
-        {activeUploads.length > 0 && (
-          <div className="px-5 pb-3 space-y-2">
-            {activeUploads.map(u => (
-              <div key={u.id} className="bg-bg border border-border rounded-xl px-4 py-2.5">
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="text-text-primary truncate max-w-xs">{u.file.name}</span>
-                  <span className={u.status === 'error' ? 'text-red-500' : 'text-muted'}>
-                    {u.status === 'error' ? (u.error ?? 'Error') : u.status === 'uploading' ? `${u.progress}%` : 'Queued'}
+        {/* ── Upload progress ───────────────────────────────────── */}
+        {uploads.length > 0 && (() => {
+          const totalFiles  = uploads.length
+          const doneFiles   = uploads.filter(u => u.status === 'done').length
+          const errFiles    = uploads.filter(u => u.status === 'error').length
+          const totalBytes  = uploads.reduce((s, u) => s + u.file.size, 0)
+          const sentBytes   = uploads.reduce((s, u) => s + u.uploadedBytes, 0)
+          const overallPct  = totalBytes > 0 ? Math.round((sentBytes / totalBytes) * 100) : 0
+          const allDone     = doneFiles + errFiles === totalFiles
+          const eta         = uploadSpeed > 0 && !allDone ? (totalBytes - sentBytes) / uploadSpeed : 0
+          return (
+            <div className="px-5 pb-3 space-y-2">
+              {/* Summary card */}
+              <div className="bg-bg border border-border rounded-xl px-4 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-text-primary">
+                    {allDone
+                      ? `${doneFiles} file${doneFiles !== 1 ? 's' : ''} uploaded${errFiles > 0 ? ` · ${errFiles} failed` : ' ✓'}`
+                      : `Uploading ${doneFiles + 1} of ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`}
                   </span>
+                  <button
+                    onClick={() => setUploadExpanded(v => !v)}
+                    className="flex items-center gap-1 text-xs text-muted hover:text-text-primary transition-colors flex-shrink-0"
+                  >
+                    <svg className={`w-3 h-3 transition-transform duration-200 ${uploadExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    Details
+                  </button>
                 </div>
-                {u.status === 'uploading' && (
-                  <div className="h-1 bg-border rounded-full overflow-hidden">
-                    <div className="h-full bg-accent rounded-full transition-all" style={{ width: `${u.progress}%` }} />
+
+                {!allDone && (
+                  <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                    <div className="h-full bg-accent rounded-full transition-all duration-300" style={{ width: `${overallPct}%` }} />
                   </div>
                 )}
+
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span>{fmtBytes(sentBytes)} / {fmtBytes(totalBytes)}</span>
+                  <div className="flex items-center gap-3">
+                    {!allDone && uploadSpeed > 0 && (
+                      <span>{fmtBytes(uploadSpeed)}/s{eta > 0 ? ` · ${fmtEta(eta)} left` : ''}</span>
+                    )}
+                    {!allDone && <span>{overallPct}%</span>}
+                  </div>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
+
+              {/* Per-file details (expandable) */}
+              {uploadExpanded && (
+                <div className="space-y-1.5">
+                  {uploads.map(u => (
+                    <div key={u.id} className="bg-bg border border-border rounded-lg px-3 py-2">
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-text-primary truncate max-w-[240px]">{u.file.name}</span>
+                        <span className={`ml-2 flex-shrink-0 font-medium ${u.status === 'error' ? 'text-red-500' : u.status === 'done' ? 'text-success' : 'text-muted'}`}>
+                          {u.status === 'error' ? (u.error ?? 'Error') : u.status === 'done' ? '✓ Done' : u.status === 'uploading' ? `${u.progress}%` : 'Queued'}
+                        </span>
+                      </div>
+                      {u.status === 'uploading' && (
+                        <div className="h-0.5 bg-border rounded-full overflow-hidden">
+                          <div className="h-full bg-accent rounded-full transition-all" style={{ width: `${u.progress}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── Photo grid ────────────────────────────────────────── */}
         <div className="px-5 pb-5">
@@ -538,6 +627,7 @@ export default function EventSection({ project, onUpdated }: Props) {
               )}
 
               {/* Grid */}
+              <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: '520px' }}>
               <div
                 ref={gridRef}
                 className="relative select-none"
@@ -626,6 +716,7 @@ export default function EventSection({ project, onUpdated }: Props) {
                   />
                 )}
               </div>
+              </div>{/* end scroll wrapper */}
             </>
           )}
         </div>

@@ -71,3 +71,22 @@ body {
   animation: fade-up 0.7s ease-out 0.4s forwards;
   opacity: 0;
 }
+
+/* Thin scrollbar for event photo grids */
+.vayu-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--border)) transparent;
+}
+.vayu-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.vayu-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.vayu-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 3px;
+}
+.vayu-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.5);
+}
