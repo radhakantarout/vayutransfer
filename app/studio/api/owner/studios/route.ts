@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
         extendedStorage: false,
         clientComments: true,
         editingRequired: true,
+        aiFaceRecognition: false,
       },
     }
 

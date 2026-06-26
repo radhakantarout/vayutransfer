@@ -41,6 +41,7 @@ export interface Studio {
     extendedStorage: boolean
     clientComments: boolean
     editingRequired: boolean
+    aiFaceRecognition: boolean
   }
 }
 
@@ -86,6 +87,43 @@ export interface MediaFile {
   displayOrder: number
   uploadedAt: string
   processingStatus: ProcessingStatus
+  // Phase 2 — face indexing
+  faceIds?: string[]
+  faceCount?: number
+  faceIndexed?: boolean
+  faceIndexedAt?: string
+}
+
+export interface StudioFace {
+  projectId: string
+  faceId: string
+  studioId: string
+  photoIds: string[]
+  photoCount: number
+  confidence: number
+  thumbnailR2Key: string
+  thumbnailUrl: string
+  label?: string
+  boundingBox?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH'
+export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED'
+
+export interface StudioJob {
+  jobId: string
+  jobType: JobType
+  status: JobStatus
+  projectId: string
+  studioId: string
+  inputPayload?: Record<string, unknown>
+  outputPayload?: Record<string, unknown>
+  errorMessage?: string
+  createdAt: string
+  completedAt?: string
+  ttl?: number
 }
 
 export interface Selection {

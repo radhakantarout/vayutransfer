@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
+import FaceFilterBar from '@/components/studio/FaceFilterBar'
+import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 
 interface GalleryFile extends MediaFile {
   isSelected: boolean
@@ -46,9 +48,12 @@ export default function ClientGalleryPage() {
   const [submitting, setSubmitting]   = useState(false)
   const [submitted, setSubmitted]     = useState(false)
   const [openMenu, setOpenMenu]       = useState<string | null>(null)
-  const [zoomLevel, setZoomLevel]     = useState(3)
-  const [viewFilter, setViewFilter]   = useState<ViewFilter>('all')
-  const saveQueue                     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const [zoomLevel, setZoomLevel]       = useState(3)
+  const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
+  const [selectedFaceId, setSelectedFaceId] = useState<string | null>(null)
+  const [showSelfie, setShowSelfie]     = useState(false)
+  const [selfieFiles, setSelfieFiles]   = useState<MediaFile[] | null>(null)
+  const saveQueue                       = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Close 3-dot menu on outside click
   useEffect(() => {
@@ -192,9 +197,16 @@ export default function ClientGalleryPage() {
   const selectedCount  = files.filter((f) => f.isSelected).length
   const editCount      = files.filter((f) => f.editingRequired).length
 
-  const displayFiles: GalleryFile[] = viewFilter === 'all' ? files
+  // Face filter overrides view filter when a face is selected
+  const baseFiles: GalleryFile[] = viewFilter === 'all' ? files
     : viewFilter === 'loved' ? files.filter(f => f.isSelected)
     : files.filter(f => f.editingRequired)
+
+  const displayFiles: GalleryFile[] = selfieFiles
+    ? baseFiles.filter(f => selfieFiles.some(sf => sf.fileId === f.fileId))
+    : selectedFaceId
+    ? baseFiles.filter(f => f.faceIds?.includes(selectedFaceId))
+    : baseFiles
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -310,9 +322,36 @@ export default function ClientGalleryPage() {
         </div>
       )}
 
+      {/* ── Selfie search modal ─────────────────────────────── */}
+      {showSelfie && (
+        <SelfieSearchModal
+          token={token}
+          onClose={() => setShowSelfie(false)}
+          onResults={photos => { setSelfieFiles(photos); setSelectedFaceId(null); setShowSelfie(false) }}
+        />
+      )}
+
+      {/* ── Face filter bar ─────────────────────────────────── */}
+      {files.length > 0 && (
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1">
+          {(selfieFiles || selectedFaceId) && (
+            <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-accent/10 rounded-xl text-xs text-accent font-semibold">
+              <span>{selfieFiles ? `Selfie match — ${displayFiles.length} photo${displayFiles.length !== 1 ? 's' : ''}` : `${displayFiles.length} photo${displayFiles.length !== 1 ? 's' : ''} with this person`}</span>
+              <button onClick={() => { setSelfieFiles(null); setSelectedFaceId(null) }} className="ml-auto opacity-60 hover:opacity-100">Clear ×</button>
+            </div>
+          )}
+          <FaceFilterBar
+            token={token}
+            selectedFaceId={selectedFaceId}
+            onSelect={id => { setSelectedFaceId(id); setSelfieFiles(null) }}
+            onSelfieSearch={() => setShowSelfie(true)}
+          />
+        </div>
+      )}
+
       {/* ── Grid toolbar ────────────────────────────────────── */}
       {files.length > 0 && (
-        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1 flex items-center justify-between gap-3">
+        <div className="max-w-6xl mx-auto px-4 pt-2 pb-1 flex items-center justify-between gap-3">
           {/* Active filter banner */}
           {viewFilter !== 'all' ? (
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold flex-1

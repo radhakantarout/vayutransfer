@@ -283,6 +283,20 @@ export default function ProjectDetailPage() {
         <button onClick={() => router.back()} className="text-sm text-muted hover:text-text-primary transition-colors mb-3 flex items-center gap-1">
           ← Projects
         </button>
+        {/* Sub-nav tabs */}
+        <div className="flex gap-1 mb-6 border-b border-border">
+          {[
+            { label: 'All Photos', href: `/studio/dashboard/projects/${projectId}` },
+            { label: 'People ✨', href: `/studio/dashboard/projects/${projectId}/faces` },
+            { label: 'Selections', href: `/studio/dashboard/projects/${projectId}/selections` },
+          ].map(tab => (
+            <a key={tab.href} href={tab.href}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors
+                ${tab.label.startsWith('All') ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text-primary'}`}>
+              {tab.label}
+            </a>
+          ))}
+        </div>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3">

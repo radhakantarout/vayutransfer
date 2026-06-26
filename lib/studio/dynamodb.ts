@@ -19,6 +19,8 @@ const TABLES = {
   selections: process.env.DYNAMO_STUDIO_SELECTIONS_TABLE ?? 'vayustudio-selections',
   users:      process.env.DYNAMO_STUDIO_USERS_TABLE      ?? 'vayustudio-users',
   auditlog:   process.env.DYNAMO_STUDIO_AUDITLOG_TABLE   ?? 'vayustudio-auditlog',
+  faces:      process.env.DYNAMO_STUDIO_FACES_TABLE      ?? 'vayustudio-faces',
+  jobs:       process.env.DYNAMO_STUDIO_JOBS_TABLE       ?? 'vayustudio-jobs',
 } as const
 
 export { TABLES }
