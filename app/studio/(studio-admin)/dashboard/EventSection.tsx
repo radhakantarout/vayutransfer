@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { StudioProject, MediaFile } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import EditEventModal from './EditEventModal'
 
 const CHUNK_SIZE = 50 * 1024 * 1024
@@ -50,6 +50,12 @@ export default function EventSection({ project, onUpdated }: Props) {
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+
+  // Client selection filter
+  type ClientSel = { selection: Selection; file: MediaFile }
+  const [clientSelections, setClientSelections] = useState<ClientSel[] | null>(null)
+  const [selLoading, setSelLoading]             = useState(false)
+  const [viewFilter, setViewFilter]             = useState<'all' | 'loved' | 'edit'>('all')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
@@ -119,6 +125,20 @@ export default function EventSection({ project, onUpdated }: Props) {
     const gr = gridRef.current!.getBoundingClientRect()
     dragState.current = { active: true, startX: e.clientX - gr.left, startY: e.clientY - gr.top, moved: false }
     e.preventDefault()
+  }
+
+  const loadSelections = async () => {
+    if (clientSelections !== null) return
+    setSelLoading(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/selections`).then(r => r.json())
+    if (res.success) setClientSelections(res.data)
+    setSelLoading(false)
+  }
+
+  const toggleFilter = async (filter: 'loved' | 'edit') => {
+    if (viewFilter === filter) { setViewFilter('all'); return }
+    await loadSelections()
+    setViewFilter(filter)
   }
 
   const togglePhoto = (fileId: string) => {
@@ -195,9 +215,22 @@ export default function EventSection({ project, onUpdated }: Props) {
     setCopied(true); setTimeout(() => setCopied(false), 2000)
   }
 
+  const lovedCount = clientSelections?.length ?? null
+  const editCount  = clientSelections?.filter(s => s.selection.editingRequired).length ?? null
+
+  const displayFiles: MediaFile[] = (() => {
+    if (viewFilter === 'all' || !clientSelections) return files
+    if (viewFilter === 'loved') return clientSelections.map(s => s.file)
+    return clientSelections.filter(s => s.selection.editingRequired).map(s => s.file)
+  })()
+
+  const editCommentMap: Map<string, string> = viewFilter === 'edit' && clientSelections
+    ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
+    : new Map()
+
   const activeUploads   = uploads.filter(u => u.status !== 'done')
   const selectedCount   = gridSelected.size
-  const deleteTargetIds = deleteMode === 'all' ? files.map(f => f.fileId) : Array.from(gridSelected)
+  const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(gridSelected)
 
   return (
     <>
@@ -258,10 +291,39 @@ export default function EventSection({ project, onUpdated }: Props) {
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
-              <a href={`/studio/dashboard/projects/${project.projectId}/selections`}
-                className="bg-yellow-400 text-bg text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-yellow-300 transition-colors">
-                Selections
-              </a>
+              <>
+                {/* Loved photos filter */}
+                <button
+                  onClick={() => toggleFilter('loved')}
+                  disabled={selLoading}
+                  title="View photos loved by client"
+                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
+                    ${viewFilter === 'loved'
+                      ? 'bg-rose-500 text-white shadow-sm'
+                      : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`}
+                >
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/>
+                  </svg>
+                  {lovedCount !== null ? lovedCount : selLoading ? '…' : ''}
+                </button>
+
+                {/* Edit-required filter */}
+                <button
+                  onClick={() => toggleFilter('edit')}
+                  disabled={selLoading}
+                  title="View photos needing edits"
+                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
+                    ${viewFilter === 'edit'
+                      ? 'bg-orange-500 text-white shadow-sm'
+                      : 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'}`}
+                >
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  {editCount !== null ? editCount : selLoading ? '…' : ''}
+                </button>
+              </>
             )}
             {project.totalFiles > 0 && project.status !== 'COMPLETED' && !showShareSetup && (
               <button onClick={() => setShowShareSetup(true)}
@@ -382,10 +444,27 @@ export default function EventSection({ project, onUpdated }: Props) {
             <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
           ) : (
             <>
+              {/* Active filter banner */}
+              {viewFilter !== 'all' && (
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
+                  ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
+                  {viewFilter === 'loved'
+                    ? <><svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg> Loved by client</>
+                    : <><svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg> Needs editing</>}
+                  <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
+                  <button onClick={() => setViewFilter('all')}
+                    className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">
+                    Clear ×
+                  </button>
+                </div>
+              )}
+
               {/* Grid toolbar */}
               <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-muted">{files.length} photos</span>
+                  <span className="text-xs font-semibold text-muted">
+                    {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
+                  </span>
                   {selectedCount > 0 && (
                     <span className="text-xs font-semibold text-accent bg-accent/10 px-2 py-0.5 rounded-full">
                       {selectedCount} selected
@@ -405,7 +484,7 @@ export default function EventSection({ project, onUpdated }: Props) {
                       </button>
                     </>
                   )}
-                  <button onClick={() => setGridSelected(new Set(files.map(f => f.fileId)))}
+                  <button onClick={() => setGridSelected(new Set(displayFiles.map(f => f.fileId)))}
                     className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
                     Select All
                   </button>
@@ -437,7 +516,7 @@ export default function EventSection({ project, onUpdated }: Props) {
               </div>
 
               {/* Drag hint */}
-              {selectedCount === 0 && (
+              {selectedCount === 0 && viewFilter === 'all' && (
                 <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
               )}
 
@@ -448,9 +527,10 @@ export default function EventSection({ project, onUpdated }: Props) {
                 style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
                 onMouseDown={handleGridMouseDown}
               >
-                {files.map(f => {
+                {displayFiles.map(f => {
                   const isSelected = gridSelected.has(f.fileId)
                   const isFailed   = !['PROCESSING', 'READY'].includes(f.processingStatus)
+                  const editComment = editCommentMap.get(f.fileId)
 
                   return (
                     <div
@@ -505,6 +585,13 @@ export default function EventSection({ project, onUpdated }: Props) {
                           <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
+                        </div>
+                      )}
+
+                      {/* Edit comment tooltip (only in edit filter view) */}
+                      {editComment && (
+                        <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
+                          {editComment}
                         </div>
                       )}
                     </div>
