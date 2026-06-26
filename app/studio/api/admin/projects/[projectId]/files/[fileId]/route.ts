@@ -3,7 +3,7 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteStudioS3Object } from '@/lib/studio/s3'
-import type { MediaFile, StudioProject } from '@/types/studio'
+import type { MediaFile } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
@@ -92,25 +92,14 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // Block deletion if selection is received or completed
-    const project = await studioGetItem<StudioProject>(
-      TABLES.projects,
-      { studioId: file.studioId, projectId }
-    )
-    if (project && ['SELECTION_RECEIVED', 'COMPLETED'].includes(project.status)) {
-      return NextResponse.json(
-        { success: false, error: 'LOCKED', message: 'Cannot delete files after selection is received' },
-        { status: 400 }
-      )
-    }
-
-    // Delete S3 original and R2 preview (best effort)
+    // Delete S3 original (best effort)
     await deleteStudioS3Object(file.s3Key).catch((e) => console.error('[s3 delete]', e))
-    if (file.r2PreviewKey) {
-      // R2 deletion via S3-compatible API would go here — skipping for now, lifecycle handles cleanup
-    }
 
-    await studioDeleteItem(TABLES.mediafiles, { projectId, fileId })
+    // Delete mediafile record + any client selection for this file (best effort cleanup)
+    await Promise.all([
+      studioDeleteItem(TABLES.mediafiles, { projectId, fileId }),
+      studioDeleteItem(TABLES.selections, { projectId, fileId }).catch(() => {}),
+    ])
 
     const now = new Date().toISOString()
     await studioUpdateItem(

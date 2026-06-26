@@ -232,6 +232,11 @@ export default function EventSection({ project, onUpdated }: Props) {
   const selectedCount   = gridSelected.size
   const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(gridSelected)
 
+  // How many files in the delete batch were finalized by the client
+  const clientFinalizedInBatch = clientSelections
+    ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
+    : 0
+
   return (
     <>
       {editOpen && (
@@ -247,13 +252,24 @@ export default function EventSection({ project, onUpdated }: Props) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <div className="text-center">
-              <div className="text-4xl mb-3">🗑️</div>
+              <div className="text-4xl mb-3">{clientFinalizedInBatch > 0 ? '⚠️' : '🗑️'}</div>
               <h3 className="text-base font-bold text-text-primary">
                 {deleteMode === 'all'
                   ? `Delete all ${files.length} photos?`
                   : `Delete ${selectedCount} photo${selectedCount !== 1 ? 's' : ''}?`}
               </h3>
-              <p className="text-xs text-muted mt-1.5">This cannot be undone. Photos will be permanently removed from this event.</p>
+              {clientFinalizedInBatch > 0 ? (
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-yellow-400 font-semibold bg-yellow-400/10 border border-yellow-400/20 rounded-xl px-3 py-2">
+                    {clientFinalizedInBatch === deleteTargetIds.length
+                      ? `Client has finalized ${clientFinalizedInBatch === 1 ? 'this photo' : `all ${clientFinalizedInBatch} photos`} in their selection.`
+                      : `${clientFinalizedInBatch} of these photo${clientFinalizedInBatch !== 1 ? 's were' : ' was'} finalized by the client.`}
+                  </p>
+                  <p className="text-xs text-muted">Deleting will permanently remove them from the gallery and the client&apos;s selection.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted mt-1.5">This cannot be undone. Photos will be permanently removed from this event.</p>
+              )}
             </div>
             <div className="flex gap-3">
               <button onClick={() => setDeleteMode(null)} disabled={deleting}
@@ -261,8 +277,9 @@ export default function EventSection({ project, onUpdated }: Props) {
                 Cancel
               </button>
               <button onClick={() => deleteFiles(deleteTargetIds)} disabled={deleting}
-                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 disabled:opacity-60 transition-colors">
-                {deleting ? 'Deleting…' : 'Delete'}
+                className={`flex-1 py-2.5 rounded-xl text-white text-sm font-bold disabled:opacity-60 transition-colors
+                  ${clientFinalizedInBatch > 0 ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-red-600 hover:bg-red-700'}`}>
+                {deleting ? 'Deleting…' : clientFinalizedInBatch > 0 ? 'Yes, Delete Anyway' : 'Delete'}
               </button>
             </div>
           </div>
