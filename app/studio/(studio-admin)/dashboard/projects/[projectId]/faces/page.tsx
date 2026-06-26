@@ -32,10 +32,12 @@ export default function FacesPage() {
   const [labelSaving, setLabelSaving] = useState(false)
 
   const load = useCallback(async () => {
-    const res = await fetch(`/studio/api/admin/projects/${projectId}/faces`).then(r => r.json())
-    if (!res.success) return
-    setData(res.data)
-    setLoading(false)
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${projectId}/faces`).then(r => r.json())
+      if (res.success) setData(res.data)
+    } finally {
+      setLoading(false)
+    }
   }, [projectId])
 
   useEffect(() => { load() }, [load])
@@ -94,7 +96,7 @@ export default function FacesPage() {
 
   const isIndexing = !!data?.activeJob
   const hasPhotos  = (data?.totalFaces ?? 0) > 0 || (data?.indexedPhotos ?? 0) > 0
-  const neverRun   = !hasPhotos && !isIndexing
+  const neverRun   = !hasPhotos && !isIndexing && !featureOff
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
