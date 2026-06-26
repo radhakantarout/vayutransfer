@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import EditEventModal from './EditEventModal'
 
@@ -399,6 +400,25 @@ export default function EventSection({ project, onUpdated }: Props) {
               </svg>
             </button>
           </div>
+        </div>
+
+        {/* ── Tab navigation ────────────────────────────────────── */}
+        <div className="flex items-center gap-0 border-b border-border px-5">
+          <span className="text-xs font-semibold px-3 py-2.5 border-b-2 border-accent text-accent">
+            All Photos
+          </span>
+          <Link
+            href={`/studio/dashboard/projects/${project.projectId}/faces`}
+            className="text-xs font-semibold px-3 py-2.5 border-b-2 border-transparent text-muted hover:text-text-primary hover:border-border transition-colors"
+          >
+            People ✨
+          </Link>
+          <Link
+            href={`/studio/dashboard/projects/${project.projectId}/selections`}
+            className="text-xs font-semibold px-3 py-2.5 border-b-2 border-transparent text-muted hover:text-text-primary hover:border-border transition-colors"
+          >
+            Selections
+          </Link>
         </div>
 
         {/* ── Share setup panel ─────────────────────────────────── */}
