@@ -93,6 +93,7 @@ export async function GET(req: NextRequest) {
       extendedStorage: false,
       clientComments: true,
       editingRequired: true,
+      aiFaceRecognition: false,
     },
   }
   await studioPutItem(TABLES.studios, studio as unknown as Record<string, unknown>)
