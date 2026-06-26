@@ -37,9 +37,10 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { status } = await req.json()
-    if (!['ACTIVE', 'SUSPENDED'].includes(status)) {
-      return NextResponse.json({ success: false, error: 'INVALID_STATUS' }, { status: 400 })
+    const body = await req.json()
+    const { status, featureFlag } = body as {
+      status?: string
+      featureFlag?: { key: string; value: boolean }
     }
 
     const { studioId } = params
@@ -47,6 +48,28 @@ export async function PATCH(
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
     const now = new Date().toISOString()
+
+    // Feature flag toggle
+    if (featureFlag) {
+      const allowed = ['videoSupport', 'watermarkToggle', 'extendedStorage', 'clientComments', 'editingRequired', 'aiFaceRecognition']
+      if (!allowed.includes(featureFlag.key) || typeof featureFlag.value !== 'boolean') {
+        return NextResponse.json({ success: false, error: 'INVALID_FLAG' }, { status: 400 })
+      }
+      await studioUpdateItem(
+        TABLES.studios,
+        { studioId },
+        `SET featureFlags.#flag = :val, updatedAt = :now`,
+        { ':val': featureFlag.value, ':now': now },
+        { '#flag': featureFlag.key }
+      )
+      return NextResponse.json({ success: true, data: { studioId, featureFlag } })
+    }
+
+    // Status toggle
+    if (!status || !['ACTIVE', 'SUSPENDED'].includes(status)) {
+      return NextResponse.json({ success: false, error: 'INVALID_STATUS' }, { status: 400 })
+    }
+
     await studioUpdateItem(
       TABLES.studios,
       { studioId },

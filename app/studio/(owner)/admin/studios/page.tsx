@@ -27,7 +27,8 @@ export default function OwnerStudiosPage() {
   const [stats, setStats]       = useState<Stats | null>(null)
   const [loading, setLoading]   = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [toggling, setToggling]       = useState<string | null>(null)
+  const [toggling, setToggling]         = useState<string | null>(null)
+  const [togglingAI, setTogglingAI]     = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting, setDeleting]       = useState<string | null>(null)
 
@@ -84,6 +85,18 @@ export default function OwnerStudiosPage() {
       body: JSON.stringify({ status: next }),
     })
     setToggling(null)
+    load()
+  }
+
+  const toggleAI = async (s: Studio) => {
+    setTogglingAI(s.studioId)
+    const next = !s.featureFlags?.aiFaceRecognition
+    await fetch(`/studio/api/owner/studios/${s.studioId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ featureFlag: { key: 'aiFaceRecognition', value: next } }),
+    })
+    setTogglingAI(null)
     load()
   }
 
@@ -198,6 +211,19 @@ export default function OwnerStudiosPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 relative z-20">
+                {/* AI face recognition toggle */}
+                <button
+                  onClick={() => toggleAI(s)}
+                  disabled={togglingAI === s.studioId}
+                  title={s.featureFlags?.aiFaceRecognition ? 'Disable AI Face Recognition' : 'Enable AI Face Recognition'}
+                  className={`text-xs font-semibold px-2.5 py-1 rounded-full transition-colors disabled:opacity-40 ${
+                    s.featureFlags?.aiFaceRecognition
+                      ? 'bg-purple-500/15 text-purple-400 hover:bg-purple-500/25'
+                      : 'bg-muted/10 text-muted hover:bg-muted/20'
+                  }`}
+                >
+                  {togglingAI === s.studioId ? '…' : s.featureFlags?.aiFaceRecognition ? '✦ AI On' : '✦ AI Off'}
+                </button>
                 <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
                   s.status === 'ACTIVE' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
                 }`}>
