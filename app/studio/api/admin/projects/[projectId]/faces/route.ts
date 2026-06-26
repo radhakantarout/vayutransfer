@@ -50,10 +50,9 @@ export async function GET(
     const activeJob = processingJobs[0] ?? pendingJobs[0] ?? null
     const lastReady = readyJobs[0] ?? null
 
-    // Count unindexed photos
+    // Count unindexed photos — projectId is the table's own PK, no GSI needed
     const pendingRes = await ddb.send(new DocQueryCommand({
       TableName: TABLES.mediafiles,
-      IndexName: 'projectId-status-index',
       KeyConditionExpression: 'projectId = :pid',
       FilterExpression: 'processingStatus = :ready AND fileType = :img AND (attribute_not_exists(faceIndexed) OR faceIndexed = :false)',
       ExpressionAttributeValues: { ':pid': projectId, ':ready': 'READY', ':img': 'IMAGE', ':false': false },
