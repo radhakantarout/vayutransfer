@@ -29,6 +29,15 @@ rm -rf node_modules
 npm install --ignore-scripts
 npm install --os=linux --cpu=x64 sharp
 
+echo "==> Checking bundled font..."
+mkdir -p "$DIR/fonts"
+if [ ! -f "$DIR/fonts/DejaVuSans-Bold.ttf" ]; then
+  echo "Downloading DejaVuSans-Bold.ttf..."
+  curl -fsSL -o "$DIR/fonts/DejaVuSans-Bold.ttf" \
+    "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans-Bold.ttf"
+fi
+echo "   font size: $(du -sh "$DIR/fonts/DejaVuSans-Bold.ttf" | cut -f1)"
+
 echo "==> Zipping..."
 rm -f /tmp/vayustudio-watermark.zip
 zip -r /tmp/vayustudio-watermark.zip . \
