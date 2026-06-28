@@ -83,35 +83,40 @@ function makeWatermarkSvg(w, h) {
 <circle cx="${cx}" cy="${cy}" r="${r}"
   fill="white" fill-opacity="0.08"
   stroke="white" stroke-width="2.5" stroke-opacity="0.60"/>
-<text x="${cx + 2}" y="${ty1 + 2}"
-  font-family="DejaVu Sans,sans-serif" font-size="${fs1}px" font-weight="bold"
-  fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty1}"
-  font-family="DejaVu Sans,sans-serif" font-size="${fs1}px" font-weight="bold"
-  fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Vayu</text>
-<text x="${cx + 2}" y="${ty2 + 2}"
-  font-family="DejaVu Sans,sans-serif" font-size="${fs2}px" font-weight="bold"
-  fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Studios</text>
+  font-family="sans-serif" font-size="${fs1}px" font-weight="bold"
+  fill="white" fill-opacity="0.85" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty2}"
-  font-family="DejaVu Sans,sans-serif" font-size="${fs2}px" font-weight="bold"
-  fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Studios</text>`
+  font-family="sans-serif" font-size="${fs2}px" font-weight="bold"
+  fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Studios</text>`
     }
   }
 
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${elems}</svg>`
 }
 
-// Render the SVG watermark to a PNG Buffer using @resvg/resvg-js with explicit
-// font loading — this bypasses sharp's internal resvg which has no font API.
+// Render SVG watermark to PNG via @resvg/resvg-js with explicit font directory.
+// fontDirs makes resvg scan the directory and register all fonts found there,
+// matching by the font's own internal family name — more reliable than fontBuffers.
 function makeWatermarkPng(w, h) {
-  const svg  = makeWatermarkSvg(w, h)
+  const svg      = makeWatermarkSvg(w, h)
+  const fontDir  = path.join(__dirname, 'fonts')
   const opts = {
     fitTo: { mode: 'original' },
-    font: FONT_BUF
-      ? { fontBuffers: [FONT_BUF], loadSystemFonts: false, sansSerifFamily: 'DejaVu Sans' }
-      : { loadSystemFonts: true },
+    font: {
+      fontDirs:        [fontDir],
+      loadSystemFonts: false,
+      // Map all generic CSS families to DejaVu Sans so any font-family value works
+      sansSerifFamily: 'DejaVu Sans',
+      serifFamily:     'DejaVu Sans',
+      monospaceFamily: 'DejaVu Sans',
+      cursiveFamily:   'DejaVu Sans',
+      fantasyFamily:   'DejaVu Sans',
+    },
   }
-  return new Resvg(svg, opts).render().asPng()
+  const rendered = new Resvg(svg, opts).render()
+  console.log(`[watermark] resvg png ${rendered.width}×${rendered.height}`)
+  return rendered.asPng()
 }
 
 exports.handler = async (event) => {
