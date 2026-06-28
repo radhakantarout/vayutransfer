@@ -46,36 +46,42 @@ function makeWatermarkSvg(w, h) {
   const r      = Math.round(w / 7)           // circle radius ~171px on 1200px wide
   const colGap = Math.round(r * 2.35)        // horizontal spacing between centres
   const rowGap = Math.round(r * 2.15)        // vertical spacing between centres
-  const fs1    = Math.round(r * 0.58)        // "Vayu" font size
-  const fs2    = Math.round(r * 0.37)        // "Studios" font size
+  const fs1    = Math.round(r * 0.52)        // "Vayu" font size
+  const fs2    = Math.round(r * 0.34)        // "Studios" font size
 
   const colCount = Math.ceil(w / colGap) + 2
   const rowCount = Math.ceil(h / rowGap) + 2
 
-  // Shift text down by ~1 char-cap so baseline-anchored text sits centred in each half
-  const cap1 = Math.round(fs1 * 0.70)   // approximate cap-height for "Vayu"
-  const cap2 = Math.round(fs2 * 0.70)   // approximate cap-height for "Studios"
+  // Text vertical centres inside circle (dominant-baseline="middle" used)
+  const ty1Off = -Math.round(r * 0.20)   // "Vayu" — upper half
+  const ty2Off =  Math.round(r * 0.32)   // "Studios" — lower half
 
   let elems = ''
   for (let row = -1; row < rowCount; row++) {
-    // Offset every other row by half a column gap (staggered grid)
     const xOff = (row % 2 !== 0) ? Math.round(colGap / 2) : 0
     for (let col = -1; col < colCount; col++) {
       const cx = col * colGap + xOff
       const cy = row * rowGap
-      // Place baseline so cap-height sits centred in upper/lower half of circle
-      const ty1 = cy - Math.round(r * 0.08) + Math.round(cap1 / 2)  // "Vayu" baseline
-      const ty2 = cy + Math.round(r * 0.42) + Math.round(cap2 / 2)  // "Studios" baseline
+      const ty1 = cy + ty1Off
+      const ty2 = cy + ty2Off
+      // Shadow layer (black offset) + main layer (white) — same pattern as the working
+      // single-text version; ensures text is readable on both light and dark photos
       elems += `
 <circle cx="${cx}" cy="${cy}" r="${r}"
-  fill="black" fill-opacity="0.22"
-  stroke="white" stroke-width="2.5" stroke-opacity="0.70"/>
+  fill="white" fill-opacity="0.08"
+  stroke="white" stroke-width="2.5" stroke-opacity="0.60"/>
+<text x="${cx + 2}" y="${ty1 + 2}"
+  font-family="Arial Black,Arial,sans-serif" font-size="${fs1}px" font-weight="900"
+  fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty1}"
-  font-family="Arial,Helvetica,sans-serif" font-size="${fs1}px" font-weight="bold"
-  fill="white" fill-opacity="0.90" text-anchor="middle">Vayu</text>
+  font-family="Arial Black,Arial,sans-serif" font-size="${fs1}px" font-weight="900"
+  fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Vayu</text>
+<text x="${cx + 2}" y="${ty2 + 2}"
+  font-family="Arial Black,Arial,sans-serif" font-size="${fs2}px" font-weight="900"
+  fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Studios</text>
 <text x="${cx}" y="${ty2}"
-  font-family="Arial,Helvetica,sans-serif" font-size="${fs2}px" font-weight="600"
-  fill="white" fill-opacity="0.80" text-anchor="middle">Studios</text>`
+  font-family="Arial Black,Arial,sans-serif" font-size="${fs2}px" font-weight="900"
+  fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Studios</text>`
     }
   }
 
