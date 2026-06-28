@@ -67,6 +67,7 @@ export async function POST(
           r2Endpoint:       process.env.STUDIO_R2_ENDPOINT,
           r2AccessKeyId:    process.env.R2_ACCESS_KEY_ID,
           r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+          studioName:       studio?.name ?? 'Studio',
           logoS3Key:        studio?.brandingConfig?.logoS3Key ?? null,
           watermarkEnabled: f.watermarkEnabled ?? true,
           fileType:         f.fileType,
