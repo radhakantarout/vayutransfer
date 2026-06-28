@@ -40,33 +40,43 @@ async function setStatus(projectId, fileId, status, extra = {}) {
   }))
 }
 
-// Font sized so "VayuStudios" spans ~90% of image width
-// Three staggered diagonal instances for full-image coverage
+// Tiled circular badge watermark — staggered grid covering the full image.
+// Each badge: thin white circle + "Vayu" (large) + "Studios" (small) inside.
 function makeWatermarkSvg(w, h) {
-  const label = 'VayuStudios'
-  // Arial Black bold char width ≈ 0.65× font-size; target 90% of image width
-  const fs    = Math.max(28, Math.floor((w * 0.90) / (label.length * 0.65)))
-  const angle = -28
+  const r      = Math.round(w / 7)           // circle radius ~171px on 1200px wide
+  const colGap = Math.round(r * 2.35)        // horizontal spacing between centres
+  const rowGap = Math.round(r * 2.15)        // vertical spacing between centres
+  const fs1    = Math.round(r * 0.58)        // "Vayu" font size
+  const fs2    = Math.round(r * 0.37)        // "Studios" font size
 
-  // Staggered vertically: upper / middle / lower
-  const positions = [
-    { cx: Math.round(w * 0.42), cy: Math.round(h * 0.27) },
-    { cx: Math.round(w * 0.50), cy: Math.round(h * 0.52) },
-    { cx: Math.round(w * 0.58), cy: Math.round(h * 0.77) },
-  ]
+  const colCount = Math.ceil(w / colGap) + 2
+  const rowCount = Math.ceil(h / rowGap) + 2
 
-  const rows = positions.map(({ cx, cy }) => `
-    <text x="${cx + 3}" y="${cy + 3}"
-      font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
-      fill="black" fill-opacity="0.22" text-anchor="middle" dominant-baseline="middle"
-      transform="rotate(${angle},${cx + 3},${cy + 3})">${label}</text>
-    <text x="${cx}" y="${cy}"
-      font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
-      fill="white" fill-opacity="0.50" text-anchor="middle" dominant-baseline="middle"
-      transform="rotate(${angle},${cx},${cy})">${label}</text>`
-  ).join('')
+  let elems = ''
+  for (let row = -1; row < rowCount; row++) {
+    // Offset every other row by half a column gap (staggered grid)
+    const xOff = (row % 2 !== 0) ? Math.round(colGap / 2) : 0
+    for (let col = -1; col < colCount; col++) {
+      const cx = col * colGap + xOff
+      const cy = row * rowGap
+      const ty1 = cy - Math.round(r * 0.16)   // "Vayu" centre Y
+      const ty2 = cy + Math.round(r * 0.44)   // "Studios" centre Y
+      elems += `
+<circle cx="${cx}" cy="${cy}" r="${r}"
+  fill="white" fill-opacity="0.06"
+  stroke="white" stroke-width="2" stroke-opacity="0.55"/>
+<text x="${cx}" y="${ty1}"
+  font-family="Arial,Helvetica,sans-serif" font-size="${fs1}px" font-weight="bold"
+  fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Vayu</text>
+<text x="${cx}" y="${ty2}"
+  font-family="Arial,Helvetica,sans-serif" font-size="${fs2}px" font-weight="600"
+  fill="white" fill-opacity="0.55" text-anchor="middle" dominant-baseline="middle">Studios</text>`
+    }
+  }
 
-  return Buffer.from(`<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${rows}</svg>`)
+  return Buffer.from(
+    `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${elems}</svg>`
+  )
 }
 
 exports.handler = async (event) => {
