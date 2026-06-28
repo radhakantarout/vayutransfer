@@ -4,6 +4,18 @@ const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/clien
 const { DynamoDBClient }                               = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand }        = require('@aws-sdk/lib-dynamodb')
 const sharp = require('sharp')
+const fs    = require('fs')
+const path  = require('path')
+
+// Load bundled font once at cold start — resvg (used by sharp 0.33+) requires
+// explicit font data; without it, text renders as tofu replacement boxes (□).
+let FONT_B64 = null
+try {
+  FONT_B64 = fs.readFileSync(path.join(__dirname, 'fonts', 'DejaVuSans-Bold.ttf')).toString('base64')
+  console.log('[watermark] font loaded ok')
+} catch (e) {
+  console.warn('[watermark] font not found — text may render as boxes:', e.message)
+}
 
 const REGION       = process.env.AWS_REGION ?? 'ap-south-1'
 const DYNAMO_TABLE = process.env.DYNAMO_TABLE ?? 'vayustudio-mediafiles'
@@ -56,6 +68,12 @@ function makeWatermarkSvg(w, h) {
   const ty1Off = -Math.round(r * 0.20)   // "Vayu" — upper half
   const ty2Off =  Math.round(r * 0.32)   // "Studios" — lower half
 
+  // Embed font so resvg renders text instead of replacement boxes
+  const fontFace = FONT_B64
+    ? `<defs><style>@font-face{font-family:'VF';src:url('data:font/truetype;base64,${FONT_B64}');font-weight:700}</style></defs>`
+    : ''
+  const ff = FONT_B64 ? 'VF' : 'sans-serif'
+
   let elems = ''
   for (let row = -1; row < rowCount; row++) {
     const xOff = (row % 2 !== 0) ? Math.round(colGap / 2) : 0
@@ -64,29 +82,27 @@ function makeWatermarkSvg(w, h) {
       const cy = row * rowGap
       const ty1 = cy + ty1Off
       const ty2 = cy + ty2Off
-      // Shadow layer (black offset) + main layer (white) — same pattern as the working
-      // single-text version; ensures text is readable on both light and dark photos
       elems += `
 <circle cx="${cx}" cy="${cy}" r="${r}"
   fill="white" fill-opacity="0.08"
   stroke="white" stroke-width="2.5" stroke-opacity="0.60"/>
 <text x="${cx + 2}" y="${ty1 + 2}"
-  font-family="Arial Black,Arial,sans-serif" font-size="${fs1}px" font-weight="900"
+  font-family="${ff}" font-size="${fs1}px" font-weight="700"
   fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty1}"
-  font-family="Arial Black,Arial,sans-serif" font-size="${fs1}px" font-weight="900"
+  font-family="${ff}" font-size="${fs1}px" font-weight="700"
   fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx + 2}" y="${ty2 + 2}"
-  font-family="Arial Black,Arial,sans-serif" font-size="${fs2}px" font-weight="900"
+  font-family="${ff}" font-size="${fs2}px" font-weight="700"
   fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Studios</text>
 <text x="${cx}" y="${ty2}"
-  font-family="Arial Black,Arial,sans-serif" font-size="${fs2}px" font-weight="900"
+  font-family="${ff}" font-size="${fs2}px" font-weight="700"
   fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Studios</text>`
     }
   }
 
   return Buffer.from(
-    `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${elems}</svg>`
+    `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${fontFace}${elems}</svg>`
   )
 }
 
