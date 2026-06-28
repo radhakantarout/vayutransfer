@@ -96,16 +96,23 @@ export async function POST(
       return NextResponse.json({ success: true, data: { matchedFaceCount: 0, totalPhotos: 0, photos: [] } })
     }
 
-    // Batch-fetch the matched MediaFiles
-    const batchRes = await ddb.send(new BatchGetCommand({
-      RequestItems: {
-        [TABLES.mediafiles]: {
-          Keys: matchedFileIds.map(fileId => ({ projectId: project.projectId, fileId })),
-        },
-      },
-    }))
+    // Batch-fetch matched MediaFiles — DynamoDB BatchGet limit is 100 keys per request
+    const chunks: string[][] = []
+    for (let i = 0; i < matchedFileIds.length; i += 100) chunks.push(matchedFileIds.slice(i, i + 100))
 
-    const photos = ((batchRes.Responses?.[TABLES.mediafiles] ?? []) as MediaFile[])
+    const allItems: MediaFile[] = []
+    for (const chunk of chunks) {
+      const batchRes = await ddb.send(new BatchGetCommand({
+        RequestItems: {
+          [TABLES.mediafiles]: {
+            Keys: chunk.map(fileId => ({ projectId: project.projectId, fileId })),
+          },
+        },
+      }))
+      allItems.push(...((batchRes.Responses?.[TABLES.mediafiles] ?? []) as MediaFile[]))
+    }
+
+    const photos = allItems
       .filter(f => f.processingStatus === 'READY')
       .sort((a, b) => a.displayOrder - b.displayOrder)
 
