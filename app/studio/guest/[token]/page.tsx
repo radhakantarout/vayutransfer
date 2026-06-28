@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
+import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
 
 interface GuestPhoto {
   fileId:      string
@@ -164,6 +165,8 @@ export default function GuestPage() {
 
   return (
     <div className="min-h-screen bg-bg">
+
+      <InAppBrowserGuard />
 
       {/* Share toast */}
       {shareToast && (

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
+import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
 
 interface GalleryFile extends MediaFile {
   isSelected: boolean
@@ -236,6 +237,8 @@ export default function ClientGalleryPage() {
 
   return (
     <div className="min-h-screen bg-bg pb-28">
+
+      <InAppBrowserGuard />
 
       {/* ── Sticky header ───────────────────────────────────── */}
       <div className="sticky top-0 z-20 bg-bg/95 backdrop-blur border-b border-border px-4 py-3">
