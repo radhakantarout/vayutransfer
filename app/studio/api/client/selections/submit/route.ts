@@ -20,9 +20,21 @@ export async function POST(req: NextRequest) {
     if (!project) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
+
+    // Hard block — photographer has finalised the project
     if (project.status === 'COMPLETED') {
       return NextResponse.json(
-        { success: false, error: 'ALREADY_SUBMITTED', message: 'Selections already submitted' },
+        { success: false, error: 'PROJECT_COMPLETED', message: 'Your photographer has already completed your project.' },
+        { status: 400 }
+      )
+    }
+
+    // Soft block — first submission exists but 12-hour resubmit window has closed
+    const RESUBMIT_WINDOW_MS = 12 * 60 * 60 * 1000
+    const firstSubmittedAt = (project as StudioProject & { selectionSubmittedAt?: string }).selectionSubmittedAt
+    if (firstSubmittedAt && Date.now() - new Date(firstSubmittedAt).getTime() > RESUBMIT_WINDOW_MS) {
+      return NextResponse.json(
+        { success: false, error: 'RESUBMIT_WINDOW_CLOSED', message: 'The 12-hour resubmit window has closed. Contact your photographer to make changes.' },
         { status: 400 }
       )
     }
@@ -40,16 +52,19 @@ export async function POST(req: NextRequest) {
     const editingCount  = selected.filter((s) => s.editingRequired).length
     const commentCount  = allSelections.filter((s) => s.comment && s.comment.trim()).length
     const now = new Date().toISOString()
+    // Preserve the original submission timestamp so the 12h window is anchored to first submit
+    const submittedAt = firstSubmittedAt ?? now
 
     await studioUpdateItem(
       TABLES.projects,
       { studioId, projectId },
-      'SET #s = :status, selectedFilesCount = :sel, editingRequiredCount = :edit, commentsCount = :comments, selectionSubmittedAt = :now, updatedAt = :now',
+      'SET #s = :status, selectedFilesCount = :sel, editingRequiredCount = :edit, commentsCount = :comments, selectionSubmittedAt = :sat, updatedAt = :now',
       {
         ':status':   'SELECTION_RECEIVED',
         ':sel':      selected.length,
         ':edit':     editingCount,
         ':comments': commentCount,
+        ':sat':      submittedAt,
         ':now':      now,
       },
       { '#s': 'status' }
@@ -75,7 +90,7 @@ export async function POST(req: NextRequest) {
       console.log(`[DEV] Selection submitted — project: ${projectId}, selected: ${selected.length}`)
     }
 
-    return NextResponse.json({ success: true, data: { selectedCount: selected.length } })
+    return NextResponse.json({ success: true, data: { selectedCount: selected.length, submittedAt } })
   } catch (err) {
     console.error('[selections submit POST]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })

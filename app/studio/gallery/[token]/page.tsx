@@ -44,10 +44,13 @@ export default function ClientGalleryPage() {
   const [error, setError]             = useState<string | null>(null)
   const [viewMode, setViewMode]       = useState<ViewMode>('grid')
   const [lightboxIdx, setLightboxIdx] = useState(0)
-  const [showSubmit, setShowSubmit]   = useState(false)
-  const [submitting, setSubmitting]   = useState(false)
-  const [submitted, setSubmitted]     = useState(false)
-  const [openMenu, setOpenMenu]       = useState<string | null>(null)
+  const [showSubmit, setShowSubmit]       = useState(false)
+  const [submitting, setSubmitting]       = useState(false)
+  const [submitted, setSubmitted]         = useState(false)
+  const [submittedAt, setSubmittedAt]     = useState<string | null>(null)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [countdown, setCountdown]         = useState('')
+  const [openMenu, setOpenMenu]           = useState<string | null>(null)
   const [zoomLevel, setZoomLevel]       = useState(3)
   const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
   const [showSelfie, setShowSelfie]     = useState(false)
@@ -108,8 +111,9 @@ export default function ClientGalleryPage() {
     setFiles(merged)
     setLoading(false)
 
-    if (galleryData.data.project.status === 'SELECTION_RECEIVED' ||
-        galleryData.data.project.status === 'COMPLETED') {
+    const sat = galleryData.data.project.selectionSubmittedAt ?? null
+    if (sat) {
+      setSubmittedAt(sat)
       setSubmitted(true)
     }
   }, [token, router])
@@ -188,10 +192,33 @@ export default function ClientGalleryPage() {
     setShowSubmit(false)
     if (res.success) {
       setSubmitted(true)
+      setSubmittedAt(res.data.submittedAt)
+      setShowSuccessModal(true)
     } else {
       alert(res.message ?? 'Could not submit selections. Please try again.')
     }
   }
+
+  // Live countdown for the 12-hour resubmit window
+  const RESUBMIT_WINDOW_MS = 12 * 60 * 60 * 1000
+  useEffect(() => {
+    if (!submittedAt) return
+    const deadline = new Date(new Date(submittedAt).getTime() + RESUBMIT_WINDOW_MS)
+    const tick = () => {
+      const diff = deadline.getTime() - Date.now()
+      if (diff <= 0) { setCountdown(''); return }
+      const h = Math.floor(diff / 3_600_000)
+      const m = Math.floor((diff % 3_600_000) / 60_000)
+      setCountdown(`${h}h ${m}m`)
+    }
+    tick()
+    const id = setInterval(tick, 30_000)
+    return () => clearInterval(id)
+  }, [submittedAt])
+
+  const canResubmit = submittedAt
+    ? Date.now() - new Date(submittedAt).getTime() < RESUBMIT_WINDOW_MS
+    : false
 
   const selectedCount  = files.filter((f) => f.isSelected).length
   const editCount      = files.filter((f) => f.editingRequired).length
@@ -215,22 +242,6 @@ export default function ClientGalleryPage() {
       <div className="text-center space-y-4">
         <div className="text-4xl">🔗</div>
         <div className="text-text-primary font-semibold">{error}</div>
-      </div>
-    </div>
-  )
-
-  if (submitted) return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="text-center space-y-5 max-w-sm">
-        <div className="text-6xl">✅</div>
-        <h1 className="text-2xl font-bold text-text-primary">Selections Submitted!</h1>
-        <p className="text-muted text-sm leading-relaxed">
-          We&apos;ve received your photo selections. Your photographer will review them and get back to you soon.
-        </p>
-        <div className="bg-card border border-border rounded-xl p-4 text-sm text-left space-y-1">
-          <div className="text-muted">Photos selected</div>
-          <div className="text-2xl font-bold text-accent">{selectedCount || '—'}</div>
-        </div>
       </div>
     </div>
   )
@@ -338,6 +349,32 @@ export default function ClientGalleryPage() {
           onClose={() => setShowSelfie(false)}
           onResults={photos => { setSelfieFiles(photos); setShowSelfie(false) }}
         />
+      )}
+
+      {/* ── Submitted banner ─────────────────────────────────── */}
+      {submitted && (
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1">
+          <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-semibold border
+            ${canResubmit
+              ? 'bg-green-500/10 border-green-500/20 text-green-500'
+              : 'bg-border/50 border-border text-muted'}`}
+          >
+            <span>{canResubmit ? '✅' : '🔒'}</span>
+            <span className="flex-1">
+              {canResubmit
+                ? `Selection submitted · You can resubmit within ${countdown || '…'}`
+                : 'Selection submitted · Resubmit window closed'}
+            </span>
+            {canResubmit && (
+              <button
+                onClick={() => setShowSuccessModal(true)}
+                className="opacity-60 hover:opacity-100 transition-opacity underline underline-offset-2"
+              >
+                Details
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ── Selfie match banner ─────────────────────────────── */}
@@ -657,16 +694,59 @@ export default function ClientGalleryPage() {
                 }
               </div>
             </div>
-            <button
-              onClick={() => setShowSubmit(true)}
-              disabled={selectedCount === 0}
-              className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
-            >
-              Submit →
-            </button>
+            {!submitted ? (
+              <button
+                onClick={() => setShowSubmit(true)}
+                disabled={selectedCount === 0}
+                className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+              >
+                Submit →
+              </button>
+            ) : canResubmit ? (
+              <button
+                onClick={() => setShowSubmit(true)}
+                disabled={selectedCount === 0}
+                className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+              >
+                Resubmit ↺
+              </button>
+            ) : (
+              <div className="text-xs text-muted font-semibold px-4 py-3 rounded-xl bg-border/40 whitespace-nowrap flex items-center gap-1.5">
+                🔒 Locked
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* ── Success modal (shown after submit) ─────────────── */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center px-4">
+          <div className="bg-card border border-border rounded-3xl p-7 w-full max-w-sm text-center space-y-5">
+            <div className="text-6xl">✅</div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold text-text-primary">Selection Submitted!</h2>
+              <p className="text-sm text-muted leading-relaxed">
+                Your photographer received your selection of{' '}
+                <strong className="text-text-primary">{selectedCount} photo{selectedCount !== 1 ? 's' : ''}</strong>.
+                {editCount > 0 && ` ${editCount} marked for editing.`}
+              </p>
+            </div>
+            {canResubmit && countdown && (
+              <div className="bg-accent/10 border border-accent/20 rounded-2xl px-4 py-3 space-y-0.5">
+                <p className="text-xs text-muted">You can edit &amp; resubmit within</p>
+                <p className="text-accent font-bold text-xl">{countdown}</p>
+              </div>
+            )}
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="w-full bg-accent text-bg font-bold py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all"
+            >
+              Close — Browse Gallery
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Submit confirmation modal ───────────────────────── */}
       {showSubmit && (
@@ -676,7 +756,9 @@ export default function ClientGalleryPage() {
             <p className="text-sm text-muted leading-relaxed">
               You&apos;ve selected <strong className="text-text-primary">{selectedCount} photos</strong>.
               {editCount > 0 && ` ${editCount} marked for editing.`}
-              {' '}Once submitted, your selections cannot be changed.
+              {' '}{submitted
+                ? `This will replace your previous submission. You have ${countdown || 'limited time'} left to make further changes.`
+                : 'After submitting, you can update your selection within 12 hours.'}
             </p>
             <div className="flex gap-3">
               <button
