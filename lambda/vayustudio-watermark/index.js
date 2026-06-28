@@ -85,10 +85,10 @@ function makeWatermarkSvg(w, h) {
   stroke="white" stroke-width="2.5" stroke-opacity="0.60"/>
 <text x="${cx}" y="${ty1}"
   font-family="sans-serif" font-size="${fs1}px" font-weight="bold"
-  fill="white" fill-opacity="0.85" text-anchor="middle" dominant-baseline="middle">Vayu</text>
+  fill="white" fill-opacity="0.45" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty2}"
   font-family="sans-serif" font-size="${fs2}px" font-weight="bold"
-  fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Studios</text>`
+  fill="white" fill-opacity="0.38" text-anchor="middle" dominant-baseline="middle">Studios</text>`
     }
   }
 
