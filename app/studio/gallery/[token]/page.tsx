@@ -333,7 +333,7 @@ export default function ClientGalleryPage() {
         <SelfieSearchModal
           token={token}
           onClose={() => setShowSelfie(false)}
-          onResults={photos => { setSelfieFiles(photos); setSelectedFaceId(null); setShowSelfie(false) }}
+          onResults={photos => { setSelfieFiles(photos); setShowSelfie(false) }}
         />
       )}
 
