@@ -411,7 +411,7 @@ export default function EventSection({ project, onUpdated }: Props) {
             href={`/studio/dashboard/projects/${project.projectId}/faces`}
             className="text-xs font-semibold px-3 py-2.5 border-b-2 border-transparent text-muted hover:text-text-primary hover:border-border transition-colors"
           >
-            People ✨
+            Face Index ✨
           </Link>
           <Link
             href={`/studio/dashboard/projects/${project.projectId}/selections`}

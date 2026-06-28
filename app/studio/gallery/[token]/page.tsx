@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
-import FaceFilterBar from '@/components/studio/FaceFilterBar'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 
 interface GalleryFile extends MediaFile {
@@ -50,7 +49,6 @@ export default function ClientGalleryPage() {
   const [openMenu, setOpenMenu]       = useState<string | null>(null)
   const [zoomLevel, setZoomLevel]       = useState(3)
   const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
-  const [selectedFaceId, setSelectedFaceId] = useState<string | null>(null)
   const [showSelfie, setShowSelfie]     = useState(false)
   const [selfieFiles, setSelfieFiles]   = useState<MediaFile[] | null>(null)
   const saveQueue                       = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -197,15 +195,12 @@ export default function ClientGalleryPage() {
   const selectedCount  = files.filter((f) => f.isSelected).length
   const editCount      = files.filter((f) => f.editingRequired).length
 
-  // Face filter overrides view filter when a face is selected
   const baseFiles: GalleryFile[] = viewFilter === 'all' ? files
     : viewFilter === 'loved' ? files.filter(f => f.isSelected)
     : files.filter(f => f.editingRequired)
 
   const displayFiles: GalleryFile[] = selfieFiles
     ? baseFiles.filter(f => selfieFiles.some(sf => sf.fileId === f.fileId))
-    : selectedFaceId
-    ? baseFiles.filter(f => f.faceIds?.includes(selectedFaceId))
     : baseFiles
 
   if (loading) return (
@@ -254,6 +249,17 @@ export default function ClientGalleryPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Find My Photos — selfie search */}
+            <button
+              onClick={() => setShowSelfie(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold border border-accent/40 text-accent bg-accent/10 rounded-full px-3 py-1.5 hover:bg-accent/20 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Find My Photos
+            </button>
             {/* Edit-required filter button */}
             {editCount > 0 && (
               <button
@@ -331,21 +337,19 @@ export default function ClientGalleryPage() {
         />
       )}
 
-      {/* ── Face filter bar ─────────────────────────────────── */}
-      {files.length > 0 && (
+      {/* ── Selfie match banner ─────────────────────────────── */}
+      {selfieFiles && (
         <div className="max-w-6xl mx-auto px-4 pt-3 pb-1">
-          {(selfieFiles || selectedFaceId) && (
-            <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-accent/10 rounded-xl text-xs text-accent font-semibold">
-              <span>{selfieFiles ? `Selfie match — ${displayFiles.length} photo${displayFiles.length !== 1 ? 's' : ''}` : `${displayFiles.length} photo${displayFiles.length !== 1 ? 's' : ''} with this person`}</span>
-              <button onClick={() => { setSelfieFiles(null); setSelectedFaceId(null) }} className="ml-auto opacity-60 hover:opacity-100">Clear ×</button>
-            </div>
-          )}
-          <FaceFilterBar
-            token={token}
-            selectedFaceId={selectedFaceId}
-            onSelect={id => { setSelectedFaceId(id); setSelfieFiles(null) }}
-            onSelfieSearch={() => setShowSelfie(true)}
-          />
+          <div className="flex items-center gap-2 px-3 py-2 bg-accent/10 rounded-xl text-xs text-accent font-semibold">
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Showing {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''} with you</span>
+            <button onClick={() => setSelfieFiles(null)} className="ml-auto opacity-60 hover:opacity-100">
+              Show all ×
+            </button>
+          </div>
         </div>
       )}
 
