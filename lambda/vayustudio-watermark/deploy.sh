@@ -27,7 +27,7 @@ echo "==> Installing dependencies for Linux x64 (Lambda runtime)..."
 cd "$DIR"
 rm -rf node_modules
 npm install --ignore-scripts
-npm install --os=linux --cpu=x64 sharp
+npm install --os=linux --cpu=x64 sharp @resvg/resvg-js
 
 echo "==> Checking bundled font..."
 mkdir -p "$DIR/fonts"

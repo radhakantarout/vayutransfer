@@ -3,16 +3,19 @@
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3')
 const { DynamoDBClient }                               = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand }        = require('@aws-sdk/lib-dynamodb')
-const sharp = require('sharp')
-const fs    = require('fs')
-const path  = require('path')
+const sharp       = require('sharp')
+const { Resvg }   = require('@resvg/resvg-js')
+const fs          = require('fs')
+const path        = require('path')
 
-// Load bundled font once at cold start — resvg (used by sharp 0.33+) requires
-// explicit font data; without it, text renders as tofu replacement boxes (□).
-let FONT_B64 = null
+// Load bundled font once at cold start.
+// sharp 0.33+ uses resvg for SVG; resvg requires fonts via its own API —
+// CSS @font-face data URIs are silently ignored, causing □ tofu boxes.
+// We use @resvg/resvg-js directly with fontBuffers to bypass this.
+let FONT_BUF = null
 try {
-  FONT_B64 = fs.readFileSync(path.join(__dirname, 'fonts', 'DejaVuSans-Bold.ttf')).toString('base64')
-  console.log('[watermark] font loaded ok')
+  FONT_BUF = fs.readFileSync(path.join(__dirname, 'fonts', 'DejaVuSans-Bold.ttf'))
+  console.log('[watermark] font loaded:', FONT_BUF.length, 'bytes')
 } catch (e) {
   console.warn('[watermark] font not found — text may render as boxes:', e.message)
 }
@@ -68,12 +71,6 @@ function makeWatermarkSvg(w, h) {
   const ty1Off = -Math.round(r * 0.20)   // "Vayu" — upper half
   const ty2Off =  Math.round(r * 0.32)   // "Studios" — lower half
 
-  // Embed font so resvg renders text instead of replacement boxes
-  const fontFace = FONT_B64
-    ? `<defs><style>@font-face{font-family:'VF';src:url('data:font/truetype;base64,${FONT_B64}');font-weight:700}</style></defs>`
-    : ''
-  const ff = FONT_B64 ? 'VF' : 'sans-serif'
-
   let elems = ''
   for (let row = -1; row < rowCount; row++) {
     const xOff = (row % 2 !== 0) ? Math.round(colGap / 2) : 0
@@ -87,23 +84,34 @@ function makeWatermarkSvg(w, h) {
   fill="white" fill-opacity="0.08"
   stroke="white" stroke-width="2.5" stroke-opacity="0.60"/>
 <text x="${cx + 2}" y="${ty1 + 2}"
-  font-family="${ff}" font-size="${fs1}px" font-weight="700"
+  font-family="DejaVu Sans,sans-serif" font-size="${fs1}px" font-weight="bold"
   fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx}" y="${ty1}"
-  font-family="${ff}" font-size="${fs1}px" font-weight="700"
+  font-family="DejaVu Sans,sans-serif" font-size="${fs1}px" font-weight="bold"
   fill="white" fill-opacity="0.75" text-anchor="middle" dominant-baseline="middle">Vayu</text>
 <text x="${cx + 2}" y="${ty2 + 2}"
-  font-family="${ff}" font-size="${fs2}px" font-weight="700"
+  font-family="DejaVu Sans,sans-serif" font-size="${fs2}px" font-weight="bold"
   fill="black" fill-opacity="0.28" text-anchor="middle" dominant-baseline="middle">Studios</text>
 <text x="${cx}" y="${ty2}"
-  font-family="${ff}" font-size="${fs2}px" font-weight="700"
+  font-family="DejaVu Sans,sans-serif" font-size="${fs2}px" font-weight="bold"
   fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Studios</text>`
     }
   }
 
-  return Buffer.from(
-    `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${fontFace}${elems}</svg>`
-  )
+  return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${elems}</svg>`
+}
+
+// Render the SVG watermark to a PNG Buffer using @resvg/resvg-js with explicit
+// font loading — this bypasses sharp's internal resvg which has no font API.
+function makeWatermarkPng(w, h) {
+  const svg  = makeWatermarkSvg(w, h)
+  const opts = {
+    fitTo: { mode: 'original' },
+    font: FONT_BUF
+      ? { fontBuffers: [FONT_BUF], loadSystemFonts: false, sansSerifFamily: 'DejaVu Sans' }
+      : { loadSystemFonts: true },
+  }
+  return new Resvg(svg, opts).render().asPng()
 }
 
 exports.handler = async (event) => {
@@ -154,7 +162,7 @@ exports.handler = async (event) => {
     let finalBuf
     if (watermarkEnabled) {
       finalBuf = await sharp(resizedBuf)
-        .composite([{ input: makeWatermarkSvg(outW, outH), blend: 'over' }])
+        .composite([{ input: makeWatermarkPng(outW, outH), blend: 'over' }])
         .jpeg({ quality: 82, progressive: true, mozjpeg: false })
         .toBuffer()
       console.log(`[watermark] watermark applied, JPEG ${finalBuf.length} bytes`)

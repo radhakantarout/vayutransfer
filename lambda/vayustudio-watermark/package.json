@@ -7,6 +7,7 @@
     "@aws-sdk/client-dynamodb": "^3.0.0",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "@resvg/resvg-js": "^2.6.2",
     "sharp": "^0.34.5"
   }
 }
