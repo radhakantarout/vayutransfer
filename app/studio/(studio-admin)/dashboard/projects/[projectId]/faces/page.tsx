@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import QRCode from 'qrcode'
 
 interface StatusData {
   totalPhotos:    number
@@ -21,6 +22,14 @@ export default function FaceIndexPage() {
   const [error, setError]           = useState<string | null>(null)
   const [featureOff, setFeatureOff] = useState(false)
 
+  // QR code state
+  const [qrExpiry, setQrExpiry]       = useState<12 | 24 | 48>(24)
+  const [qrGenerating, setQrGenerating] = useState(false)
+  const [qrDataUrl, setQrDataUrl]     = useState<string | null>(null)
+  const [qrGuestUrl, setQrGuestUrl]   = useState<string | null>(null)
+  const [qrExpiresAt, setQrExpiresAt] = useState<string | null>(null)
+  const [qrCopied, setQrCopied]       = useState(false)
+
   const load = useCallback(async () => {
     try {
       const res = await fetch(`/studio/api/admin/projects/${projectId}/faces`).then(r => r.json())
@@ -38,6 +47,35 @@ export default function FaceIndexPage() {
     const t = setInterval(load, 6000)
     return () => clearInterval(t)
   }, [data?.activeJob, load])
+
+  const generateQr = async () => {
+    setQrGenerating(true)
+    const res = await fetch(`/studio/api/admin/projects/${projectId}/guest-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiryHours: qrExpiry }),
+    }).then(r => r.json())
+    setQrGenerating(false)
+    if (!res.success) { setError(res.message ?? 'Could not generate QR code'); return }
+    const { qrUrl, expiresAt } = res.data
+    setQrGuestUrl(qrUrl)
+    setQrExpiresAt(expiresAt)
+    const dataUrl = await QRCode.toDataURL(qrUrl, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+    setQrDataUrl(dataUrl)
+  }
+
+  const copyQrLink = async () => {
+    if (!qrGuestUrl) return
+    await navigator.clipboard.writeText(qrGuestUrl)
+    setQrCopied(true); setTimeout(() => setQrCopied(false), 2000)
+  }
+
+  const downloadQr = () => {
+    if (!qrDataUrl) return
+    const a = document.createElement('a')
+    a.href = qrDataUrl; a.download = `guest-qr-${projectId}.png`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  }
 
   const triggerIndexing = async () => {
     setTriggering(true)
@@ -185,6 +223,74 @@ export default function FaceIndexPage() {
           <p className="text-xs text-muted leading-relaxed">
             Guests can now open the gallery link and tap <strong className="text-text-primary">Find My Photos</strong> to upload a selfie and instantly see all photos with them.
           </p>
+        </div>
+      )}
+
+      {/* QR Code generator — shown once index is ready */}
+      {(isReady || hasPartial) && (
+        <div className="border border-border rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-border bg-border/10">
+            <h2 className="text-sm font-bold text-text-primary">Guest QR Code</h2>
+            <p className="text-xs text-muted mt-0.5">Generate a QR code for guests to scan and find their photos via selfie.</p>
+          </div>
+
+          <div className="px-5 py-4 space-y-4">
+            {/* Expiry picker + generate */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
+              <select
+                value={qrExpiry}
+                onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
+                className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60"
+              >
+                <option value={12}>12 hours</option>
+                <option value={24}>24 hours</option>
+                <option value={48}>48 hours</option>
+              </select>
+              <button
+                onClick={generateQr}
+                disabled={qrGenerating}
+                className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
+              </button>
+            </div>
+
+            {/* QR Display */}
+            {qrDataUrl && qrGuestUrl && (
+              <div className="flex flex-col items-center gap-4 pt-2">
+                <div className="bg-white p-3 rounded-2xl shadow-md">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
+                </div>
+
+                {qrExpiresAt && (
+                  <p className="text-xs text-muted text-center">
+                    Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                )}
+
+                <div className="flex gap-2 w-full">
+                  <button
+                    onClick={copyQrLink}
+                    className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors"
+                  >
+                    {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
+                  </button>
+                  <button
+                    onClick={downloadQr}
+                    className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors"
+                  >
+                    ⬇ Download QR
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-muted/60 text-center">
+                  Print or share this QR code at the event. Guests scan it, upload a selfie, and instantly see and download their photos.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

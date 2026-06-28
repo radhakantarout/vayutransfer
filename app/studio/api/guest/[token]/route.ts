@@ -1,0 +1,51 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { jwtVerify } from 'jose'
+import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import type { StudioProject, Studio } from '@/types/studio'
+
+function getSecret() {
+  return new TextEncoder().encode(process.env.STUDIO_JWT_SECRET!)
+}
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { token: string } }
+) {
+  try {
+    const { payload } = await jwtVerify(params.token, getSecret())
+
+    if (payload.type !== 'GUEST_QR') {
+      return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 401 })
+    }
+
+    const { projectId, studioId } = payload as { projectId: string; studioId: string; type: string; exp: number }
+
+    const [project, studio] = await Promise.all([
+      studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId }),
+      studioGetItem<Studio>(TABLES.studios, { studioId }),
+    ])
+
+    if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+    const expiresAt = new Date(Number(payload.exp) * 1000).toISOString()
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        projectId,
+        studioId,
+        eventType: project.eventType,
+        clientName: project.clientName,
+        eventDate: project.eventDate,
+        studioName: studio?.name ?? 'Studio',
+        expiresAt,
+      },
+    })
+  } catch (err: unknown) {
+    const name = (err as { name?: string }).name ?? ''
+    if (name === 'JWTExpired') {
+      return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
+    }
+    return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 401 })
+  }
+}
