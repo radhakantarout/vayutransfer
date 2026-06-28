@@ -52,6 +52,10 @@ function makeWatermarkSvg(w, h) {
   const colCount = Math.ceil(w / colGap) + 2
   const rowCount = Math.ceil(h / rowGap) + 2
 
+  // Shift text down by ~1 char-cap so baseline-anchored text sits centred in each half
+  const cap1 = Math.round(fs1 * 0.70)   // approximate cap-height for "Vayu"
+  const cap2 = Math.round(fs2 * 0.70)   // approximate cap-height for "Studios"
+
   let elems = ''
   for (let row = -1; row < rowCount; row++) {
     // Offset every other row by half a column gap (staggered grid)
@@ -59,18 +63,19 @@ function makeWatermarkSvg(w, h) {
     for (let col = -1; col < colCount; col++) {
       const cx = col * colGap + xOff
       const cy = row * rowGap
-      const ty1 = cy - Math.round(r * 0.16)   // "Vayu" centre Y
-      const ty2 = cy + Math.round(r * 0.44)   // "Studios" centre Y
+      // Place baseline so cap-height sits centred in upper/lower half of circle
+      const ty1 = cy - Math.round(r * 0.08) + Math.round(cap1 / 2)  // "Vayu" baseline
+      const ty2 = cy + Math.round(r * 0.42) + Math.round(cap2 / 2)  // "Studios" baseline
       elems += `
 <circle cx="${cx}" cy="${cy}" r="${r}"
-  fill="white" fill-opacity="0.06"
-  stroke="white" stroke-width="2" stroke-opacity="0.55"/>
+  fill="black" fill-opacity="0.22"
+  stroke="white" stroke-width="2.5" stroke-opacity="0.70"/>
 <text x="${cx}" y="${ty1}"
   font-family="Arial,Helvetica,sans-serif" font-size="${fs1}px" font-weight="bold"
-  fill="white" fill-opacity="0.65" text-anchor="middle" dominant-baseline="middle">Vayu</text>
+  fill="white" fill-opacity="0.90" text-anchor="middle">Vayu</text>
 <text x="${cx}" y="${ty2}"
   font-family="Arial,Helvetica,sans-serif" font-size="${fs2}px" font-weight="600"
-  fill="white" fill-opacity="0.55" text-anchor="middle" dominant-baseline="middle">Studios</text>`
+  fill="white" fill-opacity="0.80" text-anchor="middle">Studios</text>`
     }
   }
 
