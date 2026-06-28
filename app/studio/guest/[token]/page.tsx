@@ -11,11 +11,11 @@ interface GuestPhoto {
 }
 
 interface ProjectInfo {
-  eventType:   string
-  clientName:  string
-  eventDate:   string
-  studioName:  string
-  expiresAt:   string
+  eventType:  string
+  clientName: string
+  eventDate:  string
+  studioName: string
+  expiresAt:  string
 }
 
 type Stage = 'LOADING' | 'IDLE' | 'CAPTURING' | 'SEARCHING' | 'RESULTS' | 'NO_MATCH' | 'NO_FACE' | 'EXPIRED' | 'ERROR'
@@ -28,17 +28,16 @@ const EVENT_ICON: Record<string, string> = {
 export default function GuestPage() {
   const { token } = useParams<{ token: string }>()
 
-  const [stage, setStage]         = useState<Stage>('LOADING')
-  const [project, setProject]     = useState<ProjectInfo | null>(null)
-  const [photos, setPhotos]       = useState<GuestPhoto[]>([])
-  const [selected, setSelected]   = useState<Set<string>>(new Set())
-  const [lightbox, setLightbox]   = useState<number | null>(null)
-  const [downloading, setDownloading] = useState(false)
-  const [errorMsg, setErrorMsg]   = useState('')
+  const [stage, setStage]           = useState<Stage>('LOADING')
+  const [project, setProject]       = useState<ProjectInfo | null>(null)
+  const [photos, setPhotos]         = useState<GuestPhoto[]>([])
+  const [activePhoto, setActivePhoto] = useState<GuestPhoto | null>(null)
+  const [shareToast, setShareToast] = useState(false)
+  const [errorMsg, setErrorMsg]     = useState('')
 
-  const videoRef    = useRef<HTMLVideoElement>(null)
-  const canvasRef   = useRef<HTMLCanvasElement>(null)
-  const streamRef   = useRef<MediaStream | null>(null)
+  const videoRef     = useRef<HTMLVideoElement>(null)
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const streamRef    = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const stopCamera = useCallback(() => {
@@ -48,7 +47,6 @@ export default function GuestPage() {
 
   useEffect(() => () => stopCamera(), [stopCamera])
 
-  // Validate token on mount
   useEffect(() => {
     fetch(`/studio/api/guest/${token}`)
       .then(r => r.json())
@@ -80,7 +78,7 @@ export default function GuestPage() {
 
   const captureAndSearch = () => {
     if (!videoRef.current || !canvasRef.current) return
-    const v = videoRef.current; const c = canvasRef.current
+    const v = videoRef.current, c = canvasRef.current
     c.width = v.videoWidth; c.height = v.videoHeight
     c.getContext('2d')!.drawImage(v, 0, 0)
     stopCamera()
@@ -105,7 +103,11 @@ export default function GuestPage() {
 
       if (!res.success) {
         if (res.error === 'TOKEN_EXPIRED') { setStage('EXPIRED'); return }
-        if (res.error === 'NOT_INDEXED_YET') { setStage('ERROR'); setErrorMsg("Photos haven't been set up for face search yet. Please contact your photographer."); return }
+        if (res.error === 'NOT_INDEXED_YET') {
+          setStage('ERROR')
+          setErrorMsg("Photos haven't been set up for face search yet. Please contact your photographer.")
+          return
+        }
         setStage('ERROR'); setErrorMsg('Something went wrong. Please try again.'); return
       }
 
@@ -114,7 +116,6 @@ export default function GuestPage() {
       if (!found?.length) { setStage('NO_MATCH'); return }
 
       setPhotos(found)
-      setSelected(new Set(found.map((p: GuestPhoto) => p.fileId)))
       setStage('RESULTS')
     } catch {
       setStage('ERROR')
@@ -122,31 +123,24 @@ export default function GuestPage() {
     }
   }
 
-  const toggleSelect = (fileId: string) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      next.has(fileId) ? next.delete(fileId) : next.add(fileId)
-      return next
-    })
-  }
-
-  const downloadSelected = async () => {
-    const toDownload = photos.filter(p => selected.has(p.fileId))
-    if (!toDownload.length) return
-    setDownloading(true)
-    for (const photo of toDownload) {
-      const url = `/studio/api/guest/${token}/download/${photo.fileId}`
-      const a = document.createElement('a')
-      a.href = url; a.download = photo.filename; a.target = '_blank'
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      await new Promise(r => setTimeout(r, 400))
+  const handleShare = async (photo: GuestPhoto) => {
+    const shareUrl = `${location.origin}/studio/api/guest/${token}/download/${photo.fileId}`
+    const shareData = { title: photo.filename, url: shareUrl }
+    try {
+      if (navigator.share && (navigator.canShare ? navigator.canShare(shareData) : true)) {
+        await navigator.share(shareData)
+      } else {
+        await navigator.clipboard.writeText(shareUrl)
+        setShareToast(true)
+        setTimeout(() => setShareToast(false), 2500)
+      }
+    } catch {
+      // User cancelled share — ignore
     }
-    setDownloading(false)
   }
 
-  const reset = () => { stopCamera(); setPhotos([]); setSelected(new Set()); setErrorMsg(''); setStage('IDLE') }
+  const reset = () => { stopCamera(); setPhotos([]); setActivePhoto(null); setErrorMsg(''); setStage('IDLE') }
 
-  // ── Expired ───────────────────────────────────────────────────────────
   if (stage === 'EXPIRED') return (
     <div className="min-h-screen bg-bg flex items-center justify-center px-4">
       <div className="text-center space-y-4 max-w-xs">
@@ -157,76 +151,163 @@ export default function GuestPage() {
     </div>
   )
 
-  // ── Loading ───────────────────────────────────────────────────────────
   if (stage === 'LOADING') return (
     <div className="min-h-screen bg-bg flex items-center justify-center">
       <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
     </div>
   )
 
-  const eventLabel = project ? `${project.eventType.replace(/_/g, ' ')}` : ''
-  const eventDate  = project ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : ''
+  const eventLabel = project ? project.eventType.replace(/_/g, ' ') : ''
+  const eventDate  = project
+    ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
 
   return (
-    <div className="min-h-screen bg-bg pb-10">
+    <div className="min-h-screen bg-bg">
 
-      {/* Lightbox */}
-      {lightbox !== null && (
-        <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center" onClick={() => setLightbox(null)}>
-          <button className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center" onClick={() => setLightbox(null)}>✕</button>
-          <button className="absolute left-3 text-white/60 hover:text-white text-4xl w-12 h-12 flex items-center justify-center disabled:opacity-20"
-            disabled={lightbox === 0} onClick={e => { e.stopPropagation(); setLightbox(i => Math.max(0, (i ?? 1) - 1)) }}>‹</button>
-          <button className="absolute right-3 text-white/60 hover:text-white text-4xl w-12 h-12 flex items-center justify-center disabled:opacity-20"
-            disabled={lightbox === photos.length - 1} onClick={e => { e.stopPropagation(); setLightbox(i => Math.min(photos.length - 1, (i ?? 0) + 1)) }}>›</button>
-          <img src={photos[lightbox]?.previewUrl} alt="" className="max-h-screen max-w-full object-contain px-16" onClick={e => e.stopPropagation()} draggable={false} />
-          <div className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-4">
-            <span className="text-white/40 text-sm">{lightbox + 1} / {photos.length}</span>
-            <a href={`/studio/api/guest/${token}/download/${photos[lightbox]?.fileId}`} download={photos[lightbox]?.filename}
-              className="text-xs bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl font-semibold transition-colors"
-              onClick={e => e.stopPropagation()}>
-              ⬇ Download
-            </a>
+      {/* Share toast */}
+      {shareToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-text-primary text-bg text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg">
+          Link copied!
+        </div>
+      )}
+
+      {/* Photo detail bottom sheet */}
+      {activePhoto && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end"
+          onClick={() => setActivePhoto(null)}
+        >
+          <div className="absolute inset-0 bg-black/80" />
+          <div
+            className="relative bg-card rounded-t-3xl overflow-hidden flex flex-col"
+            style={{ maxHeight: '92vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drag handle */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-border rounded-full" />
+            </div>
+
+            {/* Close button */}
+            <button
+              onClick={() => setActivePhoto(null)}
+              className="absolute top-3 right-3 w-8 h-8 bg-black/20 hover:bg-black/40 rounded-full flex items-center justify-center transition-colors"
+              aria-label="Close"
+            >
+              <svg className="w-4 h-4 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Photo preview */}
+            <div className="bg-black flex items-center justify-center overflow-hidden" style={{ height: '55vmax', maxHeight: '62vh' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={activePhoto.previewUrl}
+                alt={activePhoto.filename}
+                className="max-w-full max-h-full object-contain"
+                draggable={false}
+              />
+            </div>
+
+            {/* File name */}
+            <p className="px-5 pt-4 pb-2 text-sm text-muted truncate">
+              {activePhoto.filename}
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-center gap-6 px-6 py-4 pb-safe">
+              {/* View full size */}
+              <a
+                href={activePhoto.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex flex-col items-center gap-2"
+              >
+                <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
+                  <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <span className="text-xs text-muted font-medium">View</span>
+              </a>
+
+              {/* Download */}
+              <a
+                href={`/studio/api/guest/${token}/download/${activePhoto.fileId}`}
+                download={activePhoto.filename}
+                className="flex flex-col items-center gap-2"
+              >
+                <div className="w-16 h-16 bg-accent/15 hover:bg-accent/25 rounded-2xl flex items-center justify-center transition-colors">
+                  <svg className="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                </div>
+                <span className="text-xs text-accent font-semibold">Download</span>
+              </a>
+
+              {/* Share */}
+              <button
+                onClick={() => handleShare(activePhoto)}
+                className="flex flex-col items-center gap-2"
+              >
+                <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
+                  <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                  </svg>
+                </div>
+                <span className="text-xs text-muted font-medium">Share</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Header */}
-      <div className="bg-card border-b border-border px-4 py-4 text-center">
-        <p className="text-xs text-muted font-semibold uppercase tracking-wider">{project?.studioName}</p>
+      <div className="sticky top-0 z-10 bg-card/95 backdrop-blur border-b border-border px-4 py-3.5 text-center">
+        <p className="text-xs text-muted font-semibold uppercase tracking-widest">{project?.studioName}</p>
         {project && (
-          <h1 className="text-base font-bold text-text-primary mt-0.5">
+          <h1 className="text-sm font-bold text-text-primary mt-0.5">
             {EVENT_ICON[project.eventType] ?? '📷'} {eventLabel} · {eventDate}
           </h1>
         )}
       </div>
 
-      <div className="max-w-lg mx-auto px-4 pt-6">
+      <div className="max-w-lg mx-auto px-4 pt-6 pb-16">
 
-        {/* IDLE — selfie prompt */}
+        {/* IDLE / ERROR — selfie prompt */}
         {(stage === 'IDLE' || stage === 'ERROR') && (
           <div className="space-y-5">
-            <div className="text-center space-y-2">
-              <div className="text-5xl">📸</div>
-              <h2 className="text-xl font-bold text-text-primary">Find your photos</h2>
-              <p className="text-sm text-muted">Take a quick selfie and we&apos;ll find all photos with you instantly.</p>
+            <div className="text-center space-y-2 pt-4">
+              <div className="text-6xl">📸</div>
+              <h2 className="text-2xl font-bold text-text-primary">Find your photos</h2>
+              <p className="text-sm text-muted max-w-xs mx-auto leading-relaxed">
+                Take a quick selfie and we&apos;ll instantly find all photos with you from this event.
+              </p>
             </div>
 
             {errorMsg && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400 text-center">{errorMsg}</div>
             )}
 
-            <div className="flex flex-col gap-3">
-              <button onClick={startCamera}
-                className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 transition-colors flex items-center justify-center gap-2">
+            <div className="flex flex-col gap-3 pt-2">
+              <button
+                onClick={startCamera}
+                className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
                 Take a Selfie
               </button>
-              <button onClick={() => fileInputRef.current?.click()}
-                className="w-full border border-border text-sm text-muted font-semibold py-3.5 rounded-2xl hover:text-text-primary hover:border-accent/40 transition-colors">
-                Upload a photo from gallery
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full border border-border text-sm text-muted font-semibold py-3.5 rounded-2xl hover:text-text-primary hover:border-accent/40 active:scale-[0.98] transition-all"
+              >
+                Upload from gallery
               </button>
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
             </div>
@@ -239,25 +320,31 @@ export default function GuestPage() {
           <div className="space-y-4">
             <div className="relative rounded-2xl overflow-hidden bg-black aspect-[3/4] max-h-[70vh]">
               <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
-              {/* Face guide oval */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="w-40 h-52 rounded-full border-2 border-white/50 border-dashed" />
               </div>
               <p className="absolute bottom-4 left-0 right-0 text-center text-white/70 text-xs">Position your face in the oval</p>
             </div>
             <canvas ref={canvasRef} className="hidden" />
-            <button onClick={captureAndSearch}
-              className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 transition-colors">
+            <button
+              onClick={captureAndSearch}
+              className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all"
+            >
               Take Photo
             </button>
-            <button onClick={() => { stopCamera(); setStage('IDLE') }} className="w-full text-sm text-muted hover:text-text-primary transition-colors py-2">Cancel</button>
+            <button
+              onClick={() => { stopCamera(); setStage('IDLE') }}
+              className="w-full text-sm text-muted hover:text-text-primary transition-colors py-2"
+            >
+              Cancel
+            </button>
           </div>
         )}
 
         {/* SEARCHING */}
         {stage === 'SEARCHING' && (
-          <div className="flex flex-col items-center gap-4 py-16 text-center">
-            <div className="w-10 h-10 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col items-center gap-4 py-20 text-center">
+            <div className="w-12 h-12 border-[3px] border-accent border-t-transparent rounded-full animate-spin" />
             <p className="text-base font-semibold text-text-primary">Finding your photos…</p>
             <p className="text-sm text-muted">This takes just a moment</p>
           </div>
@@ -265,94 +352,77 @@ export default function GuestPage() {
 
         {/* NO_FACE */}
         {stage === 'NO_FACE' && (
-          <div className="flex flex-col items-center gap-4 py-12 text-center space-y-2">
-            <div className="text-5xl">😶</div>
-            <h2 className="text-lg font-bold text-text-primary">Couldn&apos;t detect a face</h2>
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="text-6xl">😶</div>
+            <h2 className="text-xl font-bold text-text-primary">No face detected</h2>
             <p className="text-sm text-muted max-w-xs mx-auto">Make sure your face is clearly visible, well-lit, and facing the camera directly.</p>
-            <button onClick={reset} className="mt-2 bg-accent text-bg font-bold px-8 py-3 rounded-2xl hover:bg-accent/90 transition-colors">Try Again</button>
+            <button onClick={reset} className="mt-4 bg-accent text-bg font-bold px-10 py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all">
+              Try Again
+            </button>
           </div>
         )}
 
         {/* NO_MATCH */}
         {stage === 'NO_MATCH' && (
-          <div className="flex flex-col items-center gap-4 py-12 text-center space-y-2">
-            <div className="text-5xl">🔍</div>
-            <h2 className="text-lg font-bold text-text-primary">No photos found</h2>
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="text-6xl">🔍</div>
+            <h2 className="text-xl font-bold text-text-primary">No photos found</h2>
             <p className="text-sm text-muted max-w-xs mx-auto">We couldn&apos;t find photos matching your face. Try a clearer selfie in good lighting.</p>
-            <button onClick={reset} className="mt-2 bg-accent text-bg font-bold px-8 py-3 rounded-2xl hover:bg-accent/90 transition-colors">Try Again</button>
+            <button onClick={reset} className="mt-4 bg-accent text-bg font-bold px-10 py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all">
+              Try Again
+            </button>
           </div>
         )}
 
-        {/* RESULTS */}
+        {/* RESULTS — scrollable gallery */}
         {stage === 'RESULTS' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            {/* Result header */}
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-bold text-text-primary">✨ {photos.length} photos found!</h2>
-                <p className="text-xs text-muted mt-0.5">{selected.size} selected for download</p>
+                <h2 className="text-base font-bold text-text-primary">✨ {photos.length} photos found</h2>
+                <p className="text-xs text-muted mt-0.5">Tap any photo to view, download or share</p>
               </div>
-              <button onClick={reset} className="text-xs text-muted hover:text-text-primary transition-colors border border-border px-3 py-1.5 rounded-lg">
+              <button
+                onClick={reset}
+                className="flex-shrink-0 text-xs text-muted hover:text-text-primary transition-colors border border-border px-3 py-1.5 rounded-xl"
+              >
                 New search
               </button>
             </div>
 
-            {/* Select all / deselect all */}
-            <div className="flex gap-2">
-              <button onClick={() => setSelected(new Set(photos.map(p => p.fileId)))}
-                className="flex-1 text-xs border border-border text-muted py-2 rounded-xl hover:bg-border/40 transition-colors font-semibold">
-                Select All
-              </button>
-              <button onClick={() => setSelected(new Set())}
-                className="flex-1 text-xs border border-border text-muted py-2 rounded-xl hover:bg-border/40 transition-colors font-semibold">
-                Deselect All
-              </button>
-            </div>
-
             {/* Photo grid */}
-            <div className="grid grid-cols-3 gap-1.5">
-              {photos.map((photo, idx) => {
-                const isSelected = selected.has(photo.fileId)
-                return (
-                  <div key={photo.fileId} className="relative aspect-square">
-                    <div
-                      onClick={() => toggleSelect(photo.fileId)}
-                      className={`w-full h-full rounded-xl overflow-hidden cursor-pointer transition-all duration-100
-                        ${isSelected ? 'ring-2 ring-accent ring-offset-1 ring-offset-bg scale-[0.96]' : 'opacity-70'}`}
-                    >
-                      <img src={photo.previewUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+            <div className="grid grid-cols-3 gap-1">
+              {photos.map(photo => (
+                <button
+                  key={photo.fileId}
+                  onClick={() => setActivePhoto(photo)}
+                  className="relative aspect-square bg-border/30 rounded-xl overflow-hidden group active:scale-[0.95] transition-transform"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photo.previewUrl}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                    draggable={false}
+                  />
+                  {/* Hover/tap overlay with eye icon */}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 group-active:bg-black/30 transition-colors flex items-center justify-center">
+                    <div className="opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity">
+                      <svg className="w-6 h-6 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
                     </div>
-                    {/* Checkmark */}
-                    {isSelected && (
-                      <div className="absolute top-1.5 left-1.5 w-5 h-5 bg-accent rounded-full flex items-center justify-center shadow pointer-events-none">
-                        <svg className="w-3 h-3 text-bg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                    )}
-                    {/* Expand */}
-                    <button
-                      onClick={e => { e.stopPropagation(); setLightbox(idx) }}
-                      className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-                    >⤢</button>
                   </div>
-                )
-              })}
+                </button>
+              ))}
             </div>
 
-            {/* Download button */}
-            <button
-              onClick={downloadSelected}
-              disabled={selected.size === 0 || downloading}
-              className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
-            >
-              {downloading ? (
-                <><div className="w-4 h-4 border-2 border-bg border-t-transparent rounded-full animate-spin" /> Downloading…</>
-              ) : (
-                <><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                Download {selected.size} Photo{selected.size !== 1 ? 's' : ''}</>
-              )}
-            </button>
-            <p className="text-[11px] text-muted/50 text-center">Tap a photo to select / deselect · Tap ⤢ to preview</p>
+            <p className="text-[11px] text-muted/50 text-center pb-2">
+              Tap any photo · Download or share individually
+            </p>
           </div>
         )}
       </div>
