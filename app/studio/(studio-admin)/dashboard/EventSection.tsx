@@ -73,6 +73,10 @@ export default function EventSection({ project, onUpdated }: Props) {
   const [selLoading, setSelLoading]             = useState(false)
   const [viewFilter, setViewFilter]             = useState<'all' | 'loved' | 'edit'>('all')
 
+  // Generate Previews (backfill R2)
+  const [backfilling, setBackfilling]     = useState(false)
+  const [backfillMsg, setBackfillMsg]     = useState<string | null>(null)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
@@ -179,6 +183,28 @@ export default function EventSection({ project, onUpdated }: Props) {
     if (viewFilter === filter) { setViewFilter('all'); return }
     await loadSelections()
     setViewFilter(filter)
+  }
+
+  const generatePreviews = async () => {
+    setBackfilling(true)
+    setBackfillMsg(null)
+    try {
+      const res = await fetch(
+        `/studio/api/admin/projects/${project.projectId}/backfill-previews`,
+        { method: 'POST' }
+      ).then(r => r.json())
+      if (res.success) {
+        const { queued, message } = res.data
+        setBackfillMsg(queued === 0 ? '✓ All previews up to date' : `✓ Generating ${queued} previews…`)
+        if (queued > 0) setTimeout(loadFiles, 8000)
+      } else {
+        setBackfillMsg('Failed to queue previews')
+      }
+    } catch {
+      setBackfillMsg('Network error')
+    }
+    setBackfilling(false)
+    setTimeout(() => setBackfillMsg(null), 5000)
   }
 
   const togglePhoto = (fileId: string) => {
@@ -393,6 +419,25 @@ export default function EventSection({ project, onUpdated }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             </button>
+            {/* Generate Previews (R2 backfill) */}
+            <button
+              onClick={generatePreviews}
+              disabled={backfilling}
+              title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors relative"
+            >
+              {backfilling ? (
+                <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM9 3.75h6.75a3 3 0 013 3v10.5a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6.75a3 3 0 013-3H9z" />
+                </svg>
+              )}
+            </button>
+            {/* Toast message for backfill status */}
+            {backfillMsg && (
+              <span className="text-[10px] text-muted font-medium">{backfillMsg}</span>
+            )}
             <button onClick={() => setEditOpen(true)} title="Edit event"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
