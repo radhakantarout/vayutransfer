@@ -67,8 +67,8 @@ export async function POST(
       searchRes = await rek.send(new SearchFacesByImageCommand({
         CollectionId: `vayustudio-${project.projectId}`,
         Image: { Bytes: selfieBuffer },
-        FaceMatchThreshold: 80,
-        MaxFaces: 10,
+        FaceMatchThreshold: 70,
+        MaxFaces: 4096,
       }))
     } catch (err: unknown) {
       const errName = (err as { name?: string }).name ?? ''

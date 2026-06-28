@@ -56,7 +56,7 @@ async function indexFileFaces(projectId, file) {
       Image: { Bytes: rekBuffer },
       ExternalImageId: file.fileId,   // stored in collection — lets SearchFacesByImage return fileIds directly
       MaxFaces: 20,
-      QualityFilter: 'MEDIUM',
+      QualityFilter: 'LOW',
       DetectionAttributes: ['DEFAULT'],
     }))
     return result.FaceRecords?.length ?? 0
