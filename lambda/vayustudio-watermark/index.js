@@ -40,43 +40,33 @@ async function setStatus(projectId, fileId, status, extra = {}) {
   }))
 }
 
-// Escape XML special chars so studio names with &, <, > don't break the SVG
-function escapeXml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
+// Font sized so "VayuStudios" spans ~90% of image width
+// Three staggered diagonal instances for full-image coverage
+function makeWatermarkSvg(w, h) {
+  const label = 'VayuStudios'
+  // Arial Black bold char width ≈ 0.65× font-size; target 90% of image width
+  const fs    = Math.max(28, Math.floor((w * 0.90) / (label.length * 0.65)))
+  const angle = -28
 
-function makeWatermarkSvg(w, h, studioName) {
-  const label  = escapeXml((studioName || 'STUDIO').toUpperCase())
-  const fs     = Math.max(36, Math.floor(w / 6))   // big — ~1/6 of image width
-  const fs2    = Math.max(16, Math.floor(fs * 0.38))
-  const cx     = Math.round(w / 2)
-  const cy     = Math.round(h / 2)
-  const cy2    = cy + Math.round(fs * 0.85)         // "PREVIEW" sits just below studio name
-  const angle  = -28
+  // Staggered vertically: upper / middle / lower
+  const positions = [
+    { cx: Math.round(w * 0.42), cy: Math.round(h * 0.27) },
+    { cx: Math.round(w * 0.50), cy: Math.round(h * 0.52) },
+    { cx: Math.round(w * 0.58), cy: Math.round(h * 0.77) },
+  ]
 
-  // Shadow pass (dark offset) makes text readable on both light and dark photos
-  const shadow = `translate(3,3) rotate(${angle},${cx},${cy})`
-  const main   = `rotate(${angle},${cx},${cy})`
-  const sub    = `rotate(${angle},${cx},${cy2})`
+  const rows = positions.map(({ cx, cy }) => `
+    <text x="${cx + 3}" y="${cy + 3}"
+      font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
+      fill="black" fill-opacity="0.22" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${angle},${cx + 3},${cy + 3})">${label}</text>
+    <text x="${cx}" y="${cy}"
+      font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
+      fill="white" fill-opacity="0.50" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${angle},${cx},${cy})">${label}</text>`
+  ).join('')
 
-  return Buffer.from(`<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <!-- drop shadow -->
-  <text x="${cx}" y="${cy}"
-    font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
-    fill="black" fill-opacity="0.30" text-anchor="middle" dominant-baseline="middle"
-    transform="${shadow}">${label}</text>
-  <!-- main studio name -->
-  <text x="${cx}" y="${cy}"
-    font-family="Arial Black,Arial,sans-serif" font-size="${fs}px" font-weight="900"
-    fill="white" fill-opacity="0.62" text-anchor="middle" dominant-baseline="middle"
-    transform="${main}">${label}</text>
-  <!-- sub-label: PREVIEW -->
-  <text x="${cx}" y="${cy2}"
-    font-family="Arial,sans-serif" font-size="${fs2}px" font-weight="bold"
-    fill="white" fill-opacity="0.50" text-anchor="middle" dominant-baseline="middle"
-    letter-spacing="6"
-    transform="${sub}">PREVIEW</text>
-</svg>`)
+  return Buffer.from(`<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">${rows}</svg>`)
 }
 
 exports.handler = async (event) => {
@@ -91,7 +81,6 @@ exports.handler = async (event) => {
     r2Bucket, r2Key, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     watermarkEnabled = true,
     fileType = 'IMAGE',
-    studioName = 'STUDIO',
   } = event
 
   if (!fileId || !projectId || !s3Key) {
@@ -128,7 +117,7 @@ exports.handler = async (event) => {
     let finalBuf
     if (watermarkEnabled) {
       finalBuf = await sharp(resizedBuf)
-        .composite([{ input: makeWatermarkSvg(outW, outH, studioName), blend: 'over' }])
+        .composite([{ input: makeWatermarkSvg(outW, outH), blend: 'over' }])
         .jpeg({ quality: 82, progressive: true, mozjpeg: false })
         .toBuffer()
       console.log(`[watermark] watermark applied, JPEG ${finalBuf.length} bytes`)
