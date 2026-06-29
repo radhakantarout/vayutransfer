@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
                 <p>Click the link below to access your photo gallery. The link expires in 1 hour.</p>
                 <p><a href="${magicLink}" style="background:#00C6FF;color:#0a1628;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">View My Gallery</a></p>
                 <p>Or copy this link: ${magicLink}</p>
-                <p style="color:#888;font-size:12px;">Powered by VayuStudio | studio.vayutransfer.com</p>
+                <p style="color:#888;font-size:12px;">Powered by VayuStudios | studio.vayutransfer.com</p>
               `,
             },
           },

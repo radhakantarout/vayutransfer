@@ -184,9 +184,9 @@ function LoginPageInner() {
 
         {/* Logo */}
         <div className="flex flex-col items-center gap-2">
-          <Image src="/logo.png" alt="VayuStudio" width={44} height={44} className="h-11 w-11" />
+          <Image src="/logo.png" alt="VayuStudios" width={44} height={44} className="h-11 w-11" />
           <div className="text-xl font-extrabold text-text-primary">
-            Vayu<span className="text-accent">Studio</span>
+            Vayu<span className="text-accent">Studios</span>
           </div>
         </div>
 
@@ -419,7 +419,7 @@ function LoginPageInner() {
             )}
 
             <p className="text-center text-xs text-muted">
-              New to VayuStudio?{' '}
+              New to VayuStudios?{' '}
               <Link href="/studio/home#get-started" className="text-accent hover:underline">
                 Request studio setup →
               </Link>

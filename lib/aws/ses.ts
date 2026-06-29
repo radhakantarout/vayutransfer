@@ -31,7 +31,7 @@ export async function sendGalleryShareEmail(
 <head><meta charset="utf-8"></head>
 <body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
   <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
-    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudio</div>
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudios</div>
     <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">${studioName}</div>
     <p style="font-size:16px;font-weight:600;color:#E0EAF8;margin:0 0 8px;">Hi ${clientName},</p>
     <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 28px;">
@@ -56,7 +56,7 @@ export async function sendGalleryShareEmail(
 </html>`.trim()
 
   await sesClient.send(new SendEmailCommand({
-    Source: `${studioName} via VayuStudio <${FROM_EMAIL}>`,
+    Source: `${studioName} via VayuStudios <${FROM_EMAIL}>`,
     Destination: { ToAddresses: [to] },
     Message: {
       Subject: { Data: `Your photos are ready — ${studioName}` },
@@ -79,7 +79,7 @@ export async function sendClientOtpEmail(
 <head><meta charset="utf-8"></head>
 <body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
   <div style="max-width:400px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:24px;">VayuStudio</div>
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:24px;">VayuStudios</div>
     <p style="color:#8BAAB8;font-size:14px;margin:0 0 24px;">Hi ${clientName}, here is your one-time code to access your gallery:</p>
     <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:20px;margin-bottom:24px;">
       <div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#00C6FF;font-family:monospace;">${otp}</div>
@@ -90,13 +90,13 @@ export async function sendClientOtpEmail(
 </html>`.trim()
 
   await sesClient.send(new SendEmailCommand({
-    Source: `VayuStudio <${FROM_EMAIL}>`,
+    Source: `VayuStudios <${FROM_EMAIL}>`,
     Destination: { ToAddresses: [to] },
     Message: {
-      Subject: { Data: `${otp} is your VayuStudio verification code` },
+      Subject: { Data: `${otp} is your VayuStudios verification code` },
       Body: {
         Html: { Data: html, Charset: 'UTF-8' },
-        Text: { Data: `Your VayuStudio OTP: ${otp}\n\nValid for 10 minutes. Do not share this with anyone.`, Charset: 'UTF-8' },
+        Text: { Data: `Your VayuStudios OTP: ${otp}\n\nValid for 10 minutes. Do not share this with anyone.`, Charset: 'UTF-8' },
       },
     },
   }))
@@ -274,7 +274,7 @@ export async function sendEnquiryNotificationEmail(
 
   await sesClient.send(
     new SendEmailCommand({
-      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Source: `VayuStudios <${FROM_EMAIL}>`,
       Destination: { ToAddresses: [to] },
       Message: {
         Subject: { Data: `New studio enquiry — ${studioName}` },
@@ -297,7 +297,7 @@ export async function sendStudioCredentialsEmail(
   const html = `
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Your VayuStudio is ready</title></head>
+<head><meta charset="utf-8"><title>Your VayuStudios is ready</title></head>
 <body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
   <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
     <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
@@ -324,10 +324,10 @@ export async function sendStudioCredentialsEmail(
 
   await sesClient.send(
     new SendEmailCommand({
-      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Source: `VayuStudios <${FROM_EMAIL}>`,
       Destination: { ToAddresses: [to] },
       Message: {
-        Subject: { Data: `Your VayuStudio is ready — ${studioName}` },
+        Subject: { Data: `Your VayuStudios is ready — ${studioName}` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nYour login email: ${email}\n\nSign in here: ${setupUrl}`, Charset: 'UTF-8' },
@@ -381,7 +381,7 @@ export async function sendOwnerStudioCreatedEmail(
 
   await sesClient.send(
     new SendEmailCommand({
-      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Source: `VayuStudios <${FROM_EMAIL}>`,
       Destination: { ToAddresses: [to] },
       Message: {
         Subject: { Data: `Studio created — ${studioName} (${adminEmail})` },

@@ -179,7 +179,7 @@ export default function HomePage() {
               </div>
               <div className="text-left">
                 <div className="font-semibold text-text-primary text-sm group-hover:text-accent transition-colors">
-                  VayuStudio — for photographers
+                  VayuStudios — for photographers
                 </div>
                 <div className="text-xs text-muted mt-0.5">
                   Share private galleries · Let clients choose their favourites

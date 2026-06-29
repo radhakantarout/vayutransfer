@@ -116,41 +116,50 @@ export default function StudioNavbar() {
   }
 
   const isLoggedIn = auth && auth !== 'loading'
+  const isHome     = pathname === '/studio/home'
+
+  // On home page: transparent glass over the light hero image, dark navy text
+  // On all other pages: solid dark card, light muted text
+  const navBg      = isHome ? 'bg-white/15 backdrop-blur-md border-white/10' : 'bg-card border-border'
+  const linkCls    = isHome
+    ? 'text-[#0D3B6E] hover:text-[#0099CC] font-medium transition-colors whitespace-nowrap'
+    : 'text-muted hover:text-text-primary transition-colors whitespace-nowrap'
+  const logoTextCls = isHome ? 'text-[#0D3B6E]' : 'text-text-primary'
 
   return (
     <>
       {/* ── Top bar ──────────────────────────────────────────────── */}
-      <nav className="sticky top-0 z-50 bg-card border-b border-border">
+      <nav className={`sticky top-0 z-50 border-b ${navBg}`}>
         <div className="px-5 h-14 flex items-center justify-between">
 
           {/* Logo */}
           <Link href="/studio/home" onClick={closeAll} className="flex items-center gap-2 flex-shrink-0">
-            <Image src="/logo.png" alt="VayuStudio" width={36} height={36} className="h-9 w-9 flex-shrink-0" />
-            <span className="text-lg font-extrabold text-text-primary leading-none">
-              Vayu<span className="text-accent">Studio</span>
+            <Image src="/logo.png" alt="VayuStudios" width={36} height={36} className="h-9 w-9 flex-shrink-0" />
+            <span className={`text-lg font-extrabold leading-none ${logoTextCls}`}>
+              Vayu<span className="text-accent">Studios</span>
             </span>
           </Link>
 
           {/* Desktop centre links */}
-          <div className="hidden md:flex items-center gap-7 text-sm">
+          <div className="hidden md:flex items-center gap-7 text-base">
             {isLoggedIn ? (
               <>
                 {(auth as Auth).role === 'OWNER' && (
                   <>
-                    <Link href="/studio/admin/studios" className="text-muted hover:text-text-primary transition-colors">Studios</Link>
-                    <Link href="/studio/admin/users"   className="text-muted hover:text-text-primary transition-colors">Users</Link>
+                    <Link href="/studio/admin/studios" className={linkCls}>Studios</Link>
+                    <Link href="/studio/admin/users"   className={linkCls}>Users</Link>
                   </>
                 )}
                 {((auth as Auth).role === 'ADMIN' || (auth as Auth).role === 'PRINT') && (
-                  <Link href="/studio/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
+                  <Link href="/studio/dashboard" className={linkCls}>Dashboard</Link>
                 )}
                 {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
-                  <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} className="text-muted hover:text-text-primary transition-colors">My Gallery</Link>
+                  <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} className={linkCls}>My Gallery</Link>
                 )}
               </>
             ) : (
               MARKETING_LINKS.map(({ label, href }) => (
-                <Link key={href} href={href} className="text-muted hover:text-text-primary transition-colors whitespace-nowrap">
+                <Link key={href} href={href} className={linkCls}>
                   {label}
                 </Link>
               ))
@@ -252,13 +261,17 @@ export default function StudioNavbar() {
               <>
                 <Link
                   href="/studio/login"
-                  className="text-sm font-semibold px-4 py-2 rounded-lg border border-border text-text-primary hover:bg-border/40 transition-colors"
+                  className={`text-base font-semibold px-4 py-2 rounded-lg border transition-colors ${
+                    isHome
+                      ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10'
+                      : 'border-border text-text-primary hover:bg-border/40'
+                  }`}
                 >
                   Login
                 </Link>
                 <Link
                   href="/studio/home#get-started"
-                  className="text-sm font-bold px-4 py-2 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors"
+                  className="text-base font-bold px-4 py-2 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors"
                 >
                   Get Started
                 </Link>
@@ -269,7 +282,11 @@ export default function StudioNavbar() {
           {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen((v) => !v)}
-            className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg border border-border text-text-primary hover:bg-border/40 transition-colors"
+            className={`md:hidden flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${
+              isHome
+                ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10'
+                : 'border-border text-text-primary hover:bg-border/40'
+            }`}
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
           >
             {mobileOpen ? <CloseIcon /> : <HamburgerIcon />}

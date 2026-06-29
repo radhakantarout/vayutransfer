@@ -1,9 +1,28 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import Image from 'next/image'
 import EnquiryForm from './EnquiryForm'
+import fs from 'fs'
+import path from 'path'
+
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif'])
+
+function getPhotosForSlug(slug: string): string[] {
+  const dir = path.join(process.cwd(), 'public', 'images', 'gallery', slug)
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase()))
+      .sort()
+      .slice(0, 6)
+      .map((f) => `/images/gallery/${slug}/${f}`)
+  } catch {
+    return []
+  }
+}
 
 export const metadata: Metadata = {
-  title: 'VayuStudio — Professional Photo Galleries for Photographers',
+  title: 'VayuStudios — Professional Photo Galleries for Photographers',
   description: 'Upload photos, share a secure gallery with clients, let them select favourites, and send straight to print. Built for Indian wedding and event photographers.',
 }
 
@@ -34,37 +53,164 @@ const FEATURES = [
   { icon: '🇮🇳', title: 'Built for India', body: 'Phone OTP via AWS SNS, Indian payment support, servers in Mumbai.' },
 ]
 
-const EVENT_TYPES = ['Wedding', 'Pre-wedding', 'Corporate', 'School & college', 'Portfolio', 'Fashion']
+const EVENT_CATEGORIES = [
+  {
+    name: 'Wedding',
+    slug: 'wedding',
+    label: 'Timeless ceremonies',
+    shades: ['bg-rose-950', 'bg-rose-900', 'bg-pink-950', 'bg-rose-800/80', 'bg-pink-900', 'bg-rose-950'],
+  },
+  {
+    name: 'Pre-wedding',
+    slug: 'pre-wedding',
+    label: 'Love stories begin',
+    shades: ['bg-amber-950', 'bg-orange-900', 'bg-amber-900', 'bg-orange-950', 'bg-amber-800/80', 'bg-orange-900'],
+  },
+  {
+    name: 'Corporate',
+    slug: 'corporate',
+    label: 'Professional moments',
+    shades: ['bg-blue-950', 'bg-slate-800', 'bg-blue-900', 'bg-slate-900', 'bg-blue-800/80', 'bg-slate-800'],
+  },
+  {
+    name: 'School & College',
+    slug: 'school-college',
+    label: 'Memories for life',
+    shades: ['bg-teal-950', 'bg-emerald-900', 'bg-teal-900', 'bg-emerald-950', 'bg-teal-800/80', 'bg-emerald-900'],
+  },
+  {
+    name: 'Portfolio',
+    slug: 'portfolio',
+    label: 'Showcase your art',
+    shades: ['bg-violet-950', 'bg-purple-900', 'bg-violet-900', 'bg-purple-950', 'bg-violet-800/80', 'bg-purple-900'],
+  },
+  {
+    name: 'Fashion',
+    slug: 'fashion',
+    label: 'Style in every frame',
+    shades: ['bg-fuchsia-950', 'bg-pink-900', 'bg-fuchsia-900', 'bg-pink-950', 'bg-fuchsia-800/80', 'bg-pink-900'],
+  },
+]
 
-export default function StudioHomePage() {
+export default async function StudioHomePage() {
+  const categoriesWithPhotos = EVENT_CATEGORIES.map((cat) => ({
+    ...cat,
+    photos: getPhotosForSlug(cat.slug),
+  }))
+
   return (
     <main>
       {/* Hero */}
-      <section className="max-w-5xl mx-auto px-4 pt-20 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 bg-accent/10 border border-accent/20 text-accent text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
-          <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
-          For photographers &amp; studios
+      <section className="relative min-h-[600px] sm:min-h-[680px] flex items-center overflow-hidden">
+        {/* Background image */}
+        <Image
+          src="/images/home_1.png"
+          alt="Photographer sharing memories with clients via VayuStudios"
+          fill
+          className="object-cover object-center"
+          priority
+        />
+        {/* Dark gradient — deep on left where text sits, smooth fade to transparent right */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0B0F1A]/95 via-[#0B0F1A]/70 to-transparent" />
+        {/* Bottom fade to blend into next section */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F1A]/60 via-transparent to-transparent" />
+
+        {/* Content */}
+        <div className="relative z-10 max-w-5xl mx-auto px-6 py-24 w-full">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2 bg-white/15 border border-white/30 text-white text-sm font-semibold px-4 py-1.5 rounded-full mb-6">
+              <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+              For photographers &amp; studios
+            </div>
+
+            <h1 className="text-5xl sm:text-6xl font-extrabold text-white leading-tight mb-6 drop-shadow-md">
+              Their memories.<br />Instantly connected.
+            </h1>
+
+            <p className="text-white/85 text-lg sm:text-xl leading-relaxed mb-7">
+              Upload your images, send a beautiful smart gallery, and let clients locate every photo of themselves in seconds — powered by AI and a single selfie.
+            </p>
+
+            <p className="text-white font-bold text-lg mb-2">
+              Selections made. Orders placed. Moments preserved.
+            </p>
+            <p className="text-white/80 text-base leading-relaxed mb-10">
+              No apps. No hassle. Just effortless magic from shoot to doorstep.
+            </p>
+
+            <div className="flex items-center gap-4 flex-wrap">
+              <a
+                href="#get-started"
+                className="bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors text-base shadow-lg shadow-accent/25"
+              >
+                Get your studio setup
+              </a>
+              <a
+                href="#how-it-works"
+                className="text-[#8BAAB8] hover:text-white text-base font-medium transition-colors"
+              >
+                See how it works →
+              </a>
+            </div>
+          </div>
         </div>
-        <h1 className="text-4xl sm:text-5xl font-extrabold text-text-primary leading-tight mb-5">
-          Professional galleries<br />your clients will love
-        </h1>
-        <p className="text-muted text-lg max-w-2xl mx-auto leading-relaxed mb-8">
-          Upload photos, share a secure gallery, let clients pick their favourites, and send straight to your print lab.
-          Zero friction. Zero compromise on quality.
-        </p>
-        <div className="flex items-center justify-center gap-4 flex-wrap">
-          <a
-            href="#get-started"
-            className="bg-accent text-bg font-bold px-7 py-3.5 rounded-xl hover:bg-accent/90 transition-colors text-sm"
-          >
-            Get your studio setup
-          </a>
-          <a
-            href="#how-it-works"
-            className="text-muted hover:text-text-primary text-sm transition-colors"
-          >
-            See how it works →
-          </a>
+      </section>
+
+      {/* Perfect for every shoot — 3D album cards */}
+      <section className="max-w-6xl mx-auto px-4 py-16">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl font-extrabold text-text-primary">Perfect for every shoot</h2>
+          <p className="text-muted mt-2 text-sm">VayuStudios works for all kinds of professional photography</p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
+          {categoriesWithPhotos.map((cat) => (
+            <a
+              key={cat.slug}
+              href={`/studio/showcase/${cat.slug}`}
+              className="group block bg-card border border-border rounded-2xl p-4 sm:p-5 hover:border-accent/50 hover:-translate-y-1 transition-all duration-300 hover:shadow-xl hover:shadow-accent/10"
+            >
+              {/* 3D photo grid */}
+              <div className="mb-4 overflow-hidden rounded-xl" style={{ perspective: '500px' }}>
+                <div
+                  className="grid grid-cols-3 gap-1 transition-transform duration-300"
+                  style={{ transform: 'rotateX(12deg) rotateY(-6deg)', transformStyle: 'preserve-3d' }}
+                >
+                  {Array.from({ length: 6 }, (_, i) => {
+                    const src = cat.photos[i] ?? null
+                    return (
+                      <div
+                        key={i}
+                        className={`aspect-square rounded-sm overflow-hidden relative ${cat.shades[i]}`}
+                        style={{
+                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.3)',
+                          transform: `translateZ(${i % 2 === 0 ? '4px' : '2px'})`,
+                        }}
+                      >
+                        {src && (
+                          <Image
+                            src={src}
+                            alt={`${cat.name} ${i + 1}`}
+                            fill
+                            className="object-cover"
+                            sizes="80px"
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Label */}
+              <h3 className="font-bold text-text-primary text-sm sm:text-base group-hover:text-accent transition-colors leading-tight">
+                {cat.name}
+              </h3>
+              <p className="text-muted text-xs mt-0.5">{cat.label}</p>
+              <p className="text-accent/70 text-xs mt-2 font-medium group-hover:text-accent transition-colors">
+                Explore gallery →
+              </p>
+            </a>
+          ))}
         </div>
       </section>
 
@@ -104,25 +250,10 @@ export default function StudioHomePage() {
         </div>
       </section>
 
-      {/* Event types */}
-      <section className="bg-card border-y border-border py-14">
-        <div className="max-w-5xl mx-auto px-4 text-center">
-          <h2 className="text-2xl font-extrabold text-text-primary mb-3">Perfect for every shoot</h2>
-          <p className="text-muted text-sm mb-8">VayuStudio works for all kinds of professional photography</p>
-          <div className="flex flex-wrap justify-center gap-3">
-            {EVENT_TYPES.map((t) => (
-              <span key={t} className="bg-bg border border-border text-text-primary text-sm font-medium px-4 py-2 rounded-full">
-                {t}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Why VayuStudio */}
+      {/* Why VayuStudios */}
       <section className="max-w-4xl mx-auto px-4 py-16">
         <div className="text-center mb-10">
-          <h2 className="text-3xl font-extrabold text-text-primary">Why photographers choose VayuStudio</h2>
+          <h2 className="text-3xl font-extrabold text-text-primary">Why photographers choose VayuStudios</h2>
         </div>
         <div className="bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
           {[
@@ -149,7 +280,7 @@ export default function StudioHomePage() {
         <div className="bg-accent/5 border border-accent/20 rounded-2xl p-8 text-center space-y-3">
           <h2 className="text-xl font-bold text-text-primary">Transparent pricing. No surprise bills.</h2>
           <p className="text-muted text-sm leading-relaxed max-w-xl mx-auto">
-            VayuStudio is a managed service — we set up your studio, onboard your team, and support you throughout.
+            VayuStudios is a managed service — we set up your studio, onboard your team, and support you throughout.
             Pricing is based on storage used and number of projects. Get in touch for a quote.
           </p>
           <a href="#get-started" className="inline-block text-accent text-sm font-semibold hover:underline mt-1">
@@ -171,7 +302,7 @@ export default function StudioHomePage() {
       <div className="text-center pb-10">
         <p className="text-xs text-muted">
           Already have a studio account?{' '}
-          <Link href="/studio/login" className="text-accent hover:underline">Sign in to VayuStudio →</Link>
+          <Link href="/studio/login" className="text-accent hover:underline">Sign in to VayuStudios →</Link>
         </p>
       </div>
     </main>

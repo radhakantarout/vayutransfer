@@ -41,7 +41,7 @@ export default function Navbar() {
 
   return (
     <>
-      {/* ── Navbar ── same bg-card / border-border as VayuStudio ── */}
+      {/* ── Navbar ── same bg-card / border-border as VayuStudios ── */}
       <nav className="sticky top-0 z-50 bg-card border-b border-border">
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between gap-4">
 
@@ -64,7 +64,7 @@ export default function Navbar() {
               href={STUDIO_URL}
               className="flex items-center gap-1.5 text-accent hover:text-accent/80 font-semibold transition-colors"
             >
-              VayuStudio
+              VayuStudios
               <span className="text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-bold leading-none">NEW</span>
             </a>
           </div>
@@ -198,7 +198,7 @@ export default function Navbar() {
         />
       )}
 
-      {/* Mobile drawer — same bg-card as VayuStudio */}
+      {/* Mobile drawer — same bg-card as VayuStudios */}
       <div
         className={`fixed top-14 left-0 right-0 z-50 md:hidden bg-card border-b border-border shadow-2xl
           transition-all duration-200 ease-out
@@ -223,14 +223,14 @@ export default function Navbar() {
             </Link>
           ))}
 
-          {/* VayuStudio link */}
+          {/* VayuStudios link */}
           <a
             href={STUDIO_URL}
             onClick={closeAll}
             className="flex items-center justify-between py-3.5 text-base font-semibold text-accent border-b border-border/40 hover:text-accent/80 transition-colors"
           >
             <span className="flex items-center gap-2">
-              VayuStudio
+              VayuStudios
               <span className="text-[10px] bg-accent/15 border border-accent/20 text-accent px-1.5 py-0.5 rounded-full font-bold leading-none">NEW</span>
             </span>
             <span className="text-accent/50 text-sm">↗</span>

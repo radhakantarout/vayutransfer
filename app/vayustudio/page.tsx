@@ -3,7 +3,7 @@ import Link from 'next/link'
 import EnquiryForm from './EnquiryForm'
 
 export const metadata: Metadata = {
-  title: 'VayuStudio — Professional Photo Galleries for Photographers',
+  title: 'VayuStudios — Professional Photo Galleries for Photographers',
   description: 'Upload photos, share a secure gallery with clients, let them select favourites, and send straight to print. Built for Indian wedding and event photographers.',
 }
 
@@ -36,7 +36,7 @@ const FEATURES = [
 
 const EVENT_TYPES = ['Wedding', 'Pre-wedding', 'Corporate', 'School & college', 'Portfolio', 'Fashion']
 
-export default function VayuStudioPage() {
+export default function VayuStudiosPage() {
   return (
     <main>
       {/* Hero */}
@@ -108,7 +108,7 @@ export default function VayuStudioPage() {
       <section className="bg-card border-y border-border py-14">
         <div className="max-w-5xl mx-auto px-4 text-center">
           <h2 className="text-2xl font-extrabold text-text-primary mb-3">Perfect for every shoot</h2>
-          <p className="text-muted text-sm mb-8">VayuStudio works for all kinds of professional photography</p>
+          <p className="text-muted text-sm mb-8">VayuStudios works for all kinds of professional photography</p>
           <div className="flex flex-wrap justify-center gap-3">
             {EVENT_TYPES.map((t) => (
               <span key={t} className="bg-bg border border-border text-text-primary text-sm font-medium px-4 py-2 rounded-full">
@@ -119,10 +119,10 @@ export default function VayuStudioPage() {
         </div>
       </section>
 
-      {/* Comparison / Why VayuStudio */}
+      {/* Comparison / Why VayuStudios */}
       <section className="max-w-4xl mx-auto px-4 py-16">
         <div className="text-center mb-10">
-          <h2 className="text-3xl font-extrabold text-text-primary">Why photographers choose VayuStudio</h2>
+          <h2 className="text-3xl font-extrabold text-text-primary">Why photographers choose VayuStudios</h2>
         </div>
         <div className="bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
           {[
@@ -149,7 +149,7 @@ export default function VayuStudioPage() {
         <div className="bg-accent/5 border border-accent/20 rounded-2xl p-8 text-center space-y-3">
           <h2 className="text-xl font-bold text-text-primary">Transparent pricing. No surprise bills.</h2>
           <p className="text-muted text-sm leading-relaxed max-w-xl mx-auto">
-            VayuStudio is a managed service — we set up your studio, onboard your team, and support you throughout.
+            VayuStudios is a managed service — we set up your studio, onboard your team, and support you throughout.
             Pricing is based on storage used and number of projects. Get in touch for a quote.
           </p>
           <a href="#get-started" className="inline-block text-accent text-sm font-semibold hover:underline mt-1">
@@ -171,7 +171,7 @@ export default function VayuStudioPage() {
       <div className="text-center pb-10">
         <p className="text-xs text-muted">
           Already have a studio account?{' '}
-          <Link href="/studio/login" className="text-accent hover:underline">Sign in to VayuStudio →</Link>
+          <Link href="/studio/login" className="text-accent hover:underline">Sign in to VayuStudios →</Link>
         </p>
       </div>
     </main>
