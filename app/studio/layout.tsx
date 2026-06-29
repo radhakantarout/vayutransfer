@@ -3,7 +3,7 @@ import StudioNavbar from '@/components/studio/StudioNavbar'
 import StudioFooter from '@/components/studio/StudioFooter'
 
 export const metadata: Metadata = {
-  title: 'VayuStudio — Gallery Delivery for Photographers',
+  title: 'VayuStudios — Gallery Delivery for Photographers',
   description:
     'Deliver wedding and event galleries to your clients. Let them select photos, add comments, and download their prints.',
 }

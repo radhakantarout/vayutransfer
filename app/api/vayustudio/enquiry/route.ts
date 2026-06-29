@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 <head><meta charset="utf-8"></head>
 <body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
   <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
-    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudio</div>
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:4px;">VayuStudios</div>
     <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">New studio enquiry</div>
 
     <table style="width:100%;border-collapse:collapse;">
@@ -79,11 +79,11 @@ export async function POST(req: NextRequest) {
 </html>`.trim()
 
     await ses.send(new SendEmailCommand({
-      Source: `VayuStudio Enquiries <${fromEmail}>`,
+      Source: `VayuStudios Enquiries <${fromEmail}>`,
       Destination: { ToAddresses: [ownerEmail] },
       ReplyToAddresses: [email],
       Message: {
-        Subject: { Data: `VayuStudio enquiry — ${studioName} (${name})` },
+        Subject: { Data: `VayuStudios enquiry — ${studioName} (${name})` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: { Data: `New enquiry\n\nName: ${name}\nStudio: ${studioName}\nEmail: ${email}\nPhone: ${phone}\nMessage: ${message || '—'}\n\nApprove: ${approveUrl}` },

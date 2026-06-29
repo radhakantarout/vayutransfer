@@ -53,17 +53,17 @@ export async function POST(req: NextRequest) {
 
     const fromEmail = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
     await ses.send(new SendEmailCommand({
-      Source: `VayuStudio <${fromEmail}>`,
+      Source: `VayuStudios <${fromEmail}>`,
       Destination: { ToAddresses: [normalised] },
       Message: {
-        Subject: { Data: 'Your VayuStudio password reset OTP' },
+        Subject: { Data: 'Your VayuStudios password reset OTP' },
         Body: {
           Html: {
             Data: `
 <!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="font-family:Inter,system-ui,sans-serif;background:#f8fafc;padding:40px 20px;">
   <div style="max-width:420px;margin:0 auto;background:#fff;border-radius:12px;padding:36px;border:1px solid #e2e8f0;">
-    <div style="font-size:20px;font-weight:700;color:#1a202c;margin-bottom:6px;">VayuStudio</div>
+    <div style="font-size:20px;font-weight:700;color:#1a202c;margin-bottom:6px;">VayuStudios</div>
     <div style="color:#64748b;font-size:13px;margin-bottom:28px;">Password reset</div>
     <p style="color:#1a202c;font-size:14px;margin:0 0 20px;">Your one-time password to reset your account:</p>
     <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#2563eb;text-align:center;background:#eff6ff;border-radius:10px;padding:18px;margin-bottom:20px;">${otp}</div>
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 </body></html>`,
             Charset: 'UTF-8',
           },
-          Text: { Data: `Your VayuStudio password reset OTP: ${otp}\n\nValid for 10 minutes.` },
+          Text: { Data: `Your VayuStudios password reset OTP: ${otp}\n\nValid for 10 minutes.` },
         },
       },
     }))

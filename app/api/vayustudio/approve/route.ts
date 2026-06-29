@@ -14,7 +14,7 @@ function html(title: string, body: string, loginUrl: string, isError = false): N
   const icon  = isError ? '❌' : '✅'
   return new NextResponse(
     `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${title} — VayuStudio</title></head>
+    <title>${title} — VayuStudios</title></head>
     <body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
       <div style="max-width:480px;width:100%;background:#131929;border-radius:16px;padding:40px;border:1px solid #1E2D45;text-align:center;">
         <div style="font-size:48px;margin-bottom:16px;">${icon}</div>
