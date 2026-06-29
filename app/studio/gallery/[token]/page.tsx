@@ -249,6 +249,17 @@ export default function ClientGalleryPage() {
   const editCount       = files.filter((f) => f.editingRequired).length
   const selectedPhotos  = files.filter((f) => f.isSelected)
 
+  useEffect(() => {
+    if (!showSelectionPreview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft')  setSelectionPreviewIdx(i => Math.max(0, i - 1))
+      if (e.key === 'ArrowRight') setSelectionPreviewIdx(i => Math.min(selectedPhotos.length - 1, i + 1))
+      if (e.key === 'Escape')     setShowSelectionPreview(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showSelectionPreview, selectedPhotos.length])
+
   const baseFiles: GalleryFile[] = viewFilter === 'all' ? files
     : viewFilter === 'loved' ? files.filter(f => f.isSelected)
     : files.filter(f => f.editingRequired)
@@ -839,9 +850,9 @@ export default function ClientGalleryPage() {
             </button>
           </div>
 
-          {/* Main photo */}
+          {/* Main photo + arrow controls */}
           <div
-            className="flex-1 flex items-center justify-center overflow-hidden"
+            className="flex-1 flex items-center justify-center overflow-hidden relative"
             onTouchStart={handleSwipeStart}
             onTouchEnd={e => handleSwipeEnd(e, selectedPhotos.length)}
             onClick={e => e.stopPropagation()}
@@ -853,6 +864,32 @@ export default function ClientGalleryPage() {
               className="max-h-full max-w-full object-contain select-none"
               draggable={false}
             />
+
+            {/* Left arrow */}
+            {selectionPreviewIdx > 0 && (
+              <button
+                onClick={() => setSelectionPreviewIdx(i => i - 1)}
+                className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20"
+                aria-label="Previous photo"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                </svg>
+              </button>
+            )}
+
+            {/* Right arrow */}
+            {selectionPreviewIdx < selectedPhotos.length - 1 && (
+              <button
+                onClick={() => setSelectionPreviewIdx(i => i + 1)}
+                className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20"
+                aria-label="Next photo"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {/* Edit badge overlay */}
