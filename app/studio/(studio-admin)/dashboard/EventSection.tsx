@@ -78,6 +78,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
   const [zoomLevel, setZoomLevel]       = useState(6)
+  const [expanded, setExpanded]         = useState(false)
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
@@ -145,6 +146,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     if (triggerShare) { setShowShareSetup(true); onShareTriggered?.() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerShare])
+
+  // Escape closes fullscreen
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
 
   // Upload speed tracking
   useEffect(() => {
@@ -528,10 +537,13 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         </div>
       )}
 
-      <div className="border border-border rounded-2xl overflow-hidden bg-card">
+      <div className={expanded
+        ? 'fixed inset-0 z-50 overflow-auto bg-bg'
+        : 'border border-border rounded-2xl overflow-hidden bg-card'
+      }>
 
         {/* ── Event header ──────────────────────────────────────── */}
-        <div className="px-5 py-4 flex items-start justify-between gap-4 border-b border-border">
+        <div className={`px-5 py-4 flex items-start justify-between gap-4 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-base">{EVENT_ICON[project.eventType] ?? '📷'}</span>
@@ -601,6 +613,18 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
+            </button>
+            {/* Expand / collapse fullscreen */}
+            <button onClick={() => setExpanded(v => !v)} title={expanded ? 'Exit fullscreen' : 'Expand to fullscreen'}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+              {expanded
+                ? <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v5m0-5h5M15 9l5-5m0 0v5m0-5h-5M9 15l-5 5m0 0h5m-5 0v-5M15 15l5 5m0 0h-5m5 0v-5" />
+                  </svg>
+                : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                  </svg>
+              }
             </button>
           </div>
         </div>
@@ -745,7 +769,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
         {/* ── All Photos tab ────────────────────────────────────── */}
         {activeTab === 'photos' && (
-          <div className="px-5 pb-5">
+          <div className={`px-5 pb-5 ${expanded ? 'max-w-7xl mx-auto' : ''}`}>
             {loading ? (
               <div className="flex justify-center py-8">
                 <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
@@ -803,7 +827,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                 )}
 
                 {/* Grid */}
-                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: '520px' }}>
+                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
                   <div ref={gridRef} className="relative select-none"
                     style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
                     onMouseDown={handleGridMouseDown}>
