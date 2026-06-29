@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import type { Selection } from '@/types/studio'
+import { studioQueryByPK, studioPutItem, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import type { Selection, StudioProject } from '@/types/studio'
 
-// GET — load all selections for the client's project
+async function resolveProjectId(auth: { projectId?: string; studioId?: string }, requestedId?: string): Promise<string | null> {
+  if (!requestedId) return auth.projectId ?? null
+  // Validate cross-project access: must be same client email + studio
+  const [entryProject, requestedProject] = await Promise.all([
+    studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId!, projectId: auth.projectId! }),
+    studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId!, projectId: requestedId }),
+  ])
+  if (!entryProject || !requestedProject) return null
+  if (entryProject.clientEmail !== requestedProject.clientEmail) return null
+  return requestedId
+}
+
+// GET — load all selections for a project
 export async function GET(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
@@ -11,9 +23,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
-    const projectId = auth.projectId!
-    const selections = await studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId)
+    const reqProjectId = new URL(req.url).searchParams.get('projectId') ?? undefined
+    const projectId = await resolveProjectId(auth, reqProjectId)
+    if (!projectId) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
 
+    const selections = await studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId)
     return NextResponse.json({ success: true, data: selections })
   } catch (err) {
     console.error('[selections GET]', err)
@@ -29,14 +45,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
-    const { fileId, isSelected, editingRequired = false, comment = '' } = await req.json()
+    const { fileId, isSelected, editingRequired = false, comment = '', projectId: reqProjectId } = await req.json()
     if (!fileId || typeof isSelected !== 'boolean') {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
 
-    const projectId = auth.projectId!
-    const now = new Date().toISOString()
+    const projectId = await resolveProjectId(auth, reqProjectId)
+    if (!projectId) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
 
+    const now = new Date().toISOString()
     const selection: Selection = {
       projectId,
       fileId,

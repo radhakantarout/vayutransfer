@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioQueryByIndex, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioSignedViewUrl } from '@/lib/studio/s3'
-import type { StudioProject, MediaFile } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection, Studio } from '@/types/studio'
 
 export async function GET(
   req: NextRequest,
@@ -16,52 +16,97 @@ export async function GET(
 
     const { token } = params
 
-    const projects = await studioQueryByIndex<StudioProject>(
+    // Resolve the entry project (the one whose token the client used to auth)
+    const entryProjects = await studioQueryByIndex<StudioProject>(
       TABLES.projects,
       'clientShareToken-index',
       'clientShareToken = :token',
       { ':token': token }
     )
-    const project = projects[0]
-    if (!project) {
+    const entry = entryProjects[0]
+    if (!entry) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
-    if (!project.clientShareExpiresAt || new Date(project.clientShareExpiresAt) < new Date()) {
+    if (!entry.clientShareExpiresAt || new Date(entry.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
-    if (auth.projectId !== project.projectId) {
+    if (auth.projectId !== entry.projectId) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId)
+    const { studioId, clientEmail } = entry
 
-    // If admin shared only specific photos, filter to those IDs
-    const sharedSet = project.sharedFileIds && project.sharedFileIds.length > 0
-      ? new Set(project.sharedFileIds)
-      : null
+    // Load all projects for this studio and filter to this client
+    const [allProjects, studio] = await Promise.all([
+      studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studioId),
+      studioGetItem<Studio>(TABLES.studios, { studioId }),
+    ])
 
-    const readyFiles = files
-      .filter((f) => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
-      .sort((a, b) => a.displayOrder - b.displayOrder)
+    const now = new Date()
+    const clientProjects = allProjects.filter(p =>
+      p.clientEmail === clientEmail &&
+      p.clientShareToken &&
+      p.clientShareExpiresAt &&
+      new Date(p.clientShareExpiresAt) > now
+    )
 
-    // Fallback to presigned S3 view URL when R2 preview not yet generated (dev / pre-Lambda)
-    const enriched = await Promise.all(
-      readyFiles.map(async (f) => {
-        if (f.fileType === 'IMAGE' && !f.r2PreviewUrl) {
-          try {
-            const viewUrl = await getStudioSignedViewUrl(f.s3Key)
-            return { ...f, r2PreviewUrl: viewUrl }
-          } catch {
-            return f
-          }
+    // For each event: get cover photo + selection counts (parallel)
+    const events = await Promise.all(
+      clientProjects.map(async (project) => {
+        const [allFiles, selections] = await Promise.all([
+          studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId),
+          studioQueryByPK<Selection>(TABLES.selections, 'projectId', project.projectId),
+        ])
+
+        const sharedSet = project.sharedFileIds && project.sharedFileIds.length > 0
+          ? new Set(project.sharedFileIds)
+          : null
+
+        const readyFiles = allFiles
+          .filter(f => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
+          .sort((a, b) => a.displayOrder - b.displayOrder)
+
+        // Cover = first ready photo
+        let coverUrl: string | null = readyFiles[0]?.r2PreviewUrl ?? null
+        if (!coverUrl && readyFiles[0]) {
+          try { coverUrl = await getStudioSignedViewUrl(readyFiles[0].s3Key) } catch { /* noop */ }
         }
-        return f
+
+        const lovedCount = selections.filter(s => s.isSelected).length
+        const editCount  = selections.filter(s => s.editingRequired).length
+
+        return {
+          project,
+          coverUrl,
+          photoCount:  readyFiles.length,
+          lovedCount,
+          editCount,
+          isSubmitted: !!project.selectionSubmittedAt,
+          submittedAt: project.selectionSubmittedAt ?? null,
+        }
       })
     )
 
-    return NextResponse.json({ success: true, data: { project, files: enriched } })
+    // Sort events by eventDate ascending
+    events.sort((a, b) => a.project.eventDate.localeCompare(b.project.eventDate))
+
+    const totalLoved     = events.reduce((s, e) => s + e.lovedCount, 0)
+    const totalEdit      = events.reduce((s, e) => s + e.editCount, 0)
+    const totalSubmitted = events.filter(e => e.isSubmitted).length
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        studio: { name: studio?.name ?? '', brandingConfig: studio?.brandingConfig ?? {} },
+        clientName: entry.clientName,
+        events,
+        totalLoved,
+        totalEdit,
+        totalSubmitted,
+      },
+    })
   } catch (err) {
-    console.error('[client-gallery GET]', err)
+    console.error('[client-gallery overview GET]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
   }
 }
