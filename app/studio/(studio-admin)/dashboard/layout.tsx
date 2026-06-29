@@ -134,6 +134,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
   const [refreshTriggers, setRefreshTriggers] = useState<Map<string, number>>(new Map())
+  // Global pill modals
+  const [showGlobalPreview, setShowGlobalPreview] = useState(false)
+  const [globalPreviewIdx, setGlobalPreviewIdx]   = useState(0)
+  const [showGlobalDelete, setShowGlobalDelete]   = useState(false)
+  const [globalDeleting, setGlobalDeleting]       = useState(false)
+  const [shareTargetProjectId, setShareTargetProjectId] = useState<string | null>(null)
 
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
@@ -188,6 +194,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const totalPhotoSelected = Array.from(photoSelections.values()).reduce((acc, s) => acc + s.size, 0)
+
+  // All selected photos flattened in order (for global preview)
+  const allSelectedPhotos = Array.from(photoSelections.entries()).flatMap(([pid, ids]) =>
+    (projectFiles.get(pid) ?? []).filter(f => ids.has(f.fileId))
+  )
+
+  const deleteAllSelected = async () => {
+    setGlobalDeleting(true)
+    await Promise.all(
+      Array.from(photoSelections.entries()).flatMap(([pid, ids]) =>
+        Array.from(ids).map(fid =>
+          fetch(`/studio/api/admin/projects/${pid}/files/${fid}`, { method: 'DELETE' })
+        )
+      )
+    )
+    // Bump refreshTrigger for every affected project so EventSections reload
+    setRefreshTriggers(prev => {
+      const next = new Map(prev)
+      Array.from(photoSelections.keys()).forEach(pid => next.set(pid, (next.get(pid) ?? 0) + 1))
+      return next
+    })
+    setPhotoSelections(new Map())
+    setShowGlobalDelete(false)
+    setGlobalDeleting(false)
+    fetchProjects()
+  }
 
   const clientGroups = (() => {
     const map = new Map<string, StudioProject[]>()
@@ -329,6 +361,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onSelectionChange={handleSelectionChange(p.projectId)}
                 onFilesLoaded={handleFilesLoaded(p.projectId)}
                 refreshTrigger={refreshTriggers.get(p.projectId) ?? 0}
+                hidePill={true}
+                triggerShare={shareTargetProjectId === p.projectId}
+                onShareTriggered={() => setShareTargetProjectId(null)}
               />
             ))}
           </div>
@@ -359,22 +394,114 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       )}
 
-      {/* ── Global cross-event selection pill ─────────────────── */}
-      {totalPhotoSelected > 0 && selectedIds.length > 1 && (
-        <div className="fixed bottom-5 inset-x-0 z-40 flex justify-center pointer-events-none">
-          <div className="pointer-events-auto bg-card/90 backdrop-blur-xl border border-accent/40 rounded-2xl shadow-2xl px-5 py-2.5 flex items-center gap-3">
-            <span className="text-sm font-bold text-text-primary">
-              {totalPhotoSelected} photo{totalPhotoSelected !== 1 ? 's' : ''} selected
-            </span>
-            <span className="text-xs text-muted">
-              across {Array.from(photoSelections.keys()).length} event{Array.from(photoSelections.keys()).length !== 1 ? 's' : ''}
-            </span>
-            <button
-              onClick={() => setPhotoSelections(new Map())}
-              className="text-xs text-muted hover:text-text-primary border border-border px-2.5 py-1 rounded-lg hover:bg-border/40 transition-colors"
-            >
-              Clear all
+      {/* ── Global selection pill (all events combined) ──────── */}
+      {totalPhotoSelected > 0 && (
+        <div className="fixed bottom-5 inset-x-4 z-40 flex justify-center">
+          <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
+            <div className="flex items-center gap-1 px-2 py-2.5">
+
+              {/* × clear */}
+              <button onClick={() => setPhotoSelections(new Map())}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Count */}
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-bold text-text-primary">{totalPhotoSelected} selected</span>
+                {photoSelections.size > 1 && (
+                  <span className="text-[11px] text-muted ml-1.5">· {photoSelections.size} events</span>
+                )}
+              </div>
+
+              {/* 👁 Preview */}
+              <button onClick={() => { setGlobalPreviewIdx(0); setShowGlobalPreview(true) }}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
+
+              {/* 🗑 Delete */}
+              <button onClick={() => setShowGlobalDelete(true)}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-red-500/15 transition-colors text-red-500/70 hover:text-red-500" aria-label="Delete selected">
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+              </button>
+
+              {/* 📤 Share */}
+              <button
+                onClick={() => {
+                  const pids = Array.from(photoSelections.keys())
+                  setShareTargetProjectId(pids[0] ?? null)
+                }}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                </svg>
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Global preview lightbox ───────────────────────────── */}
+      {showGlobalPreview && allSelectedPhotos.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={() => setShowGlobalPreview(false)}>
+          <div className="flex items-center justify-between px-4 py-3" onClick={e => e.stopPropagation()}>
+            <span className="text-white/70 text-sm">{globalPreviewIdx + 1} / {allSelectedPhotos.length}</span>
+            <button onClick={() => setShowGlobalPreview(false)} className="text-white/70 hover:text-white">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
+          </div>
+          <div className="flex-1 flex items-center justify-center relative" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setGlobalPreviewIdx(i => Math.max(0, i - 1))}
+              className="absolute left-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <img
+              src={allSelectedPhotos[globalPreviewIdx]?.r2PreviewUrl ?? ''}
+              alt={allSelectedPhotos[globalPreviewIdx]?.originalFilename}
+              className="max-h-[80vh] max-w-[85vw] object-contain rounded-lg"
+            />
+            <button onClick={() => setGlobalPreviewIdx(i => Math.min(allSelectedPhotos.length - 1, i + 1))}
+              className="absolute right-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Global delete confirm ─────────────────────────────── */}
+      {showGlobalDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-card rounded-2xl border border-border shadow-2xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-base font-bold text-text-primary">Delete {totalPhotoSelected} photo{totalPhotoSelected !== 1 ? 's' : ''}?</h3>
+            <p className="text-sm text-muted">This will permanently delete the selected photos{photoSelections.size > 1 ? ` across ${photoSelections.size} events` : ''}. This cannot be undone.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowGlobalDelete(false)} disabled={globalDeleting}
+                className="flex-1 text-sm border border-border py-2 rounded-xl hover:bg-border/40 transition-colors text-muted disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={deleteAllSelected} disabled={globalDeleting}
+                className="flex-1 text-sm bg-red-500 text-white font-bold py-2 rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50">
+                {globalDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
           </div>
         </div>
       )}

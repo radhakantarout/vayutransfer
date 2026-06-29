@@ -54,9 +54,12 @@ interface Props {
   onSelectionChange: (ids: Set<string>) => void
   onFilesLoaded: (files: MediaFile[]) => void
   refreshTrigger?: number
+  hidePill?: boolean
+  triggerShare?: boolean
+  onShareTriggered?: () => void
 }
 
-export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger }: Props) {
+export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered }: Props) {
   const pathname = usePathname()
 
   // ── Photo grid ────────────────────────────────────────────
@@ -136,6 +139,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
   useEffect(() => { loadFiles() }, [loadFiles, refreshTrigger])
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
+
+  // Open share setup when triggered from global pill
+  useEffect(() => {
+    if (triggerShare) { setShowShareSetup(true); onShareTriggered?.() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerShare])
 
   // Upload speed tracking
   useEffect(() => {
@@ -1069,7 +1078,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       </div>{/* end card */}
 
       {/* ── Floating selection pill (admin grid) ──────────────── */}
-      {selectedCount > 0 && activeTab === 'photos' && (
+      {selectedCount > 0 && activeTab === 'photos' && !hidePill && (
         <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
           <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
             <div className="flex items-center gap-1 px-2 py-2.5">
