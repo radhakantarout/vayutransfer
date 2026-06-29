@@ -85,8 +85,8 @@ export default function EnquiryForm() {
 
       <p className="text-xs text-muted text-center">
         We respond within 24 hours. Or reach us directly at{' '}
-        <a href="mailto:radhakanta.rout16@gmail.com" className="text-accent hover:underline">
-          radhakanta.rout16@gmail.com
+        <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">
+          support@vayutransfer.com
         </a>
       </p>
     </form>
