@@ -44,13 +44,16 @@ export default function ClientGalleryPage() {
   const [error, setError]             = useState<string | null>(null)
   const [viewMode, setViewMode]       = useState<ViewMode>('grid')
   const [lightboxIdx, setLightboxIdx] = useState(0)
-  const [showSubmit, setShowSubmit]       = useState(false)
-  const [submitting, setSubmitting]       = useState(false)
-  const [submitted, setSubmitted]         = useState(false)
-  const [submittedAt, setSubmittedAt]     = useState<string | null>(null)
+  const [showSubmit, setShowSubmit]             = useState(false)
+  const [submitting, setSubmitting]             = useState(false)
+  const [submitted, setSubmitted]               = useState(false)
+  const [submittedAt, setSubmittedAt]           = useState<string | null>(null)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [countdown, setCountdown]         = useState('')
-  const [openMenu, setOpenMenu]           = useState<string | null>(null)
+  const [countdown, setCountdown]               = useState('')
+  const [showSelectionPreview, setShowSelectionPreview] = useState(false)
+  const [selectionPreviewIdx, setSelectionPreviewIdx]   = useState(0)
+  const [openMenu, setOpenMenu]                 = useState<string | null>(null)
+  const touchStartX                             = useRef<number>(0)
   const [zoomLevel, setZoomLevel]       = useState(3)
   const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
   const [showSelfie, setShowSelfie]     = useState(false)
@@ -220,8 +223,31 @@ export default function ClientGalleryPage() {
     ? Date.now() - new Date(submittedAt).getTime() < RESUBMIT_WINDOW_MS
     : false
 
-  const selectedCount  = files.filter((f) => f.isSelected).length
-  const editCount      = files.filter((f) => f.editingRequired).length
+  const clearAllSelections = () => {
+    setFiles(prev => prev.map(f => {
+      if (!f.isSelected) return f
+      const next = { ...f, isSelected: false, editingRequired: false, comment: '' }
+      saveSelection(f.fileId, { isSelected: false, editingRequired: false, comment: '' })
+      return next
+    }))
+  }
+
+  const openSelectionPreview = (startIdx = 0) => {
+    setSelectionPreviewIdx(startIdx)
+    setShowSelectionPreview(true)
+  }
+
+  const handleSwipeStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX }
+  const handleSwipeEnd   = (e: React.TouchEvent, total: number) => {
+    const diff = touchStartX.current - e.changedTouches[0].clientX
+    if (Math.abs(diff) < 50) return
+    if (diff > 0) setSelectionPreviewIdx(i => Math.min(total - 1, i + 1))
+    else          setSelectionPreviewIdx(i => Math.max(0, i - 1))
+  }
+
+  const selectedCount   = files.filter((f) => f.isSelected).length
+  const editCount       = files.filter((f) => f.editingRequired).length
+  const selectedPhotos  = files.filter((f) => f.isSelected)
 
   const baseFiles: GalleryFile[] = viewFilter === 'all' ? files
     : viewFilter === 'loved' ? files.filter(f => f.isSelected)
@@ -638,86 +664,97 @@ export default function ClientGalleryPage() {
         </div>
       )}
 
-      {/* ── Sticky bottom bar ───────────────────────────────── */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-bg/95 backdrop-blur border-t border-border px-4 py-3">
-        <div className="max-w-6xl mx-auto space-y-2">
+      {/* ── Floating selection bar (Google Drive style) ─────── */}
+      {selectedCount > 0 && (
+        <div
+          className="fixed bottom-5 inset-x-4 z-30 flex justify-center"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="bg-card/80 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
 
-          {/* Selection range progress bar */}
-          {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
-            const min = project.selectionMin ?? 0
-            const max = project.selectionMax
-            const pct = Math.min(100, (selectedCount / max) * 100)
-            const inRange = selectedCount >= min && selectedCount <= max
-            const under   = selectedCount < min
-            return (
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] text-muted">
-                  <span>
-                    {under
-                      ? `Select ${min - selectedCount} more to reach minimum`
-                      : inRange
-                        ? `✓ In range — ${max - selectedCount} more allowed`
-                        : `${selectedCount - max} over maximum`}
+            {/* Selection range progress bar (only when range set) */}
+            {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
+              const min = project.selectionMin ?? 0
+              const max = project.selectionMax
+              const pct = Math.min(100, (selectedCount / max) * 100)
+              const inRange = selectedCount >= min && selectedCount <= max
+              const under   = selectedCount < min
+              return (
+                <div className="px-4 pt-2.5 pb-1 space-y-1">
+                  <div className="flex justify-between text-[10px] text-muted">
+                    <span>{under ? `${min - selectedCount} more needed` : inRange ? `✓ In range` : `${selectedCount - max} over max`}</span>
+                    <span className="font-semibold">{selectedCount}/{min}–{max}</span>
+                  </div>
+                  <div className="h-1 bg-border rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-300 ${inRange ? 'bg-success' : under ? 'bg-accent' : 'bg-yellow-400'}`}
+                      style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Main row */}
+            <div className="flex items-center gap-1 px-2 py-2.5">
+
+              {/* × clear */}
+              <button
+                onClick={clearAllSelections}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary"
+                aria-label="Clear selection"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Counts */}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="flex items-center gap-1 font-bold text-sm text-text-primary">
+                  <HeartIcon filled className="w-4 h-4 text-rose-500" />
+                  {selectedCount}
+                </span>
+                {editCount > 0 && (
+                  <span className="text-[11px] font-semibold text-orange-400 bg-orange-400/10 border border-orange-400/20 rounded-full px-2 py-0.5 flex-shrink-0">
+                    ✏️ {editCount}
                   </span>
-                  <span className="font-semibold">{selectedCount} / {min}–{max}</span>
-                </div>
-                <div className="h-1.5 bg-border rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-300 ${
-                      inRange ? 'bg-success' : under ? 'bg-accent' : 'bg-yellow-400'
-                    }`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
-            )
-          })()}
-
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-text-primary font-semibold text-sm flex items-center gap-1.5">
-                {selectedCount === 0 ? (
-                  'Tap a photo to begin'
-                ) : (
-                  <>
-                    <HeartIcon filled className="w-4 h-4 text-rose-600" />
-                    {selectedCount} photo{selectedCount !== 1 ? 's' : ''} selected
-                  </>
                 )}
               </div>
-              <div className="text-xs text-muted mt-0.5">
-                {editCount > 0
-                  ? `${editCount} marked for editing · Tap ··· on a photo to edit`
-                  : selectedCount > 0
-                    ? 'Tap ··· on any photo to request retouching'
-                    : 'Tap any photo to add it to your selection'
-                }
-              </div>
+
+              {/* Eye — preview selected */}
+              <button
+                onClick={() => openSelectionPreview(0)}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary"
+                aria-label="Preview selection"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
+
+              {/* Submit / Resubmit / Locked */}
+              {!submitted ? (
+                <button onClick={() => setShowSubmit(true)}
+                  className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">
+                  Submit →
+                </button>
+              ) : canResubmit ? (
+                <button onClick={() => setShowSubmit(true)}
+                  className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">
+                  Resubmit ↺
+                </button>
+              ) : (
+                <div className="text-xs text-muted font-semibold px-3 py-2 rounded-xl bg-border/40 whitespace-nowrap flex-shrink-0">
+                  🔒 Locked
+                </div>
+              )}
             </div>
-            {!submitted ? (
-              <button
-                onClick={() => setShowSubmit(true)}
-                disabled={selectedCount === 0}
-                className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
-              >
-                Submit →
-              </button>
-            ) : canResubmit ? (
-              <button
-                onClick={() => setShowSubmit(true)}
-                disabled={selectedCount === 0}
-                className="bg-accent text-bg font-bold px-5 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm whitespace-nowrap"
-              >
-                Resubmit ↺
-              </button>
-            ) : (
-              <div className="text-xs text-muted font-semibold px-4 py-3 rounded-xl bg-border/40 whitespace-nowrap flex items-center gap-1.5">
-                🔒 Locked
-              </div>
-            )}
           </div>
         </div>
-      </div>
+      )}
 
       {/* ── Success modal (shown after submit) ─────────────── */}
       {showSuccessModal && (
@@ -777,6 +814,85 @@ export default function ClientGalleryPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Swipeable selection preview modal ──────────────── */}
+      {showSelectionPreview && selectedPhotos.length > 0 && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/95 flex flex-col"
+          onClick={() => setShowSelectionPreview(false)}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 pt-safe pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <div className="text-white/70 text-sm font-semibold">
+              {selectionPreviewIdx + 1} / {selectedPhotos.length}
+            </div>
+            <div className="text-white font-bold text-base">Selected Photos</div>
+            <button
+              onClick={() => setShowSelectionPreview(false)}
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors"
+            >
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Main photo */}
+          <div
+            className="flex-1 flex items-center justify-center overflow-hidden"
+            onTouchStart={handleSwipeStart}
+            onTouchEnd={e => handleSwipeEnd(e, selectedPhotos.length)}
+            onClick={e => e.stopPropagation()}
+          >
+            <img
+              key={selectedPhotos[selectionPreviewIdx]?.fileId}
+              src={selectedPhotos[selectionPreviewIdx]?.r2PreviewUrl ?? ''}
+              alt=""
+              className="max-h-full max-w-full object-contain select-none"
+              draggable={false}
+            />
+          </div>
+
+          {/* Edit badge overlay */}
+          {selectedPhotos[selectionPreviewIdx]?.editingRequired && (
+            <div className="absolute top-20 left-4 bg-orange-500/90 text-white text-xs font-bold px-2.5 py-1 rounded-full pointer-events-none">
+              ✏️ Edit requested
+            </div>
+          )}
+
+          {/* Thumbnail strip */}
+          <div
+            className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide"
+            onClick={e => e.stopPropagation()}
+          >
+            {selectedPhotos.map((photo, idx) => (
+              <button
+                key={photo.fileId}
+                onClick={() => setSelectionPreviewIdx(idx)}
+                className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${
+                  idx === selectionPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'
+                }`}
+              >
+                <img
+                  src={photo.r2PreviewUrl ?? ''}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+                {photo.editingRequired && (
+                  <div className="absolute top-0.5 right-0.5 w-3.5 h-3.5 bg-orange-500 rounded-full" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Swipe hint */}
+          {selectedPhotos.length > 1 && (
+            <div className="absolute bottom-[90px] inset-x-0 flex justify-center pointer-events-none">
+              <span className="text-white/30 text-xs">← swipe to browse →</span>
+            </div>
+          )}
         </div>
       )}
     </div>
