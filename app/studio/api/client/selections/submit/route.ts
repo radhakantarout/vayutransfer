@@ -4,6 +4,16 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import type { Selection, StudioProject } from '@/types/studio'
 
+async function resolveProjectId(auth: { projectId?: string; studioId?: string }, requestedId?: string): Promise<string | null> {
+  if (!requestedId) return auth.projectId ?? null
+  const [entry, requested] = await Promise.all([
+    studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId!, projectId: auth.projectId! }),
+    studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId!, projectId: requestedId }),
+  ])
+  if (!entry || !requested || entry.clientEmail !== requested.clientEmail) return null
+  return requestedId
+}
+
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
 export async function POST(req: NextRequest) {
@@ -13,7 +23,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
-    const projectId = auth.projectId!
+    const { projectId: reqProjectId } = await req.json().catch(() => ({}))
+    const resolvedId = await resolveProjectId(auth, reqProjectId)
+    if (!resolvedId) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+    const projectId = resolvedId
     const studioId  = auth.studioId!
 
     const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })

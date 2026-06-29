@@ -140,6 +140,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showGlobalDelete, setShowGlobalDelete]   = useState(false)
   const [globalDeleting, setGlobalDeleting]       = useState(false)
   const [shareTargetProjectId, setShareTargetProjectId] = useState<string | null>(null)
+  const [shareError, setShareError]             = useState<string | null>(null)
+  const [shareSuccess, setShareSuccess]         = useState<string | null>(null)
+  const [sharing, setSharing]                   = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
@@ -218,6 +221,48 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setPhotoSelections(new Map())
     setShowGlobalDelete(false)
     setGlobalDeleting(false)
+    fetchProjects()
+  }
+
+  const handleGlobalShare = async () => {
+    const pids = Array.from(photoSelections.keys())
+    if (pids.length === 0) return
+
+    // Validate all selected events belong to the same client
+    const selectedEventsForShare = pids.map(pid => selectedProjects.find(p => p.projectId === pid)).filter(Boolean) as StudioProject[]
+    const emails = Array.from(new Set(selectedEventsForShare.map(p => p.clientEmail)))
+    if (emails.length > 1) {
+      setShareError('Selected events belong to different clients. Please select events for one client at a time before sharing.')
+      return
+    }
+
+    setShareError(null)
+    setSharing(true)
+
+    // Generate share tokens for all selected events in parallel
+    const results = await Promise.all(
+      pids.map(async (pid) => {
+        const selIds = photoSelections.get(pid)
+        const includedFileIds = selIds ? Array.from(selIds) : []
+        const res = await fetch(`/studio/api/admin/projects/${pid}/share-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiryDays: 30, includedFileIds }),
+        }).then(r => r.json())
+        return { pid, res }
+      })
+    )
+
+    setSharing(false)
+    const failed = results.filter(r => !r.res.success)
+    if (failed.length > 0) {
+      setShareError(failed[0].res.message ?? 'Failed to generate share link. Please try again.')
+      return
+    }
+
+    // Use the first event's share URL (client opens overview and sees all events)
+    const firstUrl = results[0]?.res?.data?.shareUrl ?? ''
+    setShareSuccess(firstUrl)
     fetchProjects()
   }
 
@@ -438,17 +483,43 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
               {/* 📤 Share */}
               <button
-                onClick={() => {
-                  const pids = Array.from(photoSelections.keys())
-                  setShareTargetProjectId(pids[0] ?? null)
-                }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
-                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                </svg>
+                onClick={handleGlobalShare}
+                disabled={sharing}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent disabled:opacity-50" aria-label="Share with client">
+                {sharing
+                  ? <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  : <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                    </svg>
+                }
               </button>
 
             </div>
+
+            {/* Share error */}
+            {shareError && (
+              <div className="px-3 pb-2.5 flex items-start gap-2">
+                <svg className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                <p className="text-[11px] text-red-500 leading-snug">{shareError}</p>
+                <button onClick={() => setShareError(null)} className="ml-auto text-muted hover:text-text-primary flex-shrink-0">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            )}
+
+            {/* Share success */}
+            {shareSuccess && (
+              <div className="px-3 pb-2.5 flex items-center gap-2">
+                <svg className="w-3.5 h-3.5 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <p className="text-[11px] text-success font-semibold flex-1 truncate">Shared! Client can view all events</p>
+                <button onClick={async () => { await navigator.clipboard.writeText(shareSuccess); setShareSuccess(null) }}
+                  className="text-[11px] text-accent font-semibold hover:underline flex-shrink-0">Copy link</button>
+                <button onClick={() => setShareSuccess(null)} className="text-muted hover:text-text-primary flex-shrink-0">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            )}
+
           </div>
         </div>
       )}

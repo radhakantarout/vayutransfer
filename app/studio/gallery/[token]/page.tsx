@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
@@ -10,6 +10,16 @@ interface GalleryFile extends MediaFile {
   isSelected: boolean
   editingRequired: boolean
   comment: string
+}
+
+interface EventOverview {
+  project: StudioProject
+  coverUrl: string | null
+  photoCount: number
+  lovedCount: number
+  editCount: number
+  isSubmitted: boolean
+  submittedAt: string | null
 }
 
 type ViewMode   = 'grid' | 'lightbox'
@@ -34,8 +44,157 @@ function DotsIcon() {
   )
 }
 
-export default function ClientGalleryPage() {
-  const { token } = useParams<{ token: string }>()
+function fmtEventType(t: string) {
+  return t.replace(/_/g, ' ')
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+// ── Overview page ──────────────────────────────────────────────────────────────
+
+function GalleryOverview({
+  events, clientName, studioName, totalLoved, totalEdit, totalSubmitted, token,
+}: {
+  events: EventOverview[]
+  clientName: string
+  studioName: string
+  totalLoved: number
+  totalEdit: number
+  totalSubmitted: number
+  token: string
+}) {
+  const router = useRouter()
+
+  return (
+    <div className="min-h-screen bg-bg pb-24">
+      <InAppBrowserGuard />
+
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-bg/95 backdrop-blur border-b border-border px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <div>
+            <div className="font-bold text-text-primary text-sm">{clientName}</div>
+            <div className="text-xs text-muted">{studioName}</div>
+          </div>
+          <div className="text-xs font-semibold text-text-primary bg-accent/10 border border-accent/20 rounded-full px-3 py-1">
+            My Gallery
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-4 pt-6 space-y-4">
+
+        {/* Section title */}
+        <div>
+          <h1 className="text-lg font-bold text-text-primary">Your Events</h1>
+          <p className="text-xs text-muted mt-0.5">Tap an event to view and select your favourite photos</p>
+        </div>
+
+        {/* Event cards */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {events.map(ev => (
+            <button
+              key={ev.project.projectId}
+              onClick={() => router.push(`/studio/gallery/${token}?event=${ev.project.projectId}`)}
+              className="group relative bg-card border border-border rounded-2xl overflow-hidden text-left transition-all hover:border-accent/40 hover:shadow-md hover:shadow-accent/10 active:scale-[0.98]"
+            >
+              {/* Cover photo */}
+              <div className="relative aspect-[4/3] bg-border/40 overflow-hidden">
+                {ev.coverUrl ? (
+                  <img
+                    src={ev.coverUrl}
+                    alt={fmtEventType(ev.project.eventType)}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <svg className="w-8 h-8 text-muted/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                    </svg>
+                  </div>
+                )}
+                {/* Submitted badge */}
+                {ev.isSubmitted && (
+                  <div className="absolute top-2 right-2 bg-success text-bg text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                    Submitted
+                  </div>
+                )}
+              </div>
+
+              {/* Info */}
+              <div className="p-3 space-y-1.5">
+                <div>
+                  <p className="text-xs font-bold text-text-primary leading-tight">{fmtEventType(ev.project.eventType)}</p>
+                  <p className="text-[10px] text-muted">{fmtDate(ev.project.eventDate)}</p>
+                </div>
+
+                <div className="flex items-center gap-2 text-[11px] text-muted">
+                  <span>{ev.photoCount} photos</span>
+                </div>
+
+                {(ev.lovedCount > 0 || ev.editCount > 0) && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {ev.lovedCount > 0 && (
+                      <span className="flex items-center gap-1 text-[11px] text-rose-500 font-semibold">
+                        <HeartIcon filled className="w-3 h-3" />
+                        {ev.lovedCount}
+                      </span>
+                    )}
+                    {ev.editCount > 0 && (
+                      <span className="text-[11px] text-orange-400 font-semibold">✏ {ev.editCount}</span>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-accent font-semibold group-hover:underline">
+                    View Gallery →
+                  </span>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Total summary bar */}
+        {(totalLoved > 0 || totalEdit > 0 || totalSubmitted > 0) && (
+          <div className="bg-card border border-border rounded-2xl px-4 py-3">
+            <p className="text-[11px] font-bold text-muted uppercase tracking-wider mb-2">Your Total Selections</p>
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <HeartIcon filled className="w-4 h-4 text-rose-500" />
+                <span className="text-sm font-bold text-text-primary">{totalLoved}</span>
+                <span className="text-xs text-muted">loved</span>
+              </div>
+              {totalEdit > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-base">✏️</span>
+                  <span className="text-sm font-bold text-text-primary">{totalEdit}</span>
+                  <span className="text-xs text-muted">need editing</span>
+                </div>
+              )}
+              {totalSubmitted > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-sm font-bold text-text-primary">{totalSubmitted}</span>
+                  <span className="text-xs text-muted">event{totalSubmitted !== 1 ? 's' : ''} submitted</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Per-event gallery view ─────────────────────────────────────────────────────
+
+function EventGalleryView({ token, projectId }: { token: string; projectId: string }) {
   const router = useRouter()
 
   const [project, setProject]         = useState<StudioProject | null>(null)
@@ -60,7 +219,6 @@ export default function ClientGalleryPage() {
   const [selfieFiles, setSelfieFiles]   = useState<MediaFile[] | null>(null)
   const saveQueue                       = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  // Close 3-dot menu on outside click
   useEffect(() => {
     if (!openMenu) return
     const handler = (e: MouseEvent) => {
@@ -72,9 +230,10 @@ export default function ClientGalleryPage() {
   }, [openMenu])
 
   const load = useCallback(async () => {
+    setLoading(true)
     const [galleryRes, selectionsRes] = await Promise.all([
-      fetch(`/studio/api/client/gallery/${token}`),
-      fetch('/studio/api/client/selections'),
+      fetch(`/studio/api/client/gallery/${token}/events/${projectId}`),
+      fetch(`/studio/api/client/selections?projectId=${projectId}`),
     ])
 
     if (galleryRes.status === 401 || galleryRes.status === 403) {
@@ -89,7 +248,7 @@ export default function ClientGalleryPage() {
 
     const galleryData = await galleryRes.json()
     if (!galleryData.success) {
-      setError('Could not load your gallery. Please try again.')
+      setError('Could not load this event gallery. Please try again.')
       setLoading(false)
       return
     }
@@ -115,11 +274,8 @@ export default function ClientGalleryPage() {
     setLoading(false)
 
     const sat = galleryData.data.project.selectionSubmittedAt ?? null
-    if (sat) {
-      setSubmittedAt(sat)
-      setSubmitted(true)
-    }
-  }, [token, router])
+    if (sat) { setSubmittedAt(sat); setSubmitted(true) }
+  }, [token, projectId, router])
 
   useEffect(() => { load() }, [load])
 
@@ -135,6 +291,7 @@ export default function ClientGalleryPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            projectId,
             fileId,
             isSelected:      patch.isSelected      ?? f.isSelected,
             editingRequired: patch.editingRequired  ?? f.editingRequired,
@@ -190,7 +347,11 @@ export default function ClientGalleryPage() {
 
   const handleSubmit = async () => {
     setSubmitting(true)
-    const res = await fetch('/studio/api/client/selections/submit', { method: 'POST' }).then((r) => r.json())
+    const res = await fetch('/studio/api/client/selections/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+    }).then((r) => r.json())
     setSubmitting(false)
     setShowSubmit(false)
     if (res.success) {
@@ -202,7 +363,6 @@ export default function ClientGalleryPage() {
     }
   }
 
-  // Live countdown for the 12-hour resubmit window
   const RESUBMIT_WINDOW_MS = 12 * 60 * 60 * 1000
   useEffect(() => {
     if (!submittedAt) return
@@ -291,16 +451,29 @@ export default function ClientGalleryPage() {
       {/* ── Sticky header ───────────────────────────────────── */}
       <div className="sticky top-0 z-20 bg-bg/95 backdrop-blur border-b border-border px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div>
-            <div className="font-bold text-text-primary text-sm">{project?.clientName}</div>
-            <div className="text-xs text-muted">
-              {project && new Date(project.eventDate).toLocaleDateString('en-IN', {
-                day: 'numeric', month: 'long', year: 'numeric',
-              })} · {files.length} photos
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Back to gallery */}
+            <button
+              onClick={() => router.push(`/studio/gallery/${token}`)}
+              className="flex items-center gap-1 text-xs text-muted hover:text-accent transition-colors flex-shrink-0"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+              My Gallery
+            </button>
+            <div className="w-px h-4 bg-border flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="font-bold text-text-primary text-sm truncate">
+                {project ? fmtEventType(project.eventType) : ''}
+              </div>
+              <div className="text-xs text-muted truncate">
+                {project && fmtDate(project.eventDate)} · {files.length} photos
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Find My Photos — selfie search */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Find My Photos */}
             <button
               onClick={() => setShowSelfie(true)}
               className="flex items-center gap-1.5 text-xs font-semibold border border-accent/40 text-accent bg-accent/10 rounded-full px-3 py-1.5 hover:bg-accent/20 transition-colors"
@@ -311,7 +484,6 @@ export default function ClientGalleryPage() {
               </svg>
               Find My Photos
             </button>
-            {/* Edit-required filter button */}
             {editCount > 0 && (
               <button
                 onClick={() => toggleFilter('edit')}
@@ -323,7 +495,6 @@ export default function ClientGalleryPage() {
                 ✏️ {editCount}
               </button>
             )}
-            {/* Loved filter button */}
             <button
               onClick={() => toggleFilter('loved')}
               disabled={selectedCount === 0}
@@ -433,7 +604,6 @@ export default function ClientGalleryPage() {
       {/* ── Grid toolbar ────────────────────────────────────── */}
       {files.length > 0 && (
         <div className="max-w-6xl mx-auto px-4 pt-2 pb-1 flex items-center justify-between gap-3">
-          {/* Active filter banner */}
           {viewFilter !== 'all' ? (
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold flex-1
               ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
@@ -448,8 +618,6 @@ export default function ClientGalleryPage() {
           ) : (
             <span className="text-xs text-muted">{files.length} photos</span>
           )}
-
-          {/* Zoom slider */}
           <div className="flex items-center gap-1 flex-shrink-0">
             <button onClick={() => setZoomLevel(v => Math.min(5, v + 1))} title="Zoom out"
               className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
@@ -457,11 +625,7 @@ export default function ClientGalleryPage() {
                 <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
               </svg>
             </button>
-            <input
-              type="range" min={2} max={5} value={zoomLevel}
-              onChange={e => setZoomLevel(Number(e.target.value))}
-              className="w-16 h-1 cursor-pointer accent-accent"
-            />
+            <input type="range" min={2} max={5} value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-16 h-1 cursor-pointer accent-accent" />
             <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
               className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -482,135 +646,75 @@ export default function ClientGalleryPage() {
             <p className="text-muted text-sm">
               {viewFilter === 'loved' ? 'No photos selected yet — tap any photo to love it.' : 'No photos marked for editing yet.'}
             </p>
-            <button onClick={() => setViewFilter('all')} className="text-xs text-accent hover:underline">
-              Show all photos
-            </button>
+            <button onClick={() => setViewFilter('all')} className="text-xs text-accent hover:underline">Show all photos</button>
           </div>
         ) : (
-          <div
-            style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '8px' }}
-          >
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '8px' }}>
             {displayFiles.map((f, idx) => (
-              <div
-                key={f.fileId}
-                className={`relative ${openMenu === f.fileId ? 'z-20' : 'z-0'}`}
-              >
-                {/* Inner card */}
+              <div key={f.fileId} className={`relative ${openMenu === f.fileId ? 'z-20' : 'z-0'}`}>
                 <div
                   className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none transition-all duration-150
                     ${f.isSelected
                       ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-bg shadow-md shadow-rose-600/20'
-                      : 'ring-1 ring-border hover:ring-2 hover:ring-border'
-                    }`}
+                      : 'ring-1 ring-border hover:ring-2 hover:ring-border'}`}
                   onClick={() => toggleSelect(f.fileId)}
                 >
                   {f.r2PreviewUrl ? (
-                    <img
-                      src={f.r2PreviewUrl}
-                      alt={f.originalFilename}
-                      className="w-full h-full object-cover"
-                      draggable={false}
-                    />
+                    <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
                   ) : (
                     <div className="w-full h-full bg-card flex items-center justify-center text-muted text-xs p-2 text-center">
                       {f.originalFilename}
                     </div>
                   )}
-
-                  {f.isSelected && (
-                    <div className="absolute inset-0 bg-black/15 pointer-events-none" />
-                  )}
-
-                  {/* Heart — centered on select */}
-                  <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${
-                    f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
-                  }`}>
+                  {f.isSelected && <div className="absolute inset-0 bg-black/15 pointer-events-none" />}
+                  <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}>
                     <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
                   </div>
-
-                  {/* Edit-required badge */}
                   {f.editingRequired && (
-                    <div className="absolute top-1.5 left-1.5 bg-yellow-400 text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">
-                      Edits
-                    </div>
+                    <div className="absolute top-1.5 left-1.5 bg-yellow-400 text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">Edits</div>
                   )}
-
-                  {/* Expand to lightbox */}
                   <button
                     onClick={(e) => openLightbox(idx, e)}
                     className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs flex items-center justify-center hover:bg-black/70 transition-opacity opacity-0 hover:opacity-100"
                     title="View full size"
-                  >
-                    ⤢
-                  </button>
+                  >⤢</button>
                 </div>
 
-                {/* 3-dot — only when selected */}
                 {f.isSelected && (
                   <button
                     data-photomenu
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setOpenMenu(openMenu === f.fileId ? null : f.fileId)
-                    }}
+                    onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === f.fileId ? null : f.fileId) }}
                     className={`absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full flex items-center justify-center transition-colors
-                      ${openMenu === f.fileId
-                        ? 'bg-accent text-bg'
-                        : 'bg-black/50 text-white hover:bg-black/75'
-                      }`}
+                      ${openMenu === f.fileId ? 'bg-accent text-bg' : 'bg-black/50 text-white hover:bg-black/75'}`}
                     title="Photo options"
                   >
                     <DotsIcon />
                   </button>
                 )}
 
-                {/* Popover */}
                 {openMenu === f.fileId && (
-                  <div
-                    data-photomenu
-                    className="absolute top-9 right-0 z-30 w-56 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  <div data-photomenu className="absolute top-9 right-0 z-30 w-56 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between px-3 py-2.5 border-b border-border bg-border/20">
                       <span className="text-xs font-bold text-text-primary">Editing Required?</span>
-                      <button
-                        onClick={() => setOpenMenu(null)}
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border transition-colors"
-                      >
+                      <button onClick={() => setOpenMenu(null)} className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border transition-colors">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                       </button>
                     </div>
-
                     <div className="p-3 space-y-3">
                       <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => setEditing(f.fileId, false)}
-                          className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                            !f.editingRequired
-                              ? 'bg-success/15 border-success/40 text-success shadow-sm'
-                              : 'border-border text-muted hover:bg-border/40'
-                          }`}
-                        >
+                        <button onClick={() => setEditing(f.fileId, false)}
+                          className={`py-2 rounded-xl text-xs font-bold border transition-all ${!f.editingRequired ? 'bg-success/15 border-success/40 text-success shadow-sm' : 'border-border text-muted hover:bg-border/40'}`}>
                           ✓ No
                         </button>
-                        <button
-                          onClick={() => setEditing(f.fileId, true)}
-                          className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                            f.editingRequired
-                              ? 'bg-yellow-400/15 border-yellow-400/40 text-yellow-400 shadow-sm'
-                              : 'border-border text-muted hover:bg-border/40'
-                          }`}
-                        >
+                        <button onClick={() => setEditing(f.fileId, true)}
+                          className={`py-2 rounded-xl text-xs font-bold border transition-all ${f.editingRequired ? 'bg-yellow-400/15 border-yellow-400/40 text-yellow-400 shadow-sm' : 'border-border text-muted hover:bg-border/40'}`}>
                           ✏️ Yes
                         </button>
                       </div>
-
                       <div className={`transition-all duration-200 overflow-hidden ${f.editingRequired ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'}`}>
-                        <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">
-                          What edits are needed?
-                        </label>
+                        <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">What edits are needed?</label>
                         <textarea
                           value={f.comment}
                           onChange={(e) => setComment(f.fileId, e.target.value)}
@@ -621,7 +725,6 @@ export default function ClientGalleryPage() {
                         />
                         <p className="text-[9px] text-muted mt-1">Auto-saved as you type</p>
                       </div>
-
                       {!f.editingRequired && (
                         <p className="text-[10px] text-muted leading-relaxed">
                           Tap <span className="font-semibold text-yellow-400">Yes</span> if this photo needs retouching, colour correction, or any other edit.
@@ -638,52 +741,21 @@ export default function ClientGalleryPage() {
 
       {/* ── Lightbox ────────────────────────────────────────── */}
       {viewMode === 'lightbox' && (
-        <div
-          className="fixed inset-0 z-50 bg-black/92 flex items-center justify-center"
-          onClick={() => setViewMode('grid')}
-        >
-          <button
-            className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center"
-            onClick={() => setViewMode('grid')}
-          >
-            ✕
-          </button>
-          <button
-            className="absolute left-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20"
-            disabled={lightboxIdx === 0}
-            onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i - 1) }}
-          >
-            ‹
-          </button>
-          <button
-            className="absolute right-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20"
-            disabled={lightboxIdx === displayFiles.length - 1}
-            onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i + 1) }}
-          >
-            ›
-          </button>
-          <img
-            src={displayFiles[lightboxIdx]?.r2PreviewUrl ?? ''}
-            alt={displayFiles[lightboxIdx]?.originalFilename}
-            className="max-h-screen max-w-full object-contain px-16"
-            onClick={(e) => e.stopPropagation()}
-            draggable={false}
-          />
+        <div className="fixed inset-0 z-50 bg-black/92 flex items-center justify-center" onClick={() => setViewMode('grid')}>
+          <button className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center" onClick={() => setViewMode('grid')}>✕</button>
+          <button className="absolute left-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20" disabled={lightboxIdx === 0} onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i - 1) }}>‹</button>
+          <button className="absolute right-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20" disabled={lightboxIdx === displayFiles.length - 1} onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i + 1) }}>›</button>
+          <img src={displayFiles[lightboxIdx]?.r2PreviewUrl ?? ''} alt={displayFiles[lightboxIdx]?.originalFilename} className="max-h-screen max-w-full object-contain px-16" onClick={(e) => e.stopPropagation()} draggable={false} />
           <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-4">
             <span className="text-white/50 text-sm">{lightboxIdx + 1} / {displayFiles.length}</span>
           </div>
         </div>
       )}
 
-      {/* ── Floating selection bar (Google Drive style) ─────── */}
+      {/* ── Floating selection bar ───────────────────────────── */}
       {selectedCount > 0 && (
-        <div
-          className="fixed bottom-5 inset-x-4 z-30 flex justify-center"
-          onClick={e => e.stopPropagation()}
-        >
+        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center" onClick={e => e.stopPropagation()}>
           <div className="bg-card/80 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-
-            {/* Selection range progress bar (only when range set) */}
             {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
               const min = project.selectionMin ?? 0
               const max = project.selectionMax
@@ -697,77 +769,46 @@ export default function ClientGalleryPage() {
                     <span className="font-semibold">{selectedCount}/{min}–{max}</span>
                   </div>
                   <div className="h-1 bg-border rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-300 ${inRange ? 'bg-success' : under ? 'bg-accent' : 'bg-yellow-400'}`}
-                      style={{ width: `${pct}%` }} />
+                    <div className={`h-full rounded-full transition-all duration-300 ${inRange ? 'bg-success' : under ? 'bg-accent' : 'bg-yellow-400'}`} style={{ width: `${pct}%` }} />
                   </div>
                 </div>
               )
             })()}
-
-            {/* Main row */}
             <div className="flex items-center gap-1 px-2 py-2.5">
-
-              {/* × clear */}
-              <button
-                onClick={clearAllSelections}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary"
-                aria-label="Clear selection"
-              >
+              <button onClick={clearAllSelections} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-
-              {/* Counts */}
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <span className="flex items-center gap-1 font-bold text-sm text-text-primary">
                   <HeartIcon filled className="w-4 h-4 text-rose-500" />
                   {selectedCount}
                 </span>
                 {editCount > 0 && (
-                  <span className="text-[11px] font-semibold text-orange-400 bg-orange-400/10 border border-orange-400/20 rounded-full px-2 py-0.5 flex-shrink-0">
-                    ✏️ {editCount}
-                  </span>
+                  <span className="text-[11px] font-semibold text-orange-400 bg-orange-400/10 border border-orange-400/20 rounded-full px-2 py-0.5 flex-shrink-0">✏️ {editCount}</span>
                 )}
               </div>
-
-              {/* Eye — preview selected */}
-              <button
-                onClick={() => openSelectionPreview(0)}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary"
-                aria-label="Preview selection"
-              >
+              <button onClick={() => openSelectionPreview(0)} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selection">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </button>
-
-              {/* Divider */}
               <div className="w-px h-6 bg-border/60 flex-shrink-0" />
-
-              {/* Submit / Resubmit / Locked */}
               {!submitted ? (
-                <button onClick={() => setShowSubmit(true)}
-                  className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">
-                  Submit →
-                </button>
+                <button onClick={() => setShowSubmit(true)} className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">Submit →</button>
               ) : canResubmit ? (
-                <button onClick={() => setShowSubmit(true)}
-                  className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">
-                  Resubmit ↺
-                </button>
+                <button onClick={() => setShowSubmit(true)} className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">Resubmit ↺</button>
               ) : (
-                <div className="text-xs text-muted font-semibold px-3 py-2 rounded-xl bg-border/40 whitespace-nowrap flex-shrink-0">
-                  🔒 Locked
-                </div>
+                <div className="text-xs text-muted font-semibold px-3 py-2 rounded-xl bg-border/40 whitespace-nowrap flex-shrink-0">🔒 Locked</div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Success modal (shown after submit) ─────────────── */}
+      {/* ── Success modal ───────────────────────────────────── */}
       {showSuccessModal && (
         <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center px-4">
           <div className="bg-card border border-border rounded-3xl p-7 w-full max-w-sm text-center space-y-5">
@@ -786,12 +827,14 @@ export default function ClientGalleryPage() {
                 <p className="text-accent font-bold text-xl">{countdown}</p>
               </div>
             )}
-            <button
-              onClick={() => setShowSuccessModal(false)}
-              className="w-full bg-accent text-bg font-bold py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all"
-            >
-              Close — Browse Gallery
-            </button>
+            <div className="space-y-2">
+              <button onClick={() => setShowSuccessModal(false)} className="w-full bg-accent text-bg font-bold py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all">
+                Close — Browse Gallery
+              </button>
+              <button onClick={() => { setShowSuccessModal(false); router.push(`/studio/gallery/${token}`) }} className="w-full text-sm text-muted hover:text-text-primary transition-colors py-2">
+                ← Back to My Gallery
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -809,18 +852,8 @@ export default function ClientGalleryPage() {
                 : 'After submitting, you can update your selection within 12 hours.'}
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowSubmit(false)}
-                disabled={submitting}
-                className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors"
-              >
-                Go back
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
+              <button onClick={() => setShowSubmit(false)} disabled={submitting} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Go back</button>
+              <button onClick={handleSubmit} disabled={submitting} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50">
                 {submitting ? 'Submitting…' : 'Confirm'}
               </button>
             </div>
@@ -830,101 +863,41 @@ export default function ClientGalleryPage() {
 
       {/* ── Swipeable selection preview modal ──────────────── */}
       {showSelectionPreview && selectedPhotos.length > 0 && (
-        <div
-          className="fixed inset-0 z-[70] bg-black/95 flex flex-col"
-          onClick={() => setShowSelectionPreview(false)}
-        >
-          {/* Header */}
+        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => setShowSelectionPreview(false)}>
           <div className="flex items-center justify-between px-4 pt-safe pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <div className="text-white/70 text-sm font-semibold">
-              {selectionPreviewIdx + 1} / {selectedPhotos.length}
-            </div>
+            <div className="text-white/70 text-sm font-semibold">{selectionPreviewIdx + 1} / {selectedPhotos.length}</div>
             <div className="text-white font-bold text-base">Selected Photos</div>
-            <button
-              onClick={() => setShowSelectionPreview(false)}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors"
-            >
+            <button onClick={() => setShowSelectionPreview(false)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
               <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-
-          {/* Main photo + arrow controls */}
-          <div
-            className="flex-1 flex items-center justify-center overflow-hidden relative"
-            onTouchStart={handleSwipeStart}
-            onTouchEnd={e => handleSwipeEnd(e, selectedPhotos.length)}
-            onClick={e => e.stopPropagation()}
-          >
-            <img
-              key={selectedPhotos[selectionPreviewIdx]?.fileId}
-              src={selectedPhotos[selectionPreviewIdx]?.r2PreviewUrl ?? ''}
-              alt=""
-              className="max-h-full max-w-full object-contain select-none"
-              draggable={false}
-            />
-
-            {/* Left arrow */}
+          <div className="flex-1 flex items-center justify-center overflow-hidden relative" onTouchStart={handleSwipeStart} onTouchEnd={e => handleSwipeEnd(e, selectedPhotos.length)} onClick={e => e.stopPropagation()}>
+            <img key={selectedPhotos[selectionPreviewIdx]?.fileId} src={selectedPhotos[selectionPreviewIdx]?.r2PreviewUrl ?? ''} alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
             {selectionPreviewIdx > 0 && (
-              <button
-                onClick={() => setSelectionPreviewIdx(i => i - 1)}
-                className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20"
-                aria-label="Previous photo"
-              >
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                </svg>
+              <button onClick={() => setSelectionPreviewIdx(i => i - 1)} className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20" aria-label="Previous photo">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
               </button>
             )}
-
-            {/* Right arrow */}
             {selectionPreviewIdx < selectedPhotos.length - 1 && (
-              <button
-                onClick={() => setSelectionPreviewIdx(i => i + 1)}
-                className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20"
-                aria-label="Next photo"
-              >
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                </svg>
+              <button onClick={() => setSelectionPreviewIdx(i => i + 1)} className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20" aria-label="Next photo">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
               </button>
             )}
           </div>
-
-          {/* Edit badge overlay */}
           {selectedPhotos[selectionPreviewIdx]?.editingRequired && (
-            <div className="absolute top-20 left-4 bg-orange-500/90 text-white text-xs font-bold px-2.5 py-1 rounded-full pointer-events-none">
-              ✏️ Edit requested
-            </div>
+            <div className="absolute top-20 left-4 bg-orange-500/90 text-white text-xs font-bold px-2.5 py-1 rounded-full pointer-events-none">✏️ Edit requested</div>
           )}
-
-          {/* Thumbnail strip */}
-          <div
-            className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide"
-            onClick={e => e.stopPropagation()}
-          >
+          <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
             {selectedPhotos.map((photo, idx) => (
-              <button
-                key={photo.fileId}
-                onClick={() => setSelectionPreviewIdx(idx)}
-                className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${
-                  idx === selectionPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'
-                }`}
-              >
-                <img
-                  src={photo.r2PreviewUrl ?? ''}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-                {photo.editingRequired && (
-                  <div className="absolute top-0.5 right-0.5 w-3.5 h-3.5 bg-orange-500 rounded-full" />
-                )}
+              <button key={photo.fileId} onClick={() => setSelectionPreviewIdx(idx)}
+                className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${idx === selectionPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'}`}>
+                <img src={photo.r2PreviewUrl ?? ''} alt="" className="w-full h-full object-cover" />
+                {photo.editingRequired && <div className="absolute top-0.5 right-0.5 w-3.5 h-3.5 bg-orange-500 rounded-full" />}
               </button>
             ))}
           </div>
-
-          {/* Swipe hint */}
           {selectedPhotos.length > 1 && (
             <div className="absolute bottom-[90px] inset-x-0 flex justify-center pointer-events-none">
               <span className="text-white/30 text-xs">← swipe to browse →</span>
@@ -933,5 +906,97 @@ export default function ClientGalleryPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Root page component ────────────────────────────────────────────────────────
+
+function ClientGalleryInner() {
+  const { token } = useParams<{ token: string }>()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const activeProjectId = searchParams.get('event')
+
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState<string | null>(null)
+  const [clientName, setClientName]   = useState('')
+  const [studioName, setStudioName]   = useState('')
+  const [events, setEvents]           = useState<EventOverview[]>([])
+  const [totalLoved, setTotalLoved]   = useState(0)
+  const [totalEdit, setTotalEdit]     = useState(0)
+  const [totalSubmitted, setTotalSubmitted] = useState(0)
+
+  const loadOverview = useCallback(async () => {
+    setLoading(true)
+    const res = await fetch(`/studio/api/client/gallery/${token}`)
+    if (res.status === 401 || res.status === 403) {
+      router.replace(`/studio/otp?t=${token}`)
+      return
+    }
+    if (res.status === 410) {
+      setError('This gallery link has expired. Please contact your photographer.')
+      setLoading(false)
+      return
+    }
+    const data = await res.json()
+    if (!data.success) {
+      setError('Could not load your gallery. Please try again.')
+      setLoading(false)
+      return
+    }
+    setClientName(data.data.clientName)
+    setStudioName(data.data.studio?.name ?? '')
+    setEvents(data.data.events)
+    setTotalLoved(data.data.totalLoved)
+    setTotalEdit(data.data.totalEdit)
+    setTotalSubmitted(data.data.totalSubmitted)
+    setLoading(false)
+  }, [token, router])
+
+  useEffect(() => {
+    if (!activeProjectId) loadOverview()
+  }, [activeProjectId, loadOverview])
+
+  if (activeProjectId) {
+    return <EventGalleryView token={token} projectId={activeProjectId} />
+  }
+
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+
+  if (error) return (
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="text-center space-y-4">
+        <div className="text-4xl">🔗</div>
+        <div className="text-text-primary font-semibold">{error}</div>
+      </div>
+    </div>
+  )
+
+  return (
+    <GalleryOverview
+      events={events}
+      clientName={clientName}
+      studioName={studioName}
+      totalLoved={totalLoved}
+      totalEdit={totalEdit}
+      totalSubmitted={totalSubmitted}
+      token={token}
+    />
+  )
+}
+
+export default function ClientGalleryPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <ClientGalleryInner />
+    </Suspense>
   )
 }
