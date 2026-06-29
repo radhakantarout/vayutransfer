@@ -6,17 +6,19 @@ import type { StudioUser } from '@/types/studio'
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password } = await req.json()
+    const { email: rawEmail, password } = await req.json()
 
-    if (!email || !password) {
+    if (!rawEmail || !password) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
+
+    const email = rawEmail.trim().toLowerCase()
 
     // Platform Owner — credentials are env-only, never in DB
     const ownerEmail = process.env.PLATFORM_OWNER_EMAIL
     const ownerHash  = process.env.PLATFORM_OWNER_PASSWORD_HASH
 
-    if (email === ownerEmail && ownerHash) {
+    if (ownerEmail && email === ownerEmail.toLowerCase() && ownerHash) {
       const valid = await bcrypt.compare(password, ownerHash)
       if (!valid) {
         return NextResponse.json({ success: false, error: 'INVALID_CREDENTIALS' }, { status: 401 })

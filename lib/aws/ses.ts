@@ -330,7 +330,64 @@ export async function sendStudioCredentialsEmail(
         Subject: { Data: `Your VayuStudio is ready — ${studioName}` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
-          Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nYour login email: ${email}\n\nSet your password and sign in: ${setupUrl}`, Charset: 'UTF-8' },
+          Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nYour login email: ${email}\n\nSign in here: ${setupUrl}`, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}
+
+export async function sendOwnerStudioCreatedEmail(
+  to: string,
+  studioName: string,
+  adminName: string,
+  adminEmail: string
+): Promise<void> {
+  const now = new Date().toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata',
+  })
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Studio Created</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:32px;">Platform Owner — Studio Created</div>
+
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;color:#E0EAF8;">Studio successfully created ✓</h2>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+      ${[
+        ['Studio Name', studioName],
+        ['Admin Name',  adminName],
+        ['Admin Email', adminEmail],
+        ['Created At',  now],
+      ].map(([label, value]) => `
+      <tr>
+        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:120px;border-bottom:1px solid #1E2D45;">${label}</td>
+        <td style="padding:10px 0;font-size:14px;font-weight:500;border-bottom:1px solid #1E2D45;">${value}</td>
+      </tr>`).join('')}
+    </table>
+
+    <p style="color:#5A7090;font-size:13px;margin:0;">
+      The studio admin has been sent their welcome email with a login link.
+      Their account is active and ready to use.
+    </p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuStudio <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: `Studio created — ${studioName} (${adminEmail})` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: `Studio created\n\nStudio: ${studioName}\nAdmin: ${adminName}\nEmail: ${adminEmail}\nCreated: ${now}`, Charset: 'UTF-8' },
         },
       },
     })
