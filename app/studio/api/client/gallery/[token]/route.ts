@@ -35,8 +35,13 @@ export async function GET(
 
     const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId)
 
+    // If admin shared only specific photos, filter to those IDs
+    const sharedSet = project.sharedFileIds && project.sharedFileIds.length > 0
+      ? new Set(project.sharedFileIds)
+      : null
+
     const readyFiles = files
-      .filter((f) => f.processingStatus === 'READY')
+      .filter((f) => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
       .sort((a, b) => a.displayOrder - b.displayOrder)
 
     // Fallback to presigned S3 view URL when R2 preview not yet generated (dev / pre-Lambda)

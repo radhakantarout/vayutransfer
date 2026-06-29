@@ -49,9 +49,14 @@ type SelectionItem = { selection: Selection; file: MediaFile }
 interface Props {
   project: StudioProject
   onUpdated: () => void
+  // Cross-event selection (controlled from layout)
+  selectedIds: Set<string>
+  onSelectionChange: (ids: Set<string>) => void
+  onFilesLoaded: (files: MediaFile[]) => void
+  refreshTrigger?: number
 }
 
-export default function EventSection({ project, onUpdated }: Props) {
+export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger }: Props) {
   const pathname = usePathname()
 
   // ── Photo grid ────────────────────────────────────────────
@@ -63,13 +68,13 @@ export default function EventSection({ project, onUpdated }: Props) {
   const [sharing, setSharing]       = useState(false)
   const [copied, setCopied]         = useState(false)
   const [showShareSetup, setShowShareSetup] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
   const [selMin, setSelMin]         = useState(project.selectionMin ?? 0)
   const [selMax, setSelMax]         = useState(project.selectionMax ?? 0)
   const [uploadOpen, setUploadOpen]       = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
   const [zoomLevel, setZoomLevel]       = useState(6)
-  const [gridSelected, setGridSelected] = useState<Set<string>>(new Set())
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
@@ -124,11 +129,12 @@ export default function EventSection({ project, onUpdated }: Props) {
   // ── Files ─────────────────────────────────────────────────
   const loadFiles = useCallback(async () => {
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files`).then(r => r.json())
-    if (res.success) setFiles(res.data)
+    if (res.success) { setFiles(res.data); onFilesLoaded(res.data) }
     setLoading(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.projectId])
 
-  useEffect(() => { loadFiles() }, [loadFiles])
+  useEffect(() => { loadFiles() }, [loadFiles, refreshTrigger])
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
 
   // Upload speed tracking
@@ -179,25 +185,29 @@ export default function EventSection({ project, onUpdated }: Props) {
         if (r.left < selR && r.right > selL && r.top < selB && r.bottom > selT)
           toSelect.add((el as HTMLElement).dataset.fileid!)
       })
-      if (toSelect.size > 0)
-        setGridSelected(prev => { const n = new Set(prev); toSelect.forEach(id => n.add(id)); return n })
+      if (toSelect.size > 0) {
+        const next = new Set(selectedIds)
+        toSelect.forEach(id => next.add(id))
+        onSelectionChange(next)
+      }
     }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Keyboard navigation for admin photo preview
   useEffect(() => {
     if (!showAdminPreview) return
-    const selectedPhotos = files.filter(f => gridSelected.has(f.fileId))
+    const selPhotos = files.filter(f => selectedIds.has(f.fileId))
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(selectedPhotos.length - 1, i + 1))
+      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(selPhotos.length - 1, i + 1))
       if (e.key === 'Escape')     setShowAdminPreview(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [showAdminPreview, files, gridSelected])
+  }, [showAdminPreview, files, selectedIds])
 
   const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || (e.target as Element).closest('[data-fileid]')) return
@@ -293,14 +303,16 @@ export default function EventSection({ project, onUpdated }: Props) {
   }
 
   const togglePhoto = (fileId: string) => {
-    setGridSelected(prev => { const n = new Set(prev); n.has(fileId) ? n.delete(fileId) : n.add(fileId); return n })
+    const next = new Set(selectedIds)
+    next.has(fileId) ? next.delete(fileId) : next.add(fileId)
+    onSelectionChange(next)
   }
 
   const deleteFiles = async (fileIds: string[]) => {
     if (!fileIds.length) return
     setDeleting(true)
     await Promise.all(fileIds.map(fid => fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })))
-    setDeleteMode(null); setGridSelected(new Set()); setDeleting(false)
+    setDeleteMode(null); onSelectionChange(new Set()); setDeleting(false)
     await loadFiles(); onUpdated()
   }
 
@@ -342,14 +354,24 @@ export default function EventSection({ project, onUpdated }: Props) {
   }
 
   const generateShareLink = async () => {
+    if (selectedIds.size === 0) {
+      setShareError('Please select at least one photo to share')
+      return
+    }
+    setShareError(null)
     setSharing(true)
     const hasRange = selMax > 0
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiryDays: 30, ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}) }),
+      body: JSON.stringify({
+        expiryDays: 30,
+        ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
+        includedFileIds: Array.from(selectedIds),
+      }),
     }).then(r => r.json())
     setSharing(false); setShowShareSetup(false)
     if (res.success) setShareUrl(res.data.shareUrl)
+    else setShareError(res.message ?? 'Failed to generate link')
   }
 
   const copyLink = async () => {
@@ -378,14 +400,14 @@ export default function EventSection({ project, onUpdated }: Props) {
     ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
     : new Map()
 
-  const selectedCount   = gridSelected.size
-  const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(gridSelected)
+  const selectedCount   = selectedIds.size
+  const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(selectedIds)
 
   const clientFinalizedInBatch = clientSelections
     ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
     : 0
 
-  const selectedPhotosForPreview = files.filter(f => gridSelected.has(f.fileId))
+  const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
 
   // Face index derived
   const isIndexing = !!faceStatus?.activeJob
@@ -550,6 +572,12 @@ export default function EventSection({ project, onUpdated }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             </button>
+            <button onClick={loadFiles} title="Refresh photos"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
             <button onClick={generatePreviews} disabled={backfilling} title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors">
               {backfilling
@@ -612,6 +640,12 @@ export default function EventSection({ project, onUpdated }: Props) {
               </div>
               <span className="text-xs text-muted">photos</span>
             </div>
+            {selectedIds.size > 0 ? (
+              <p className="text-[11px] text-accent font-medium">{selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''} selected — client will only see these</p>
+            ) : (
+              <p className="text-[11px] text-yellow-500">Select photos in the grid first to share specific photos with the client</p>
+            )}
+            {shareError && <p className="text-[11px] text-red-500">{shareError}</p>}
             <div className="flex gap-2">
               <button onClick={() => { setSelMin(0); setSelMax(0); generateShareLink() }} disabled={sharing}
                 className="text-xs text-muted border border-border px-3 py-1.5 rounded-lg hover:bg-border/40 transition-colors disabled:opacity-50">
@@ -728,7 +762,7 @@ export default function EventSection({ project, onUpdated }: Props) {
                     {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
                   </span>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <button onClick={() => setGridSelected(new Set(displayFiles.map(f => f.fileId)))}
+                    <button onClick={() => onSelectionChange(new Set(displayFiles.map(f => f.fileId)))}
                       className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
                       Select All
                     </button>
@@ -765,7 +799,7 @@ export default function EventSection({ project, onUpdated }: Props) {
                     style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
                     onMouseDown={handleGridMouseDown}>
                     {displayFiles.map(f => {
-                      const isSelected  = gridSelected.has(f.fileId)
+                      const isSelected  = selectedIds.has(f.fileId)
                       const isFailed    = !['PROCESSING', 'READY'].includes(f.processingStatus)
                       const editComment = editCommentMap.get(f.fileId)
                       return (
@@ -1041,7 +1075,7 @@ export default function EventSection({ project, onUpdated }: Props) {
             <div className="flex items-center gap-1 px-2 py-2.5">
 
               {/* × clear */}
-              <button onClick={() => setGridSelected(new Set())}
+              <button onClick={() => onSelectionChange(new Set())}
                 className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1072,7 +1106,7 @@ export default function EventSection({ project, onUpdated }: Props) {
               </button>
 
               {/* 📤 Share (opens share setup) */}
-              <button onClick={() => { setShowShareSetup(true); setGridSelected(new Set()) }}
+              <button onClick={() => { setShowShareSetup(true) }}
                 className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
                 <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
