@@ -136,14 +136,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (saved === 'false') setSidebarOpen(false)
   }, [])
 
-  // Initialise selection from URL on first load
+  // Sync sidebar selection to URL — runs on every navigation so "recent activity" links auto-select
   useEffect(() => {
-    const match = pathname.match(/\/studio\/dashboard\/projects\/([^/]+)$/)
+    const match = pathname.match(/\/studio\/dashboard\/projects\/([^/]+)/)
     if (match && match[1] && match[1] !== 'new') {
-      setSelectedIds([match[1]])
+      setSelectedIds(prev => prev.includes(match[1]) ? prev : [match[1]])
+    } else if (pathname === '/studio/dashboard') {
+      setSelectedIds([])
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // mount only
+  }, [pathname])
 
   const toggleSidebar = () => {
     setSidebarOpen(v => { localStorage.setItem(SIDEBAR_KEY, String(!v)); return !v })

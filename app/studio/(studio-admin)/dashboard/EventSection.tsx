@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import QRCode from 'qrcode'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import EditEventModal from './EditEventModal'
 
@@ -24,14 +25,12 @@ const EVENT_ICON: Record<string, string> = {
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
-
 function fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
-
 function fmtEta(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}s`
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
@@ -39,6 +38,13 @@ function fmtEta(sec: number): string {
 }
 
 type DeleteMode = 'selected' | 'all' | null
+type ActiveTab  = 'photos' | 'faces' | 'selections'
+
+interface FaceStatus {
+  totalPhotos: number; indexedPhotos: number; pendingPhotos: number
+  activeJob: { jobId: string; status: string } | null; lastCompletedAt: string | null
+}
+type SelectionItem = { selection: Selection; file: MediaFile }
 
 interface Props {
   project: StudioProject
@@ -46,6 +52,9 @@ interface Props {
 }
 
 export default function EventSection({ project, onUpdated }: Props) {
+  const pathname = usePathname()
+
+  // ── Photo grid ────────────────────────────────────────────
   const [files, setFiles]           = useState<MediaFile[]>([])
   const [loading, setLoading]       = useState(true)
   const [uploads, setUploads]       = useState<UploadItem[]>([])
@@ -59,23 +68,51 @@ export default function EventSection({ project, onUpdated }: Props) {
   const [uploadOpen, setUploadOpen]       = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
-
-  // Photo grid
   const [zoomLevel, setZoomLevel]       = useState(6)
   const [gridSelected, setGridSelected] = useState<Set<string>>(new Set())
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const [backfilling, setBackfilling]   = useState(false)
+  const [backfillMsg, setBackfillMsg]   = useState<string | null>(null)
 
-  // Client selection filter
+  // Client selection filter (used for heart/edit icons in header when received)
   type ClientSel = { selection: Selection; file: MediaFile }
   const [clientSelections, setClientSelections] = useState<ClientSel[] | null>(null)
   const [selLoading, setSelLoading]             = useState(false)
   const [viewFilter, setViewFilter]             = useState<'all' | 'loved' | 'edit'>('all')
 
-  // Generate Previews (backfill R2)
-  const [backfilling, setBackfilling]     = useState(false)
-  const [backfillMsg, setBackfillMsg]     = useState<string | null>(null)
+  // ── Tabs ─────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    if (pathname.endsWith('/faces'))      return 'faces'
+    if (pathname.endsWith('/selections')) return 'selections'
+    return 'photos'
+  })
+
+  // ── Face Index tab ────────────────────────────────────────
+  const [faceStatus, setFaceStatus]         = useState<FaceStatus | null>(null)
+  const [faceLoading, setFaceLoading]       = useState(false)
+  const [faceTriggering, setFaceTriggering] = useState(false)
+  const [faceError, setFaceError]           = useState<string | null>(null)
+  const [faceFeatureOff, setFaceFeatureOff] = useState(false)
+  const [qrExpiry, setQrExpiry]           = useState<12 | 24 | 48>(24)
+  const [qrGenerating, setQrGenerating]   = useState(false)
+  const [qrDataUrl, setQrDataUrl]         = useState<string | null>(null)
+  const [qrGuestUrl, setQrGuestUrl]       = useState<string | null>(null)
+  const [qrExpiresAt, setQrExpiresAt]     = useState<string | null>(null)
+  const [qrCopied, setQrCopied]           = useState(false)
+
+  // ── Selections tab ────────────────────────────────────────
+  const [selItems, setSelItems]               = useState<SelectionItem[] | null>(null)
+  const [selItemsLoading, setSelItemsLoading] = useState(false)
+  const [printUrl, setPrintUrl]               = useState<string | null>(null)
+  const [printCopied, setPrintCopied]         = useState(false)
+  const [printGenerating, setPrintGenerating] = useState(false)
+
+  // ── Admin photo preview (for floating selection pill) ─────
+  const [showAdminPreview, setShowAdminPreview] = useState(false)
+  const [adminPreviewIdx, setAdminPreviewIdx]   = useState(0)
+  const adminTouchStartX = useRef<number>(0)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
@@ -84,6 +121,7 @@ export default function EventSection({ project, onUpdated }: Props) {
   })
   const speedRef = useRef<{ bytes: number; time: number }>({ bytes: 0, time: 0 })
 
+  // ── Files ─────────────────────────────────────────────────
   const loadFiles = useCallback(async () => {
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files`).then(r => r.json())
     if (res.success) setFiles(res.data)
@@ -91,7 +129,6 @@ export default function EventSection({ project, onUpdated }: Props) {
   }, [project.projectId])
 
   useEffect(() => { loadFiles() }, [loadFiles])
-
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
 
   // Upload speed tracking
@@ -108,7 +145,6 @@ export default function EventSection({ project, onUpdated }: Props) {
     }
   }, [uploads])
 
-  // Auto-dismiss upload panel 3s after all files finish
   useEffect(() => {
     if (uploads.length === 0) return
     const allDone = uploads.every(u => u.status === 'done' || u.status === 'error')
@@ -117,38 +153,26 @@ export default function EventSection({ project, onUpdated }: Props) {
     return () => clearTimeout(t)
   }, [uploads])
 
-  // Global mouse handlers for rubber-band drag select
+  // Rubber-band drag select
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragState.current.active || !gridRef.current) return
       const gr = gridRef.current.getBoundingClientRect()
-      const cx = e.clientX - gr.left
-      const cy = e.clientY - gr.top
+      const cx = e.clientX - gr.left; const cy = e.clientY - gr.top
       const { startX, startY } = dragState.current
       if (Math.abs(cx - startX) > 4 || Math.abs(cy - startY) > 4) dragState.current.moved = true
       if (!dragState.current.moved) return
-      setDragRect({
-        left: Math.min(startX, cx), top: Math.min(startY, cy),
-        width: Math.abs(cx - startX), height: Math.abs(cy - startY),
-      })
+      setDragRect({ left: Math.min(startX, cx), top: Math.min(startY, cy), width: Math.abs(cx - startX), height: Math.abs(cy - startY) })
     }
-
     const onUp = (e: MouseEvent) => {
       if (!dragState.current.active) return
       const { startX, startY, moved } = dragState.current
-      dragState.current.active = false
-      dragState.current.moved  = false
-      setDragRect(null)
+      dragState.current.active = false; dragState.current.moved = false; setDragRect(null)
       if (!moved || !gridRef.current) return
-
       const gr = gridRef.current.getBoundingClientRect()
-      const ex = e.clientX - gr.left
-      const ey = e.clientY - gr.top
-      const selL = Math.min(startX, ex) + gr.left
-      const selT = Math.min(startY, ey) + gr.top
-      const selR = Math.max(startX, ex) + gr.left
-      const selB = Math.max(startY, ey) + gr.top
-
+      const ex = e.clientX - gr.left; const ey = e.clientY - gr.top
+      const selL = Math.min(startX, ex) + gr.left; const selT = Math.min(startY, ey) + gr.top
+      const selR = Math.max(startX, ex) + gr.left; const selB = Math.max(startY, ey) + gr.top
       const toSelect = new Set<string>()
       gridRef.current.querySelectorAll('[data-fileid]').forEach(el => {
         const r = el.getBoundingClientRect()
@@ -158,11 +182,22 @@ export default function EventSection({ project, onUpdated }: Props) {
       if (toSelect.size > 0)
         setGridSelected(prev => { const n = new Set(prev); toSelect.forEach(id => n.add(id)); return n })
     }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
+
+  // Keyboard navigation for admin photo preview
+  useEffect(() => {
+    if (!showAdminPreview) return
+    const selectedPhotos = files.filter(f => gridSelected.has(f.fileId))
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
+      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(selectedPhotos.length - 1, i + 1))
+      if (e.key === 'Escape')     setShowAdminPreview(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAdminPreview, files, gridSelected])
 
   const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || (e.target as Element).closest('[data-fileid]')) return
@@ -171,6 +206,66 @@ export default function EventSection({ project, onUpdated }: Props) {
     e.preventDefault()
   }
 
+  // ── Face Index functions ───────────────────────────────────
+  const loadFaceStatus = useCallback(async () => {
+    setFaceLoading(true); setFaceError(null)
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces`).then(r => r.json())
+      if (res.success) setFaceStatus(res.data)
+    } finally {
+      setFaceLoading(false)
+    }
+  }, [project.projectId])
+
+  // Poll while face job is active
+  useEffect(() => {
+    if (activeTab !== 'faces' || !faceStatus?.activeJob) return
+    const t = setInterval(loadFaceStatus, 6000)
+    return () => clearInterval(t)
+  }, [activeTab, faceStatus?.activeJob, loadFaceStatus])
+
+  const triggerFaceIndexing = async () => {
+    setFaceTriggering(true); setFaceError(null)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, { method: 'POST' }).then(r => r.json())
+    setFaceTriggering(false)
+    if (!res.success) {
+      if (res.error === 'FEATURE_DISABLED') { setFaceFeatureOff(true); return }
+      setFaceError(res.message ?? res.error); return
+    }
+    setFaceStatus(prev => prev ? { ...prev, activeJob: { jobId: res.data.jobId, status: 'PENDING' } } : prev)
+  }
+
+  const generateQr = async () => {
+    setQrGenerating(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/guest-token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiryHours: qrExpiry }),
+    }).then(r => r.json())
+    setQrGenerating(false)
+    if (!res.success) { setFaceError(res.message ?? 'Could not generate QR code'); return }
+    const { qrUrl, expiresAt } = res.data
+    setQrGuestUrl(qrUrl); setQrExpiresAt(expiresAt)
+    const dataUrl = await QRCode.toDataURL(qrUrl, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+    setQrDataUrl(dataUrl)
+  }
+
+  // ── Selections tab functions ───────────────────────────────
+  const loadSelItems = useCallback(async () => {
+    if (selItems !== null) return
+    setSelItemsLoading(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/selections`).then(r => r.json())
+    if (res.success) setSelItems(res.data)
+    setSelItemsLoading(false)
+  }, [project.projectId, selItems])
+
+  const generatePrintLink = async () => {
+    setPrintGenerating(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/print-link`, { method: 'POST' }).then(r => r.json())
+    setPrintGenerating(false)
+    if (res.success) setPrintUrl(res.data.printUrl)
+  }
+
+  // ── Client selections filter (header buttons) ─────────────
   const loadSelections = async () => {
     if (clientSelections !== null) return
     setSelLoading(true)
@@ -181,30 +276,20 @@ export default function EventSection({ project, onUpdated }: Props) {
 
   const toggleFilter = async (filter: 'loved' | 'edit') => {
     if (viewFilter === filter) { setViewFilter('all'); return }
-    await loadSelections()
-    setViewFilter(filter)
+    await loadSelections(); setViewFilter(filter)
   }
 
   const generatePreviews = async () => {
-    setBackfilling(true)
-    setBackfillMsg(null)
+    setBackfilling(true); setBackfillMsg(null)
     try {
-      const res = await fetch(
-        `/studio/api/admin/projects/${project.projectId}/backfill-previews`,
-        { method: 'POST' }
-      ).then(r => r.json())
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/backfill-previews`, { method: 'POST' }).then(r => r.json())
       if (res.success) {
-        const { queued, message } = res.data
+        const { queued } = res.data
         setBackfillMsg(queued === 0 ? '✓ All previews up to date' : `✓ Generating ${queued} previews…`)
         if (queued > 0) setTimeout(loadFiles, 8000)
-      } else {
-        setBackfillMsg('Failed to queue previews')
-      }
-    } catch {
-      setBackfillMsg('Network error')
-    }
-    setBackfilling(false)
-    setTimeout(() => setBackfillMsg(null), 5000)
+      } else setBackfillMsg('Failed to queue previews')
+    } catch { setBackfillMsg('Network error') }
+    setBackfilling(false); setTimeout(() => setBackfillMsg(null), 5000)
   }
 
   const togglePhoto = (fileId: string) => {
@@ -214,14 +299,9 @@ export default function EventSection({ project, onUpdated }: Props) {
   const deleteFiles = async (fileIds: string[]) => {
     if (!fileIds.length) return
     setDeleting(true)
-    await Promise.all(
-      fileIds.map(fid => fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' }))
-    )
-    setDeleteMode(null)
-    setGridSelected(new Set())
-    setDeleting(false)
-    await loadFiles()
-    onUpdated()
+    await Promise.all(fileIds.map(fid => fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })))
+    setDeleteMode(null); setGridSelected(new Set()); setDeleting(false)
+    await loadFiles(); onUpdated()
   }
 
   const uploadFile = async (file: File, itemId: string) => {
@@ -257,11 +337,8 @@ export default function EventSection({ project, onUpdated }: Props) {
 
   const handleFiles = (selected: FileList | null) => {
     if (!selected) return
-    const items: UploadItem[] = Array.from(selected).map(f => ({
-      id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0,
-    }))
-    setUploads(prev => [...prev, ...items])
-    items.forEach(item => uploadFile(item.file, item.id))
+    const items: UploadItem[] = Array.from(selected).map(f => ({ id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0 }))
+    setUploads(prev => [...prev, ...items]); items.forEach(item => uploadFile(item.file, item.id))
   }
 
   const generateShareLink = async () => {
@@ -277,10 +354,17 @@ export default function EventSection({ project, onUpdated }: Props) {
 
   const copyLink = async () => {
     if (!shareUrl) return
-    await navigator.clipboard.writeText(shareUrl)
-    setCopied(true); setTimeout(() => setCopied(false), 2000)
+    await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2000)
   }
 
+  // ── Tab switch ────────────────────────────────────────────
+  const switchTab = (tab: ActiveTab) => {
+    setActiveTab(tab)
+    if (tab === 'faces' && !faceStatus && !faceLoading) loadFaceStatus()
+    if (tab === 'selections') loadSelItems()
+  }
+
+  // ── Derived values ────────────────────────────────────────
   const lovedCount = clientSelections?.length ?? null
   const editCount  = clientSelections?.filter(s => s.selection.editingRequired).length ?? null
 
@@ -297,31 +381,32 @@ export default function EventSection({ project, onUpdated }: Props) {
   const selectedCount   = gridSelected.size
   const deleteTargetIds = deleteMode === 'all' ? displayFiles.map(f => f.fileId) : Array.from(gridSelected)
 
-  // How many files in the delete batch were finalized by the client
   const clientFinalizedInBatch = clientSelections
     ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
     : 0
 
+  const selectedPhotosForPreview = files.filter(f => gridSelected.has(f.fileId))
+
+  // Face index derived
+  const isIndexing = !!faceStatus?.activeJob
+  const isReady    = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) === 0
+  const hasPartial = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) > 0
+  const neverRun   = !isIndexing && (faceStatus?.indexedPhotos ?? 0) === 0
+
   return (
     <>
       {editOpen && (
-        <EditEventModal
-          project={project}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => { setEditOpen(false); onUpdated() }}
-        />
+        <EditEventModal project={project} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onUpdated() }} />
       )}
 
-      {/* Delete confirmation modal */}
+      {/* ── Delete confirmation modal ───────────────────────── */}
       {deleteMode && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <div className="text-center">
               <div className="text-4xl mb-3">{clientFinalizedInBatch > 0 ? '⚠️' : '🗑️'}</div>
               <h3 className="text-base font-bold text-text-primary">
-                {deleteMode === 'all'
-                  ? `Delete all ${files.length} photos?`
-                  : `Delete ${selectedCount} photo${selectedCount !== 1 ? 's' : ''}?`}
+                {deleteMode === 'all' ? `Delete all ${files.length} photos?` : `Delete ${selectedCount} photo${selectedCount !== 1 ? 's' : ''}?`}
               </h3>
               {clientFinalizedInBatch > 0 ? (
                 <div className="mt-2 space-y-2">
@@ -351,6 +436,67 @@ export default function EventSection({ project, onUpdated }: Props) {
         </div>
       )}
 
+      {/* ── Admin photo preview modal ───────────────────────── */}
+      {showAdminPreview && selectedPhotosForPreview.length > 0 && (
+        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => setShowAdminPreview(false)}>
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <span className="text-white/70 text-sm font-semibold">{adminPreviewIdx + 1} / {selectedPhotosForPreview.length}</span>
+            <span className="text-white font-bold text-base">Selected Photos</span>
+            <button onClick={() => setShowAdminPreview(false)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          {/* Main photo + arrows */}
+          <div className="flex-1 flex items-center justify-center overflow-hidden relative"
+            onTouchStart={e => { adminTouchStartX.current = e.touches[0].clientX }}
+            onTouchEnd={e => {
+              const diff = adminTouchStartX.current - e.changedTouches[0].clientX
+              if (Math.abs(diff) < 50) return
+              if (diff > 0) setAdminPreviewIdx(i => Math.min(selectedPhotosForPreview.length - 1, i + 1))
+              else setAdminPreviewIdx(i => Math.max(0, i - 1))
+            }}
+            onClick={e => e.stopPropagation()}>
+            <img key={selectedPhotosForPreview[adminPreviewIdx]?.fileId}
+              src={selectedPhotosForPreview[adminPreviewIdx]?.r2PreviewUrl ?? ''}
+              alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
+            {adminPreviewIdx > 0 && (
+              <button onClick={() => setAdminPreviewIdx(i => i - 1)}
+                className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                </svg>
+              </button>
+            )}
+            {adminPreviewIdx < selectedPhotosForPreview.length - 1 && (
+              <button onClick={() => setAdminPreviewIdx(i => i + 1)}
+                className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {/* Thumbnail strip */}
+          <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
+            {selectedPhotosForPreview.map((photo, idx) => (
+              <button key={photo.fileId} onClick={() => setAdminPreviewIdx(idx)}
+                className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${
+                  idx === adminPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'}`}>
+                <img src={photo.r2PreviewUrl ?? ''} alt="" className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+          {selectedPhotosForPreview.length > 1 && (
+            <div className="absolute bottom-[90px] inset-x-0 flex justify-center pointer-events-none">
+              <span className="text-white/30 text-xs">← swipe to browse →</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="border border-border rounded-2xl overflow-hidden bg-card">
 
         {/* ── Event header ──────────────────────────────────────── */}
@@ -374,32 +520,17 @@ export default function EventSection({ project, onUpdated }: Props) {
           <div className="flex items-center gap-2 flex-shrink-0">
             {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
               <>
-                {/* Loved photos filter */}
-                <button
-                  onClick={() => toggleFilter('loved')}
-                  disabled={selLoading}
-                  title="View photos loved by client"
+                <button onClick={() => toggleFilter('loved')} disabled={selLoading} title="View photos loved by client"
                   className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'loved'
-                      ? 'bg-rose-500 text-white shadow-sm'
-                      : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`}
-                >
+                    ${viewFilter === 'loved' ? 'bg-rose-500 text-white shadow-sm' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`}>
                   <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/>
                   </svg>
                   {lovedCount !== null ? lovedCount : selLoading ? '…' : ''}
                 </button>
-
-                {/* Edit-required filter */}
-                <button
-                  onClick={() => toggleFilter('edit')}
-                  disabled={selLoading}
-                  title="View photos needing edits"
+                <button onClick={() => toggleFilter('edit')} disabled={selLoading} title="View photos needing edits"
                   className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'edit'
-                      ? 'bg-orange-500 text-white shadow-sm'
-                      : 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'}`}
-                >
+                    ${viewFilter === 'edit' ? 'bg-orange-500 text-white shadow-sm' : 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'}`}>
                   <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                   </svg>
@@ -419,25 +550,15 @@ export default function EventSection({ project, onUpdated }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             </button>
-            {/* Generate Previews (R2 backfill) */}
-            <button
-              onClick={generatePreviews}
-              disabled={backfilling}
-              title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors relative"
-            >
-              {backfilling ? (
-                <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM9 3.75h6.75a3 3 0 013 3v10.5a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6.75a3 3 0 013-3H9z" />
-                </svg>
-              )}
+            <button onClick={generatePreviews} disabled={backfilling} title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors">
+              {backfilling
+                ? <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+                : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM9 3.75h6.75a3 3 0 013 3v10.5a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6.75a3 3 0 013-3H9z" />
+                  </svg>}
             </button>
-            {/* Toast message for backfill status */}
-            {backfillMsg && (
-              <span className="text-[10px] text-muted font-medium">{backfillMsg}</span>
-            )}
+            {backfillMsg && <span className="text-[10px] text-muted font-medium">{backfillMsg}</span>}
             <button onClick={() => setEditOpen(true)} title="Edit event"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -449,21 +570,19 @@ export default function EventSection({ project, onUpdated }: Props) {
 
         {/* ── Tab navigation ────────────────────────────────────── */}
         <div className="flex items-center gap-0 border-b border-border px-5">
-          <span className="text-xs font-semibold px-3 py-2.5 border-b-2 border-accent text-accent">
-            All Photos
-          </span>
-          <Link
-            href={`/studio/dashboard/projects/${project.projectId}/faces`}
-            className="text-xs font-semibold px-3 py-2.5 border-b-2 border-transparent text-muted hover:text-text-primary hover:border-border transition-colors"
-          >
-            Face Index ✨
-          </Link>
-          <Link
-            href={`/studio/dashboard/projects/${project.projectId}/selections`}
-            className="text-xs font-semibold px-3 py-2.5 border-b-2 border-transparent text-muted hover:text-text-primary hover:border-border transition-colors"
-          >
-            Selections
-          </Link>
+          {(['photos', 'faces', 'selections'] as ActiveTab[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => switchTab(tab)}
+              className={`text-xs font-semibold px-3 py-2.5 border-b-2 transition-colors ${
+                activeTab === tab
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-muted hover:text-text-primary hover:border-border'
+              }`}
+            >
+              {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : 'Selections'}
+            </button>
+          ))}
         </div>
 
         {/* ── Share setup panel ─────────────────────────────────── */}
@@ -506,82 +625,60 @@ export default function EventSection({ project, onUpdated }: Props) {
           </div>
         )}
 
-        {/* ── Share link result ─────────────────────────────────── */}
         {shareUrl && (
           <div className="px-5 py-3 border-b border-border bg-success/5 flex items-center gap-3">
             <div className="flex-1 text-xs text-success font-mono truncate">{shareUrl}</div>
-            <button onClick={copyLink}
-              className="text-xs bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0">
+            <button onClick={copyLink} className="text-xs bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0">
               {copied ? 'Copied!' : 'Copy'}
             </button>
           </div>
         )}
 
         {/* ── Upload zone ───────────────────────────────────────── */}
-        {uploadOpen && (
-          <div
-            className="mx-5 my-4 border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-accent/50 transition-colors"
+        {uploadOpen && activeTab === 'photos' && (
+          <div className="mx-5 my-4 border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-accent/50 transition-colors"
             onClick={() => fileInputRef.current?.click()}
             onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files) }}
-          >
+            onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files) }}>
             <div className="text-3xl mb-2">📸</div>
             <div className="text-sm font-semibold text-text-primary">Drop photos here or click to upload</div>
             <div className="text-xs text-muted mt-1">JPG, PNG, WEBP, MP4 · Max 10GB per file</div>
-            <input ref={fileInputRef} type="file" multiple accept="image/*,video/*" className="hidden"
-              onChange={e => handleFiles(e.target.files)} />
+            <input ref={fileInputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => handleFiles(e.target.files)} />
           </div>
         )}
 
         {/* ── Upload progress ───────────────────────────────────── */}
         {uploads.length > 0 && (() => {
-          const totalFiles  = uploads.length
-          const doneFiles   = uploads.filter(u => u.status === 'done').length
-          const errFiles    = uploads.filter(u => u.status === 'error').length
-          const totalBytes  = uploads.reduce((s, u) => s + u.file.size, 0)
-          const sentBytes   = uploads.reduce((s, u) => s + u.uploadedBytes, 0)
-          const overallPct  = totalBytes > 0 ? Math.round((sentBytes / totalBytes) * 100) : 0
-          const allDone     = doneFiles + errFiles === totalFiles
-          const eta         = uploadSpeed > 0 && !allDone ? (totalBytes - sentBytes) / uploadSpeed : 0
+          const totalFiles = uploads.length; const doneFiles = uploads.filter(u => u.status === 'done').length
+          const errFiles   = uploads.filter(u => u.status === 'error').length
+          const totalBytes = uploads.reduce((s, u) => s + u.file.size, 0)
+          const sentBytes  = uploads.reduce((s, u) => s + u.uploadedBytes, 0)
+          const overallPct = totalBytes > 0 ? Math.round((sentBytes / totalBytes) * 100) : 0
+          const allDone    = doneFiles + errFiles === totalFiles
+          const eta        = uploadSpeed > 0 && !allDone ? (totalBytes - sentBytes) / uploadSpeed : 0
           return (
             <div className="px-5 pb-3 space-y-2">
-              {/* Summary card */}
               <div className="bg-bg border border-border rounded-xl px-4 py-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-text-primary">
-                    {allDone
-                      ? `${doneFiles} file${doneFiles !== 1 ? 's' : ''} uploaded${errFiles > 0 ? ` · ${errFiles} failed` : ' ✓'}`
-                      : `Uploading ${doneFiles + 1} of ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`}
+                    {allDone ? `${doneFiles} file${doneFiles !== 1 ? 's' : ''} uploaded${errFiles > 0 ? ` · ${errFiles} failed` : ' ✓'}` : `Uploading ${doneFiles + 1} of ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`}
                   </span>
-                  <button
-                    onClick={() => setUploadExpanded(v => !v)}
-                    className="flex items-center gap-1 text-xs text-muted hover:text-text-primary transition-colors flex-shrink-0"
-                  >
+                  <button onClick={() => setUploadExpanded(v => !v)} className="flex items-center gap-1 text-xs text-muted hover:text-text-primary transition-colors flex-shrink-0">
                     <svg className={`w-3 h-3 transition-transform duration-200 ${uploadExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
                     Details
                   </button>
                 </div>
-
-                {!allDone && (
-                  <div className="h-1.5 bg-border rounded-full overflow-hidden">
-                    <div className="h-full bg-accent rounded-full transition-all duration-300" style={{ width: `${overallPct}%` }} />
-                  </div>
-                )}
-
+                {!allDone && <div className="h-1.5 bg-border rounded-full overflow-hidden"><div className="h-full bg-accent rounded-full transition-all duration-300" style={{ width: `${overallPct}%` }} /></div>}
                 <div className="flex items-center justify-between text-xs text-muted">
                   <span>{fmtBytes(sentBytes)} / {fmtBytes(totalBytes)}</span>
                   <div className="flex items-center gap-3">
-                    {!allDone && uploadSpeed > 0 && (
-                      <span>{fmtBytes(uploadSpeed)}/s{eta > 0 ? ` · ${fmtEta(eta)} left` : ''}</span>
-                    )}
+                    {!allDone && uploadSpeed > 0 && <span>{fmtBytes(uploadSpeed)}/s{eta > 0 ? ` · ${fmtEta(eta)} left` : ''}</span>}
                     {!allDone && <span>{overallPct}%</span>}
                   </div>
                 </div>
               </div>
-
-              {/* Per-file details (expandable) */}
               {uploadExpanded && (
                 <div className="space-y-1.5">
                   {uploads.map(u => (
@@ -592,11 +689,7 @@ export default function EventSection({ project, onUpdated }: Props) {
                           {u.status === 'error' ? (u.error ?? 'Error') : u.status === 'done' ? '✓ Done' : u.status === 'uploading' ? `${u.progress}%` : 'Queued'}
                         </span>
                       </div>
-                      {u.status === 'uploading' && (
-                        <div className="h-0.5 bg-border rounded-full overflow-hidden">
-                          <div className="h-full bg-accent rounded-full transition-all" style={{ width: `${u.progress}%` }} />
-                        </div>
-                      )}
+                      {u.status === 'uploading' && <div className="h-0.5 bg-border rounded-full overflow-hidden"><div className="h-full bg-accent rounded-full transition-all" style={{ width: `${u.progress}%` }} /></div>}
                     </div>
                   ))}
                 </div>
@@ -605,187 +698,391 @@ export default function EventSection({ project, onUpdated }: Props) {
           )
         })()}
 
-        {/* ── Photo grid ────────────────────────────────────────── */}
-        <div className="px-5 pb-5">
-          {loading ? (
-            <div className="flex justify-center py-8">
-              <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : files.length === 0 ? (
-            <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
-          ) : (
-            <>
-              {/* Active filter banner */}
-              {viewFilter !== 'all' && (
-                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
-                  ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
-                  {viewFilter === 'loved'
-                    ? <><svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg> Loved by client</>
-                    : <><svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg> Needs editing</>}
-                  <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
-                  <button onClick={() => setViewFilter('all')}
-                    className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">
-                    Clear ×
-                  </button>
-                </div>
-              )}
+        {/* ══ TAB CONTENT ══════════════════════════════════════════ */}
 
-              {/* Grid toolbar */}
-              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                <div className="flex items-center gap-2">
+        {/* ── All Photos tab ────────────────────────────────────── */}
+        {activeTab === 'photos' && (
+          <div className="px-5 pb-5">
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : files.length === 0 ? (
+              <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
+            ) : (
+              <>
+                {viewFilter !== 'all' && (
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
+                    ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
+                    {viewFilter === 'loved'
+                      ? <><svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg> Loved by client</>
+                      : <><svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg> Needs editing</>}
+                    <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
+                    <button onClick={() => setViewFilter('all')} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Clear ×</button>
+                  </div>
+                )}
+
+                {/* Grid toolbar */}
+                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                   <span className="text-xs font-semibold text-muted">
                     {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
                   </span>
-                  {selectedCount > 0 && (
-                    <span className="text-xs font-semibold text-accent bg-accent/10 px-2 py-0.5 rounded-full">
-                      {selectedCount} selected
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {selectedCount > 0 && (
-                    <>
-                      <button onClick={() => setGridSelected(new Set())}
-                        className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
-                        Clear
-                      </button>
-                      <button onClick={() => setDeleteMode('selected')}
-                        className="text-xs text-red-500 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-500/10 transition-colors">
-                        Delete {selectedCount}
-                      </button>
-                    </>
-                  )}
-                  <button onClick={() => setGridSelected(new Set(displayFiles.map(f => f.fileId)))}
-                    className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
-                    Select All
-                  </button>
-                  <button onClick={() => setDeleteMode('all')}
-                    className="text-xs text-red-500/60 hover:text-red-500 border border-border px-2 py-1 rounded-lg hover:border-red-500/30 hover:bg-red-500/5 transition-colors">
-                    Delete All
-                  </button>
-                  {/* Zoom slider */}
-                  <div className="flex items-center gap-1 ml-1">
-                    <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="Zoom out"
-                      className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
-                      </svg>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button onClick={() => setGridSelected(new Set(displayFiles.map(f => f.fileId)))}
+                      className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
+                      Select All
                     </button>
-                    <input
-                      type="range" min={2} max={10} value={zoomLevel}
-                      onChange={e => setZoomLevel(Number(e.target.value))}
-                      className="w-20 h-1 cursor-pointer accent-accent"
-                    />
-                    <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
-                      className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                      </svg>
+                    <button onClick={() => setDeleteMode('all')}
+                      className="text-xs text-red-500/60 hover:text-red-500 border border-border px-2 py-1 rounded-lg hover:border-red-500/30 hover:bg-red-500/5 transition-colors">
+                      Delete All
                     </button>
+                    {/* Zoom */}
+                    <div className="flex items-center gap-1 ml-1">
+                      <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="Zoom out"
+                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
+                        </svg>
+                      </button>
+                      <input type="range" min={2} max={10} value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-20 h-1 cursor-pointer accent-accent" />
+                      <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
+                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
+
+                {selectedCount === 0 && viewFilter === 'all' && (
+                  <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
+                )}
+
+                {/* Grid */}
+                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: '520px' }}>
+                  <div ref={gridRef} className="relative select-none"
+                    style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
+                    onMouseDown={handleGridMouseDown}>
+                    {displayFiles.map(f => {
+                      const isSelected  = gridSelected.has(f.fileId)
+                      const isFailed    = !['PROCESSING', 'READY'].includes(f.processingStatus)
+                      const editComment = editCommentMap.get(f.fileId)
+                      return (
+                        <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
+                          className={`relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
+                            ${isSelected ? 'border-accent ring-2 ring-accent/40 scale-[0.95]' : 'border-border hover:border-border/60'}`}>
+                          {f.r2PreviewUrl
+                            ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                            : <div className="w-full h-full flex items-center justify-center">
+                                {f.processingStatus === 'PROCESSING'
+                                  ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
+                                  : <span className="text-muted text-lg">📄</span>}
+                              </div>}
+                          {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
+                            <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
+                              <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                            </div>
+                          )}
+                          {isFailed && (
+                            <div className="absolute inset-0 bg-red-950/80 flex flex-col items-center justify-center gap-1.5 p-1">
+                              <span className="text-red-400 text-base">⚠</span>
+                              <span className="text-red-400 text-[9px] font-bold uppercase tracking-wide">Failed</span>
+                              <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                className="text-[9px] text-red-300 border border-red-500/50 px-1.5 py-0.5 rounded hover:bg-red-500/30 transition-colors">
+                                Remove
+                              </button>
+                            </div>
+                          )}
+                          {isSelected && (
+                            <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
+                              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                          )}
+                          {editComment && (
+                            <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
+                              {editComment}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {dragRect && (
+                      <div className="absolute pointer-events-none border border-accent/70 bg-accent/10 rounded z-10"
+                        style={{ left: dragRect.left, top: dragRect.top, width: dragRect.width, height: dragRect.height }} />
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Face Index tab ────────────────────────────────────── */}
+        {activeTab === 'faces' && (
+          <div className="px-5 py-5 space-y-5">
+            {faceLoading ? (
+              <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+            ) : faceFeatureOff ? (
+              <div className="text-center py-10 space-y-3">
+                <div className="text-5xl">🔒</div>
+                <p className="text-sm font-bold text-text-primary">AI Face Search</p>
+                <p className="text-xs text-muted">This feature is not enabled on your plan.</p>
               </div>
+            ) : (
+              <>
+                {/* Trigger button */}
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-text-primary">Face Index</p>
+                    <p className="text-xs text-muted mt-0.5">Index faces so guests can find their photos by selfie.</p>
+                  </div>
+                  {!isIndexing && (
+                    <button onClick={triggerFaceIndexing} disabled={faceTriggering}
+                      className="flex items-center gap-2 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors flex-shrink-0">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                      </svg>
+                      {neverRun ? 'Generate Face Index' : faceTriggering ? 'Starting…' : 'Re-index'}
+                    </button>
+                  )}
+                </div>
 
-              {/* Drag hint */}
-              {selectedCount === 0 && viewFilter === 'all' && (
-                <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
-              )}
+                {faceError && <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{faceError}</div>}
 
-              {/* Grid */}
-              <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: '520px' }}>
-              <div
-                ref={gridRef}
-                className="relative select-none"
-                style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
-                onMouseDown={handleGridMouseDown}
-              >
-                {displayFiles.map(f => {
-                  const isSelected = gridSelected.has(f.fileId)
-                  const isFailed   = !['PROCESSING', 'READY'].includes(f.processingStatus)
-                  const editComment = editCommentMap.get(f.fileId)
+                {isIndexing && (
+                  <div className="bg-accent/10 border border-accent/30 rounded-xl px-5 py-4 flex items-center gap-4">
+                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-text-primary">{faceStatus?.activeJob?.status === 'PENDING' ? 'Queued…' : 'Indexing faces…'}</p>
+                      <p className="text-xs text-muted mt-0.5">This runs in the background.</p>
+                    </div>
+                  </div>
+                )}
 
-                  return (
-                    <div
-                      key={f.fileId}
-                      data-fileid={f.fileId}
-                      onClick={() => togglePhoto(f.fileId)}
-                      className={`relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
-                        ${isSelected
-                          ? 'border-accent ring-2 ring-accent/40 scale-[0.95]'
-                          : 'border-border hover:border-border/60'}`}
-                    >
-                      {/* Image / placeholder */}
-                      {f.r2PreviewUrl ? (
-                        <img
-                          src={f.r2PreviewUrl}
-                          alt={f.originalFilename}
-                          className="w-full h-full object-cover"
-                          draggable={false}
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          {f.processingStatus === 'PROCESSING'
-                            ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
-                            : <span className="text-muted text-lg">📄</span>}
-                        </div>
-                      )}
+                {faceStatus && (
+                  <div className="border border-border rounded-2xl divide-y divide-border overflow-hidden">
+                    <div className="px-5 py-3 flex items-center justify-between">
+                      <span className="text-sm text-muted">Photos indexed</span>
+                      <span className="text-sm font-bold text-text-primary">{faceStatus.indexedPhotos} / {faceStatus.totalPhotos}</span>
+                    </div>
+                    <div className="px-5 py-3 flex items-center justify-between">
+                      <span className="text-sm text-muted">Status</span>
+                      <span className={`text-sm font-bold ${isIndexing ? 'text-accent' : isReady ? 'text-success' : hasPartial ? 'text-yellow-400' : 'text-muted'}`}>
+                        {isIndexing ? 'Indexing…' : isReady ? '✓ Ready for guest search' : hasPartial ? `${faceStatus.pendingPhotos} pending` : 'Not indexed yet'}
+                      </span>
+                    </div>
+                    {faceStatus.lastCompletedAt && (
+                      <div className="px-5 py-3 flex items-center justify-between">
+                        <span className="text-sm text-muted">Last indexed</span>
+                        <span className="text-sm text-text-primary">{new Date(faceStatus.lastCompletedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                      {/* Processing overlay on top of preview */}
-                      {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
-                        <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
-                          <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                        </div>
-                      )}
+                {neverRun && !faceError && !faceLoading && (
+                  <div className="border border-dashed border-border rounded-2xl p-8 text-center space-y-3">
+                    <div className="text-4xl">🔍</div>
+                    <p className="text-sm font-bold text-text-primary">No faces indexed yet</p>
+                    <p className="text-xs text-muted">Guests can upload a selfie to find their photos once you run the index.</p>
+                  </div>
+                )}
 
-                      {/* Failed state */}
-                      {isFailed && (
-                        <div className="absolute inset-0 bg-red-950/80 flex flex-col items-center justify-center gap-1.5 p-1">
-                          <span className="text-red-400 text-base">⚠</span>
-                          <span className="text-red-400 text-[9px] font-bold uppercase tracking-wide">Failed</span>
-                          <button
-                            onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                            className="text-[9px] text-red-300 border border-red-500/50 px-1.5 py-0.5 rounded hover:bg-red-500/30 transition-colors"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      )}
+                {isReady && (
+                  <div className="bg-success/5 border border-success/20 rounded-2xl px-5 py-4 space-y-1">
+                    <p className="text-sm font-bold text-success">✓ Face index ready</p>
+                    <p className="text-xs text-muted">Guests can now tap <strong className="text-text-primary">Find My Photos</strong> in the gallery.</p>
+                  </div>
+                )}
 
-                      {/* Selection checkmark */}
-                      {isSelected && (
-                        <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      )}
-
-                      {/* Edit comment tooltip (only in edit filter view) */}
-                      {editComment && (
-                        <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
-                          {editComment}
+                {/* QR code generator */}
+                {(isReady || hasPartial) && (
+                  <div className="border border-border rounded-2xl overflow-hidden">
+                    <div className="px-5 py-4 border-b border-border bg-border/10">
+                      <p className="text-sm font-bold text-text-primary">Guest QR Code</p>
+                      <p className="text-xs text-muted mt-0.5">Guests scan and find their photos via selfie.</p>
+                    </div>
+                    <div className="px-5 py-4 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
+                        <select value={qrExpiry} onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
+                          className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60">
+                          <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option>
+                        </select>
+                        <button onClick={generateQr} disabled={qrGenerating}
+                          className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                          {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
+                        </button>
+                      </div>
+                      {qrDataUrl && qrGuestUrl && (
+                        <div className="flex flex-col items-center gap-4 pt-2">
+                          <div className="bg-white p-3 rounded-2xl shadow-md">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
+                          </div>
+                          {qrExpiresAt && <p className="text-xs text-muted">Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>}
+                          <div className="flex gap-2 w-full">
+                            <button onClick={async () => { if (!qrGuestUrl) return; await navigator.clipboard.writeText(qrGuestUrl); setQrCopied(true); setTimeout(() => setQrCopied(false), 2000) }}
+                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                              {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
+                            </button>
+                            <button onClick={() => { if (!qrDataUrl) return; const a = document.createElement('a'); a.href = qrDataUrl; a.download = `guest-qr-${project.projectId}.png`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                              ⬇ Download QR
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
-                  )
-                })}
-
-                {/* Rubber-band drag overlay */}
-                {dragRect && (
-                  <div
-                    className="absolute pointer-events-none border border-accent/70 bg-accent/10 rounded z-10"
-                    style={{
-                      left: dragRect.left, top: dragRect.top,
-                      width: dragRect.width, height: dragRect.height,
-                    }}
-                  />
+                  </div>
                 )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Selections tab ────────────────────────────────────── */}
+        {activeTab === 'selections' && (
+          <div className="px-5 py-5 space-y-5">
+            {selItemsLoading ? (
+              <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+            ) : !selItems || selItems.length === 0 ? (
+              <div className="text-center py-10 space-y-3">
+                <div className="text-4xl">💌</div>
+                <p className="text-sm font-bold text-text-primary">No selections yet</p>
+                <p className="text-xs text-muted">Client hasn&apos;t submitted their selection. Share the gallery link first.</p>
               </div>
-              </div>{/* end scroll wrapper */}
-            </>
-          )}
+            ) : (
+              <>
+                {/* Stats */}
+                <div className="flex gap-3 text-xs text-muted flex-wrap">
+                  <span className="font-semibold text-text-primary">{selItems.length} photos selected</span>
+                  {selItems.filter(i => i.selection.editingRequired).length > 0 && (
+                    <span className="text-yellow-400">{selItems.filter(i => i.selection.editingRequired).length} need editing</span>
+                  )}
+                </div>
+
+                {/* Needs editing */}
+                {selItems.filter(i => i.selection.editingRequired).length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-text-primary">✏️ Needs Editing</p>
+                    {selItems.filter(i => i.selection.editingRequired).map(({ selection, file }) => (
+                      <div key={file.fileId} className="bg-bg border border-border rounded-xl p-3 flex gap-3">
+                        <div className="w-16 h-16 rounded-lg overflow-hidden bg-card border border-border flex-shrink-0">
+                          {file.r2PreviewUrl
+                            ? <img src={file.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center text-muted text-xs">📄</div>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-text-primary truncate">{file.originalFilename}</p>
+                          {selection.comment && (
+                            <p className="text-[11px] text-muted mt-1 italic">&ldquo;{selection.comment}&rdquo;</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Final selects grid */}
+                {selItems.filter(i => !i.selection.editingRequired).length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-text-primary">Final Selects</p>
+                    <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                      {selItems.filter(i => !i.selection.editingRequired).map(({ file, selection }) => (
+                        <div key={file.fileId} className="relative aspect-square rounded-lg overflow-hidden bg-card border border-border" title={selection.comment || file.originalFilename}>
+                          {file.r2PreviewUrl
+                            ? <img src={file.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                            : <div className="w-full h-full flex items-center justify-center text-muted text-xs">📄</div>}
+                          {selection.comment && (
+                            <div className="absolute bottom-1 right-1 w-4 h-4 bg-accent/80 rounded-full flex items-center justify-center text-bg text-[8px]">💬</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Print link */}
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-bold text-text-primary">Print Portal</p>
+                    <p className="text-xs text-muted mt-0.5">Generate a 7-day link for your print partner to download all finals.</p>
+                  </div>
+                  {printUrl ? (
+                    <div className="flex items-center gap-2 bg-success/10 border border-success/30 rounded-lg px-3 py-2">
+                      <span className="flex-1 text-xs text-success font-mono truncate">{printUrl}</span>
+                      <button onClick={async () => { await navigator.clipboard.writeText(printUrl); setPrintCopied(true); setTimeout(() => setPrintCopied(false), 2000) }}
+                        className="text-xs bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0">
+                        {printCopied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={generatePrintLink} disabled={printGenerating}
+                      className="bg-accent text-bg font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm">
+                      {printGenerating ? 'Generating…' : 'Generate Print Link'}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+      </div>{/* end card */}
+
+      {/* ── Floating selection pill (admin grid) ──────────────── */}
+      {selectedCount > 0 && activeTab === 'photos' && (
+        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
+          <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
+            <div className="flex items-center gap-1 px-2 py-2.5">
+
+              {/* × clear */}
+              <button onClick={() => setGridSelected(new Set())}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Count */}
+              <span className="flex-1 text-sm font-bold text-text-primary">{selectedCount} selected</span>
+
+              {/* 👁 Preview */}
+              <button onClick={() => { setAdminPreviewIdx(0); setShowAdminPreview(true) }}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
+
+              {/* 🗑 Delete selected */}
+              <button onClick={() => setDeleteMode('selected')}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-red-500/15 transition-colors text-red-500/70 hover:text-red-500" aria-label="Delete selected">
+                <svg className="w-4.5 h-4.5 w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+              </button>
+
+              {/* 📤 Share (opens share setup) */}
+              <button onClick={() => { setShowShareSetup(true); setGridSelected(new Set()) }}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
+                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                </svg>
+              </button>
+
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </>
   )
 }
