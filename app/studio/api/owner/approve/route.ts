@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import { randomUUID } from 'crypto'
-import bcrypt from 'bcryptjs'
 import { studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioCredentialsEmail } from '@/lib/aws/ses'
 import type { Studio, StudioUser } from '@/types/studio'
@@ -10,11 +9,6 @@ function getSecret() {
   const s = process.env.STUDIO_JWT_SECRET
   if (!s) throw new Error('STUDIO_JWT_SECRET not set')
   return new TextEncoder().encode(s)
-}
-
-function generatePassword(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#'
-  return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
 export async function GET(req: NextRequest) {
@@ -42,7 +36,6 @@ export async function GET(req: NextRequest) {
     const studioId = randomUUID()
     const userId   = randomUUID()
     const now      = new Date().toISOString()
-    const password = generatePassword()
 
     const studio: Studio = {
       studioId,
@@ -71,7 +64,6 @@ export async function GET(req: NextRequest) {
       email,
       phone,
       name: adminName,
-      passwordHash: await bcrypt.hash(password, 12),
       linkedStudioId: studioId,
       status: 'ACTIVE',
       lastLoginAt: now,
