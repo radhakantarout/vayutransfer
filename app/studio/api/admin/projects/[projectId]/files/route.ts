@@ -61,6 +61,14 @@ export async function GET(
       })
     )
 
+    // Auto-heal: keep project.totalFiles in sync with the actual file count
+    studioUpdateItem(
+      TABLES.projects,
+      { studioId: auth.studioId!, projectId },
+      'SET totalFiles = :tf',
+      { ':tf': files.length }
+    ).catch(() => {})
+
     return NextResponse.json({ success: true, data: enriched })
   } catch (err) {
     console.error('[files GET]', err)
