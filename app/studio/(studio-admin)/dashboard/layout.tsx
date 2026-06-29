@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import type { StudioProject } from '@/types/studio'
+import type { StudioProject, MediaFile } from '@/types/studio'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
 import EventSection from './EventSection'
@@ -130,6 +130,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [selectedIds, setSelectedIds]   = useState<string[]>([])
   const [modalClient, setModalClient]   = useState<string | null>(null)
   const [editProject, setEditProject]   = useState<StudioProject | null>(null)
+  // Cross-event photo selection: projectId → Set<fileId>
+  const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
+  const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
+  const [refreshTriggers, setRefreshTriggers] = useState<Map<string, number>>(new Map())
 
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
@@ -165,7 +169,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     )
   }
 
-  const clearSelection = () => setSelectedIds([])
+  const clearSelection = () => {
+    setSelectedIds([])
+    setPhotoSelections(new Map())
+  }
+
+  const handleSelectionChange = (projectId: string) => (ids: Set<string>) => {
+    setPhotoSelections(prev => {
+      const next = new Map(prev)
+      if (ids.size === 0) next.delete(projectId)
+      else next.set(projectId, ids)
+      return next
+    })
+  }
+
+  const handleFilesLoaded = (projectId: string) => (files: MediaFile[]) => {
+    setProjectFiles(prev => new Map(prev).set(projectId, files))
+  }
+
+  const totalPhotoSelected = Array.from(photoSelections.values()).reduce((acc, s) => acc + s.size, 0)
 
   const clientGroups = (() => {
     const map = new Map<string, StudioProject[]>()
@@ -299,7 +321,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             {/* Event sections */}
             {selectedProjects.map(p => (
-              <EventSection key={p.projectId} project={p} onUpdated={fetchProjects} />
+              <EventSection
+                key={p.projectId}
+                project={p}
+                onUpdated={fetchProjects}
+                selectedIds={photoSelections.get(p.projectId) ?? new Set()}
+                onSelectionChange={handleSelectionChange(p.projectId)}
+                onFilesLoaded={handleFilesLoaded(p.projectId)}
+                refreshTrigger={refreshTriggers.get(p.projectId) ?? 0}
+              />
             ))}
           </div>
         </main>
@@ -327,6 +357,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onClose={() => setEditProject(null)}
           onSaved={() => { setEditProject(null); fetchProjects() }}
         />
+      )}
+
+      {/* ── Global cross-event selection pill ─────────────────── */}
+      {totalPhotoSelected > 0 && selectedIds.length > 1 && (
+        <div className="fixed bottom-5 inset-x-0 z-40 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto bg-card/90 backdrop-blur-xl border border-accent/40 rounded-2xl shadow-2xl px-5 py-2.5 flex items-center gap-3">
+            <span className="text-sm font-bold text-text-primary">
+              {totalPhotoSelected} photo{totalPhotoSelected !== 1 ? 's' : ''} selected
+            </span>
+            <span className="text-xs text-muted">
+              across {Array.from(photoSelections.keys()).length} event{Array.from(photoSelections.keys()).length !== 1 ? 's' : ''}
+            </span>
+            <button
+              onClick={() => setPhotoSelections(new Map())}
+              className="text-xs text-muted hover:text-text-primary border border-border px-2.5 py-1 rounded-lg hover:bg-border/40 transition-colors"
+            >
+              Clear all
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

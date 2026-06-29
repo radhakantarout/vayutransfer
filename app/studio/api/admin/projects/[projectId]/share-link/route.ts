@@ -15,7 +15,7 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { expiryDays = 30, selectionMin, selectionMax } = await req.json().catch(() => ({}))
+    const { expiryDays = 30, selectionMin, selectionMax, includedFileIds } = await req.json().catch(() => ({}))
     const { projectId } = params
     const studioId = auth.studioId!
 
@@ -34,22 +34,28 @@ export async function POST(
       )
     }
 
+    // Validate includedFileIds when provided
+    const hasFilter = Array.isArray(includedFileIds) && includedFileIds.length > 0
+    if (Array.isArray(includedFileIds) && includedFileIds.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'NO_SELECTION', message: 'Please select at least one photo to share' },
+        { status: 400 }
+      )
+    }
+
     const token = randomBytes(32).toString('hex')
     const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
     const now = new Date().toISOString()
 
     const hasRange = typeof selectionMin === 'number' && typeof selectionMax === 'number' && selectionMax > 0
-    await studioUpdateItem(
-      TABLES.projects,
-      { studioId, projectId },
-      hasRange
-        ? 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active, selectionMin = :smin, selectionMax = :smax'
-        : 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active',
-      hasRange
-        ? { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE', ':smin': selectionMin, ':smax': selectionMax }
-        : { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' },
-      { '#s': 'status' }
-    )
+
+    let updateExpr = 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active'
+    const exprValues: Record<string, unknown> = { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' }
+    if (hasRange)   { updateExpr += ', selectionMin = :smin, selectionMax = :smax'; exprValues[':smin'] = selectionMin; exprValues[':smax'] = selectionMax }
+    if (hasFilter)  { updateExpr += ', sharedFileIds = :sfids'; exprValues[':sfids'] = includedFileIds }
+    else            { updateExpr += ' REMOVE sharedFileIds' }
+
+    await studioUpdateItem(TABLES.projects, { studioId, projectId }, updateExpr, exprValues, { '#s': 'status' })
 
     const shareUrl = `${req.nextUrl.origin}/studio/gallery/${token}`
 

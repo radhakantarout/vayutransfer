@@ -67,6 +67,7 @@ export interface StudioProject {
   printShareExpiresAt?: string
   selectionSubmittedAt?: string
   selectionLockedBy?: string
+  sharedFileIds?: string[]
   createdAt: string
   updatedAt: string
 }
