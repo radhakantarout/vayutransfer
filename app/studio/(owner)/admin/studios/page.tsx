@@ -36,14 +36,11 @@ interface FormState {
   adminName: string
   adminEmail: string
   adminPhone: string
-  adminPassword: string
-  confirmPassword: string
 }
 
 const EMPTY_FORM: FormState = {
   studioName: '', plan: 'STARTER',
   adminName: '', adminEmail: '', adminPhone: '',
-  adminPassword: '', confirmPassword: '',
 }
 
 export default function OwnerStudiosPage() {
@@ -92,21 +89,12 @@ export default function OwnerStudiosPage() {
         if (!/^\d+$/.test(form.adminPhone.trim())) return 'Enter digits only (no spaces or dashes)'
         if (!isValidPhone(form.adminPhone)) return 'Enter a valid 10-digit number starting with 6–9'
         return null
-      case 'adminPassword':
-        if (!form.adminPassword) return 'Password is required'
-        if (form.adminPassword.length < 8) return 'Password must be at least 8 characters'
-        if (!/[a-zA-Z]/.test(form.adminPassword)) return 'Password must contain at least one letter'
-        if (!/\d/.test(form.adminPassword)) return 'Password must contain at least one number'
-        return null
-      case 'confirmPassword':
-        if (!form.confirmPassword) return 'Please confirm the password'
-        return form.confirmPassword !== form.adminPassword ? 'Passwords do not match' : null
       default: return null
     }
   }
 
   const allRequiredFields: (keyof FormState)[] = [
-    'studioName', 'adminName', 'adminEmail', 'adminPhone', 'adminPassword', 'confirmPassword',
+    'studioName', 'adminName', 'adminEmail', 'adminPhone',
   ]
 
   const isFormValid = (() => {
@@ -114,10 +102,6 @@ export default function OwnerStudiosPage() {
     if (form.adminName.trim().length < 2) return false
     if (!isValidEmail(form.adminEmail)) return false
     if (!isValidPhone(form.adminPhone)) return false
-    if (form.adminPassword.length < 8) return false
-    if (!/[a-zA-Z]/.test(form.adminPassword)) return false
-    if (!/\d/.test(form.adminPassword)) return false
-    if (form.confirmPassword !== form.adminPassword) return false
     return true
   })()
 
@@ -133,12 +117,11 @@ export default function OwnerStudiosPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        studioName:    form.studioName.trim(),
-        plan:          form.plan,
-        adminName:     form.adminName.trim(),
-        adminEmail:    form.adminEmail.trim().toLowerCase(),
-        adminPhone:    `+91${form.adminPhone.trim()}`,
-        adminPassword: form.adminPassword,
+        studioName: form.studioName.trim(),
+        plan:       form.plan,
+        adminName:  form.adminName.trim(),
+        adminEmail: form.adminEmail.trim().toLowerCase(),
+        adminPhone: `+91${form.adminPhone.trim()}`,
       }),
     }).then((r) => r.json())
     setCreating(false)
@@ -242,7 +225,7 @@ export default function OwnerStudiosPage() {
           <div>
             <h2 className="font-semibold text-text-primary">Create Studio + Admin Account</h2>
             <p className="text-xs text-muted mt-1">
-              Admin receives a welcome email with login link. Password is not emailed — share it with them separately.
+              Admin receives a welcome email with a link to set their own password and sign in.
               You&apos;ll receive a creation confirmation at support@vayutransfer.com.
             </p>
           </div>
@@ -310,42 +293,6 @@ export default function OwnerStudiosPage() {
                 />
               </div>
               {getFieldError('adminPhone') && <p className="text-xs text-danger">{getFieldError('adminPhone')}</p>}
-            </div>
-
-            {/* Password */}
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted">Password <span className="text-danger">*</span></label>
-              <input
-                type="password"
-                value={form.adminPassword}
-                onChange={(e) => setField('adminPassword', e.target.value)}
-                onBlur={() => touch('adminPassword')}
-                placeholder="Min 8 chars, 1 letter + 1 number"
-                className={inputClass('adminPassword')}
-                autoComplete="new-password"
-              />
-              {getFieldError('adminPassword') && <p className="text-xs text-danger">{getFieldError('adminPassword')}</p>}
-              {touched.adminPassword && !getFieldError('adminPassword') && form.adminPassword && (
-                <p className="text-xs text-muted">Share this with the admin separately — not included in the email</p>
-              )}
-            </div>
-
-            {/* Confirm password */}
-            <div className="space-y-1.5">
-              <label className="text-xs text-muted">Confirm password <span className="text-danger">*</span></label>
-              <input
-                type="password"
-                value={form.confirmPassword}
-                onChange={(e) => setField('confirmPassword', e.target.value)}
-                onBlur={() => touch('confirmPassword')}
-                placeholder="Re-enter password"
-                className={inputClass('confirmPassword')}
-                autoComplete="new-password"
-              />
-              {getFieldError('confirmPassword') && <p className="text-xs text-danger">{getFieldError('confirmPassword')}</p>}
-              {touched.confirmPassword && !getFieldError('confirmPassword') && form.confirmPassword && (
-                <p className="text-xs text-success">Passwords match ✓</p>
-              )}
             </div>
 
           </div>

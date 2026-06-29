@@ -305,7 +305,7 @@ export async function sendStudioCredentialsEmail(
 
     <p style="font-size:22px;font-weight:700;margin:0 0 8px;color:#E0EAF8;">Congratulations! 🎉🎁</p>
     <h2 style="font-size:18px;font-weight:700;margin:0 0 8px;color:#E0EAF8;">Welcome, ${adminName}!</h2>
-    <p style="color:#5A7090;font-size:14px;margin:0 0 28px;">Your studio <strong style="color:#E0EAF8;">${studioName}</strong> has been approved and is ready to use. Click the button below to set your password and sign in.</p>
+    <p style="color:#5A7090;font-size:14px;margin:0 0 28px;">Your studio <strong style="color:#E0EAF8;">${studioName}</strong> is ready. Click the button below to set your password and access your dashboard.</p>
 
     <div style="background:#0B0F1A;border-radius:10px;padding:20px;margin-bottom:28px;border:1px solid #1E2D45;">
       <div style="color:#5A7090;font-size:12px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Your login email</div>

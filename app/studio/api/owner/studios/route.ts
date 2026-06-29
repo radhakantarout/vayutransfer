@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import bcrypt from 'bcryptjs'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioScanTable, studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioCredentialsEmail, sendOwnerStudioCreatedEmail } from '@/lib/aws/ses'
@@ -29,8 +28,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { studioName, plan = 'STARTER', adminName, adminEmail: rawAdminEmail, adminPhone, adminPassword } = await req.json()
-    if (!studioName?.trim() || !adminName?.trim() || !rawAdminEmail?.trim() || !adminPhone?.trim() || !adminPassword) {
+    const { studioName, plan = 'STARTER', adminName, adminEmail: rawAdminEmail, adminPhone } = await req.json()
+    if (!studioName?.trim() || !adminName?.trim() || !rawAdminEmail?.trim() || !adminPhone?.trim()) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
 
@@ -67,14 +66,12 @@ export async function POST(req: NextRequest) {
       },
     }
 
-    const passwordHash = await bcrypt.hash(adminPassword, 12)
     const adminUser: StudioUser = {
       userId,
       role: 'ADMIN',
       email: adminEmail,
       phone: adminPhone.trim(),
       name: adminName.trim(),
-      passwordHash,
       linkedStudioId: studioId,
       status: 'ACTIVE',
       lastLoginAt: now,
@@ -87,8 +84,8 @@ export async function POST(req: NextRequest) {
       studioPutItem(TABLES.users,   adminUser as unknown as Record<string, unknown>),
     ])
 
-    // Welcome email to new studio admin (login link, no password)
-    const loginUrl = `${req.nextUrl.origin}/studio/login?email=${encodeURIComponent(adminEmail)}`
+    // Welcome email to new studio admin — setup=1 auto-opens password-set flow with email pre-filled
+    const loginUrl = `${req.nextUrl.origin}/studio/login?setup=1&email=${encodeURIComponent(adminEmail)}`
     void sendStudioCredentialsEmail(adminEmail, adminName.trim(), studioName.trim(), adminEmail, loginUrl)
 
     // Confirmation email to platform owner

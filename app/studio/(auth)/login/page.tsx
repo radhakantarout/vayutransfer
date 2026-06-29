@@ -361,7 +361,7 @@ function LoginPageInner() {
                 </p>
                 <p className="text-xs text-muted pt-1">
                   Can&apos;t find the link?{' '}
-                  <a href="mailto:radhakanta.rout16@gmail.com" className="text-accent hover:underline">
+                  <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">
                     Contact support
                   </a>
                 </p>
