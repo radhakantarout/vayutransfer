@@ -56,7 +56,7 @@ function ClientBranch({
         </button>
         <span className="text-[10px] text-muted">{projects.length}</span>
         <button onClick={() => onAddEvent(clientName)} title="Add event"
-          className="opacity-0 group-hover/branch:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
+          className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
@@ -322,7 +322,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </button>
             <span className="text-[10px] text-muted mr-1.5">{projects.length}</span>
             <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
-              className="opacity-0 group-hover/header:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
+              className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
               </svg>
@@ -350,15 +350,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
-        {/* Bottom — new project icon */}
-        <div className="p-2 border-t border-border flex justify-center">
-          <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-            </svg>
-          </Link>
-        </div>
       </aside>
 
       {/* ── Sidebar toggle tab ───────────────────────────────── */}
