@@ -24,9 +24,10 @@ export async function GET(req: NextRequest) {
     if (!token) return NextResponse.redirect(new URL('/studio/home', req.url))
 
     const { payload } = await jwtVerify(token, getSecret())
-    const { studioName, adminName, email, phone } = payload as {
+    const { studioName, adminName, email: rawEmail, phone } = payload as {
       studioName: string; adminName: string; email: string; phone: string
     }
+    const email = rawEmail.trim().toLowerCase()
 
     // Idempotency: check if email already has a studio admin account
     const existing = await studioQueryByIndex<StudioUser>(

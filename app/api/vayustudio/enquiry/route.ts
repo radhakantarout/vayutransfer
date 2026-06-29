@@ -16,11 +16,13 @@ function getEnquirySecret() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, studioName, email, phone, message } = await req.json()
+    const { name, studioName, email: rawEmail, phone, message } = await req.json()
 
-    if (!name || !studioName || !email || !phone) {
+    if (!name || !studioName || !rawEmail || !phone) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
+
+    const email = rawEmail.trim().toLowerCase()
 
     // Signed token embeds all enquiry data — approve link works from any device, no login needed
     const token = await new SignJWT({ name, studioName, email, phone })
@@ -31,7 +33,7 @@ export async function POST(req: NextRequest) {
     const origin = req.nextUrl.origin
     const approveUrl = `${origin}/api/vayustudio/approve?token=${encodeURIComponent(token)}`
 
-    const ownerEmail = process.env.PLATFORM_OWNER_EMAIL ?? 'radhakanta.rout16@gmail.com'
+    const ownerEmail = process.env.PLATFORM_OWNER_EMAIL ?? 'support@vayutransfer.com'
     const fromEmail  = process.env.SES_FROM_EMAIL ?? 'noreply@vayutransfer.com'
 
     const html = `
