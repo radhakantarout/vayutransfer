@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import './globals.css'
 import Providers from '@/components/Providers'
 import { ConditionalNavbar, ConditionalFooter } from '@/components/ConditionalNavbar'
@@ -23,33 +24,39 @@ export const metadata: Metadata = {
   },
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const headersList = headers()
+  const host = headersList.get('host') ?? ''
+  const isStudioDomain = host.includes('vayustudios.com')
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t==='dark')document.documentElement.classList.add('dark')}catch(e){}` }} />
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify({
-            '@context': 'https://schema.org',
-            '@type': 'WebSite',
-            name: 'VayuTransfer',
-            url: 'https://vayutransfer.com',
-            description: 'Send large files securely across the globe. Pay only for what you use.',
-            potentialAction: {
-              '@type': 'SearchAction',
-              target: 'https://vayutransfer.com/download/{fileId}',
-              'query-input': 'required name=fileId',
-            },
-          })}}
-        />
+        {!isStudioDomain && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'WebSite',
+              name: 'VayuTransfer',
+              url: 'https://vayutransfer.com',
+              description: 'Send large files securely across the globe. Pay only for what you use.',
+              potentialAction: {
+                '@type': 'SearchAction',
+                target: 'https://vayutransfer.com/download/{fileId}',
+                'query-input': 'required name=fileId',
+              },
+            })}}
+          />
+        )}
       </head>
       <body className="min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full">
         <Providers>
-          <ConditionalNavbar />
+          {!isStudioDomain && <ConditionalNavbar />}
           <div className="flex-1">{children}</div>
-          <ConditionalFooter />
-          <UploadWidget />
+          {!isStudioDomain && <ConditionalFooter />}
+          {!isStudioDomain && <UploadWidget />}
         </Providers>
       </body>
     </html>
