@@ -5,17 +5,29 @@ export async function middleware(request: NextRequest) {
   const host = request.headers.get('host') ?? ''
   const path = request.nextUrl.pathname
 
-  const isStudioSubdomain =
-    host === 'studio.vayutransfer.com' ||
-    host === 'www.studio.vayutransfer.com' ||
-    host === 'studio.localhost:3000'
+  // ── Domain detection ─────────────────────────────────────────────────────
+  // VayuStudios domains (production + test, www variants included)
+  const isStudioDomain =
+    host === 'vayustudios.com'          ||
+    host === 'www.vayustudios.com'      ||
+    host === 'test.vayustudios.com'     ||
+    host === 'www.test.vayustudios.com'
 
-  // Subdomain routing — studio.vayutransfer.com/* → /studio/*
-  if (isStudioSubdomain && !path.startsWith('/studio')) {
-    const target = path === '/' ? '/studio/home' : `/studio${path}`
-    return NextResponse.rewrite(new URL(target, request.url))
+  // ── VayuStudios domain routing ───────────────────────────────────────────
+  if (isStudioDomain) {
+    // Root → studio home page
+    if (path === '/') {
+      return NextResponse.rewrite(new URL('/studio/home', request.url))
+    }
+    // Any non-studio, non-API path → redirect to studio home
+    // (blocks VayuTransfer pages: /wallet, /transfers, /login, /pricing etc.)
+    const isAllowed = path.startsWith('/studio') || path.startsWith('/api')
+    if (!isAllowed) {
+      return NextResponse.redirect(new URL('/studio/home', request.url))
+    }
   }
 
+  // ── Studio API auth guards (apply on all domains) ────────────────────────
   // Platform Owner routes — OWNER role only
   if (path.startsWith('/studio/api/owner/')) {
     const auth = await verifyStudioJWT(request)
