@@ -5,7 +5,8 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
 export async function middleware(request: NextRequest) {
-  const host = request.headers.get('host') ?? ''
+  // x-forwarded-host is set by the Cloudflare Worker that proxies *.vayustudios.com
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
   const path = request.nextUrl.pathname
 
   // ── Domain detection ─────────────────────────────────────────────────────
