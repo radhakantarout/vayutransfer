@@ -9,10 +9,19 @@
  * can detect the studio slug without Vercel overwriting x-forwarded-host.
  */
 
+// Subdomains that serve R2/CDN content directly — must NOT be proxied to Vercel.
+const R2_SUBDOMAINS = new Set(['previews', 'assets', 'cdn'])
+
 export default {
   async fetch(request) {
     const originalUrl  = new URL(request.url)
     const originalHost = request.headers.get('host') // e.g. rkrstudio.vayustudios.com
+
+    // Let R2 custom-domain subdomains serve their content without Worker interference
+    const subdomain = originalHost.split('.')[0]
+    if (R2_SUBDOMAINS.has(subdomain)) {
+      return fetch(request)
+    }
 
     // Route test subdomains (*.test.vayustudios.com) to preview deployment
     const isTest     = originalHost.endsWith('.test.vayustudios.com')
