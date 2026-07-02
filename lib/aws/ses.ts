@@ -393,3 +393,38 @@ export async function sendOwnerStudioCreatedEmail(
     })
   )
 }
+
+export async function sendBookingNotificationEmail(
+  to: string,
+  studioName: string,
+  booking: { name: string; email: string; phone?: string; eventType?: string; eventDate?: string; message?: string }
+): Promise<void> {
+  const html = `
+<html><body style="font-family:sans-serif;max-width:520px;margin:40px auto;color:#1a1a1a">
+  <h2 style="color:#6366f1">New Booking Enquiry — ${studioName}</h2>
+  <table style="width:100%;border-collapse:collapse;margin:20px 0">
+    <tr><td style="padding:8px 0;border-bottom:1px solid #eee;color:#666;width:130px">Name</td><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:600">${booking.name}</td></tr>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #eee;color:#666">Email</td><td style="padding:8px 0;border-bottom:1px solid #eee">${booking.email}</td></tr>
+    ${booking.phone ? `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;color:#666">Phone</td><td style="padding:8px 0;border-bottom:1px solid #eee">${booking.phone}</td></tr>` : ''}
+    ${booking.eventType ? `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;color:#666">Event type</td><td style="padding:8px 0;border-bottom:1px solid #eee">${booking.eventType}</td></tr>` : ''}
+    ${booking.eventDate ? `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;color:#666">Event date</td><td style="padding:8px 0;border-bottom:1px solid #eee">${booking.eventDate}</td></tr>` : ''}
+    ${booking.message ? `<tr><td style="padding:8px 0;color:#666;vertical-align:top">Message</td><td style="padding:8px 0">${booking.message}</td></tr>` : ''}
+  </table>
+  <p style="color:#888;font-size:12px">Reply directly to this email to respond to the client. View all bookings in your VayuStudios dashboard.</p>
+</body></html>`.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuStudios <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [to] },
+      ReplyToAddresses: [booking.email],
+      Message: {
+        Subject: { Data: `New booking enquiry from ${booking.name} — ${studioName}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: `New enquiry\n\nFrom: ${booking.name} (${booking.email})\nPhone: ${booking.phone ?? '-'}\nEvent: ${booking.eventType ?? '-'} on ${booking.eventDate ?? '-'}\n\n${booking.message ?? ''}`, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}

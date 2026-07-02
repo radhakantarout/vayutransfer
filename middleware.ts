@@ -1,26 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 
+// Known non-studio subdomains that should NOT be treated as studio sites
+const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
+
 export async function middleware(request: NextRequest) {
   const host = request.headers.get('host') ?? ''
   const path = request.nextUrl.pathname
 
   // ── Domain detection ─────────────────────────────────────────────────────
-  // VayuStudios domains (production + test, www variants included)
-  const isStudioDomain =
+
+  // Known full VayuStudios marketing/app domains
+  const isStudioAppDomain =
     host === 'vayustudios.com'          ||
     host === 'www.vayustudios.com'      ||
     host === 'test.vayustudios.com'     ||
     host === 'www.test.vayustudios.com'
 
-  // ── VayuStudios domain routing ───────────────────────────────────────────
-  if (isStudioDomain) {
-    // Root → studio home page
+  // Studio custom subdomain: <slug>.vayustudios.com
+  // e.g. ramstudio.vayustudios.com — but NOT www.vayustudios.com
+  const studioSubdomainMatch =
+    (host.endsWith('.vayustudios.com') && !isStudioAppDomain)
+      ? host.replace('.vayustudios.com', '')
+      : null
+
+  // Future: custom domain (e.g. www.ramstudio.in)
+  // Non-vayustudios + non-vayutransfer hosts are treated as custom studio domains.
+  // The /studio/site/[subdomain] page handles the DynamoDB lookup by customDomain.
+  const isCustomDomain =
+    !isStudioAppDomain &&
+    !studioSubdomainMatch &&
+    !host.includes('vayutransfer.com') &&
+    !host.includes('localhost') &&
+    !host.includes('vercel.app')
+
+  // ── Studio subdomain routing (<slug>.vayustudios.com) ────────────────────
+  if (studioSubdomainMatch && !RESERVED_SUBDOMAINS.has(studioSubdomainMatch)) {
+    // Rewrite everything to /studio/site/<slug>[/path]
+    // e.g. ramstudio.vayustudios.com/contact → /studio/site/ramstudio/contact
+    const rewritePath = path === '/'
+      ? `/studio/site/${studioSubdomainMatch}`
+      : `/studio/site/${studioSubdomainMatch}${path}`
+    return NextResponse.rewrite(new URL(rewritePath, request.url))
+  }
+
+  // ── Custom domain routing ─────────────────────────────────────────────────
+  // Forward the original host as a header so the page can look it up in DynamoDB
+  if (isCustomDomain) {
+    const rewritePath = path === '/'
+      ? '/studio/site/__custom'
+      : `/studio/site/__custom${path}`
+    const res = NextResponse.rewrite(new URL(rewritePath, request.url))
+    res.headers.set('x-studio-custom-domain', host)
+    return res
+  }
+
+  // ── VayuStudios app domain routing ──────────────────────────────────────
+  if (isStudioAppDomain) {
     if (path === '/') {
       return NextResponse.rewrite(new URL('/studio/home', request.url))
     }
-    // Any non-studio, non-API path → redirect to studio home
-    // (blocks VayuTransfer pages: /wallet, /transfers, /login, /pricing etc.)
     const isAllowed = path.startsWith('/studio') || path.startsWith('/api')
     if (!isAllowed) {
       return NextResponse.redirect(new URL('/studio/home', request.url))
@@ -28,7 +67,6 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Studio API auth guards (apply on all domains) ────────────────────────
-  // Platform Owner routes — OWNER role only
   if (path.startsWith('/studio/api/owner/')) {
     const auth = await verifyStudioJWT(request)
     if (!auth || auth.role !== 'OWNER') {
@@ -36,7 +74,6 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Studio Admin routes — ADMIN or OWNER
   if (path.startsWith('/studio/api/admin/')) {
     const auth = await verifyStudioJWT(request)
     if (!auth || !['ADMIN', 'OWNER'].includes(auth.role)) {

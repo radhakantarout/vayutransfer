@@ -150,3 +150,68 @@ export interface AuditLog {
   ipAddress?: string
   userAgent?: string
 }
+
+// ── Website Builder ────────────────────────────────────────────────────────────
+
+export type WebsiteTemplateId = 'lumina' | 'clarity' | 'ember' | 'bold' | 'bloom'
+export type WebsiteStatus = 'DRAFT' | 'LIVE'
+
+export interface WebsiteService {
+  id: string
+  name: string
+  description: string
+  price?: string
+}
+
+export interface WebsiteGalleryPhoto {
+  id: string
+  url: string
+  caption?: string
+  category?: string
+}
+
+export interface StudioWebsite {
+  studioId: string
+  subdomain: string
+  customDomain?: string
+  templateId: WebsiteTemplateId
+  status: WebsiteStatus
+  heroTitle: string
+  heroSubtitle: string
+  tagline?: string
+  about: string
+  city?: string
+  services: WebsiteService[]
+  galleryPhotos: WebsiteGalleryPhoto[]
+  contactEmail?: string
+  contactPhone?: string
+  whatsapp?: string
+  socialLinks?: {
+    instagram?: string
+    facebook?: string
+    youtube?: string
+  }
+  themeAccent?: string
+  bookingEnabled: boolean
+  bookingMessage?: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ── Bookings ──────────────────────────────────────────────────────────────────
+
+export type BookingStatus = 'NEW' | 'SEEN' | 'REPLIED'
+
+export interface Booking {
+  bookingId: string
+  studioId: string
+  subdomain: string
+  name: string
+  email: string
+  phone?: string
+  eventType?: string
+  eventDate?: string
+  message?: string
+  status: BookingStatus
+  createdAt: string
+}
