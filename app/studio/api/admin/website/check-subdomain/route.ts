@@ -23,11 +23,15 @@ export async function GET(req: NextRequest) {
   const existing = await getWebsiteBySubdomain(slug)
   const available = !existing || existing.studioId === auth.studioId
 
+  const studioBase = (process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com')
+    .replace(/^https?:\/\//, '')
+  const siteUrl = `https://${slug}.${studioBase}`
+
   return NextResponse.json({
     success: true,
     available,
     slug,
-    url: `https://${slug}.vayustudios.com`,
-    message: available ? `${slug}.vayustudios.com is available!` : `${slug}.vayustudios.com is already taken`,
+    url: siteUrl,
+    message: available ? `${slug}.${studioBase} is available!` : `${slug}.${studioBase} is already taken`,
   })
 }

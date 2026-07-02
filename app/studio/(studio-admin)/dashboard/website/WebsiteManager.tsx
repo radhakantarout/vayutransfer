@@ -136,7 +136,8 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
     update({ galleryPhotos: arr })
   }
 
-  const publishUrl = site?.subdomain ? `https://${site.subdomain}.vayustudios.com` : null
+  const studioBase = (process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com').replace(/^https?:\/\//, '')
+  const publishUrl = site?.subdomain ? `https://${site.subdomain}.${studioBase}` : null
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full" /></div>
   if (!site) return null
@@ -353,7 +354,7 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
               <input value={subdomainInput} onChange={e => onSubdomainChange(e.target.value)}
                 className="flex-1 bg-card px-4 py-3 text-sm text-text-primary outline-none"
                 placeholder="ramstudio" />
-              <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">.vayustudios.com</span>
+              <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">.{studioBase}</span>
             </div>
             {checkingSlug && <p className="text-xs text-muted mt-1.5">Checking…</p>}
             {subdomainCheck && !checkingSlug && (
@@ -371,9 +372,9 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
           {site.subdomain && (
             <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
               <p className="text-xs font-semibold text-text-primary">Your website is at:</p>
-              <a href={`https://${site.subdomain}.vayustudios.com`} target="_blank" rel="noopener noreferrer"
+              <a href={`https://${site.subdomain}.${studioBase}`} target="_blank" rel="noopener noreferrer"
                 className="text-sm text-accent hover:underline break-all">
-                https://{site.subdomain}.vayustudios.com
+                https://{site.subdomain}.{studioBase}
               </a>
               <p className="text-xs text-muted mt-2">Make sure your site is set to <strong>Live</strong> for it to be publicly visible.</p>
             </div>
