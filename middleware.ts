@@ -5,8 +5,9 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
 export async function middleware(request: NextRequest) {
-  // x-forwarded-host is set by the Cloudflare Worker that proxies *.vayustudios.com
-  const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
+  // x-studio-subdomain is set by the Cloudflare Worker that proxies *.vayustudios.com
+  // (x-forwarded-host is avoided because Vercel overwrites it with its own value)
+  const host = request.headers.get('x-studio-subdomain') || request.headers.get('host') || ''
   const path = request.nextUrl.pathname
 
   // ── Domain detection ─────────────────────────────────────────────────────

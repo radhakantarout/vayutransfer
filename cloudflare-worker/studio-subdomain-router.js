@@ -28,7 +28,7 @@ export default {
     // and add x-forwarded-host so Next.js middleware sees the original subdomain.
     const headers = new Headers(request.headers)
     headers.set('host', 'vayustudios.com')
-    headers.set('x-forwarded-host', originalHost)
+    headers.set('x-studio-subdomain', originalHost)
 
     const response = await fetch(targetUrl.toString(), {
       method:  request.method,
