@@ -1,0 +1,8 @@
+name = "studio-subdomain-router"
+main = "studio-subdomain-router.js"
+compatibility_date = "2024-11-01"
+
+routes = [
+  { pattern = "*.vayustudios.com/*",      zone_name = "vayustudios.com" },
+  { pattern = "*.test.vayustudios.com/*", zone_name = "vayustudios.com" }
+]

@@ -1,0 +1,339 @@
+This is a large, well-structured requirements doc. Let me give you the full strategic and technical plan
+  before we touch any code.
+
+  ---
+  VayuStudio — Implementation Plan
+
+  1. What We're Actually Building
+
+  Three things in one codebase:
+
+  ┌───────────────────┬───────────────────────────────┬───────────────────────────────────────────────┐
+  │      Surface      │              URL              │                  Who uses it                  │
+  ├───────────────────┼───────────────────────────────┼───────────────────────────────────────────────┤
+  │ Existing          │ vayutransfer.com              │ General public (unchanged)                    │
+  │ VayuTransfer      │                               │                                               │
+  ├───────────────────┼───────────────────────────────┼───────────────────────────────────────────────┤
+  │ VayuStudio        │ vayutransfer.com/studio       │ Discovery page — general users land here,     │
+  │ product card      │                               │ then get redirected to subdomain              │
+  ├───────────────────┼───────────────────────────────┼───────────────────────────────────────────────┤
+  │ VayuStudio app    │ studio.vayutransfer.com       │ Photographers, their clients, print labs      │
+  ├───────────────────┼───────────────────────────────┼───────────────────────────────────────────────┤
+  │ Platform Owner    │ studio.vayutransfer.com/admin │ You only — full control of everything         │
+  │ admin             │                               │                                               │
+  └───────────────────┴───────────────────────────────┴───────────────────────────────────────────────┘
+
+  ---
+  2. New Infrastructure Required (Services You Don't Have Yet)
+
+  ┌──────────────────────┬────────────────────────┬──────────────────────┬───────────────────────────┐
+  │           Service            │       What for       │   Cost estimate    │         Notes          │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ AWS SNS                      │ OTP SMS to clients   │ ~₹0.30/SMS         │ Enable in ap-south-1,  │
+  │                              │                      │                    │ no setup fee           │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │                              │ Public watermarked   │ ~$0.015/GB stored, │ Already in             │
+  │ Cloudflare R2                │ previews (free       │  zero egress fee   │ requirements; create a │
+  │                              │ egress)              │                    │  new bucket            │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │                              │ Watermark, ZIP,      │ Pay per            │ Need to deploy with    │
+  │ AWS Lambda (3 functions)     │ Notify               │ invocation, very   │ sharp layer            │
+  │                              │                      │ low                │                        │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ AWS CloudFront (2nd          │ Signed URLs for      │ Standard pricing   │ Separate from existing │
+  │ distribution)                │ originals download   │                    │  VayuTransfer CDN      │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ sharp Lambda Layer           │ Image resize +       │ Free               │ Use public ARN or      │
+  │                              │ watermark in Lambda  │                    │ package your own       │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ @aws-sdk/cloudfront-signer   │ Sign CloudFront URLs │ Free (npm package) │ Just an npm install    │
+  │                              │  from Next.js        │                    │                        │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ archiver npm                 │ ZIP streaming in     │ Free (npm package) │ Used in ZIP Lambda     │
+  │                              │ Lambda               │                    │                        │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │ bcryptjs npm                 │ Studio admin         │ Free               │ Already may be         │
+  │                              │ password hashing     │                    │ installed              │
+  ├──────────────────────────────┼──────────────────────┼────────────────────┼────────────────────────┤
+  │                              │ Studio JWT (separate │                    │                        │
+  │ jose or jsonwebtoken npm     │  secret from         │ Free               │ Separate from NextAuth │
+  │                              │ NextAuth)            │                    │                        │
+  └──────────────────────────────┴──────────────────────┴────────────────────┴────────────────────────┘
+
+  No new SaaS tools required. Everything runs on AWS + Cloudflare R2 you already have access to.
+
+  ---
+  3. How VayuStudio Lives Inside vayutransfer.com
+
+  vayutransfer.com/studio       ← Product landing page
+    - "VayuStudio — Gallery Delivery for Photographers"
+    - Features, pricing for studios
+    - "Sign up as a Studio" CTA → goes to studio.vayutransfer.com/login
+    - General users can read about it here; actual app is on subdomain
+
+  The navbar on vayutransfer.com gets a "Studio" link. That's the only change to the existing product. No
+  code shared at runtime — it's purely a discovery page.
+
+  ---
+  4. Your Platform Admin Panel — What You Can See
+
+  Since you are OWNER, your panel at studio.vayutransfer.com/admin gives you:
+
+  - All VayuTransfer users — everyone who signed up via Google OAuth (from vayu-users table)
+  - All VayuStudio studios — every photographer account (from vayustudio-studios)
+  - All VayuStudio users — admins, clients, print users (from vayustudio-users)
+  - Active sessions / last login — from lastLoginAt on both user tables
+  - Live metrics — studios active today, uploads today, storage used, projects created
+  - Token control — revoke or extend any gallery/print share link
+  - Impersonation — step into any studio admin's view without knowing their password
+  - Audit log — every sensitive action ever taken, by whom, from which IP
+
+  To show VayuTransfer general users in your admin panel, we'll add a read route that queries vayu-users
+  (existing table). This is additive — no changes to the table itself.
+
+  ---
+  5. Phase-by-Phase Implementation Plan
+
+  Phase 0 — Infrastructure Setup (Before Code, ~2 days)
+
+  These must be done manually in AWS/Cloudflare consoles before any code runs.
+
+  Step 0a — Cloudflare R2:
+  - Create bucket vayutransfer-studio-previews
+  - Enable public access
+  - Add custom domain previews.studio.vayutransfer.com
+  - Generate R2 API token → save as R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY
+
+  Step 0b — AWS S3:
+  - Create private bucket vayutransfer-studio-originals (ap-south-1, block all public access)
+  - Add lifecycle rule: studios/*/zips/* → delete after 1 day; everything else → S3-IA after 90 days,
+  delete after 365 days
+
+  Step 0c — AWS CloudFront (2nd distribution):
+  - Origin: vayutransfer-studio-originals S3 bucket
+  - Origin Access: OAC (not legacy OAI)
+  - Signed URLs: yes — create a CloudFront key pair, save private key PEM + key pair ID
+
+  Step 0d — AWS SNS:
+  - Enable in ap-south-1
+  - Move out of SMS sandbox (submit request to AWS — takes 24h)
+  - Set origination number or sender ID
+
+  Step 0e — DynamoDB Tables:
+  - Create all 6 new tables (vayustudio-studios, vayustudio-projects, vayustudio-mediafiles,
+  vayustudio-selections, vayustudio-users, vayustudio-auditlog) with their GSIs using the CLI commands in
+  the requirements doc
+
+  Step 0f — Vercel:
+  - Add studio.vayutransfer.com as a custom domain in the Vercel project
+  - Add previews.studio.vayutransfer.com for R2 (Cloudflare handles SSL)
+
+  Step 0g — Lambda placeholder deploys:
+  - Create three Lambda functions (vayustudio-watermark, vayustudio-zip, vayustudio-notify) as empty
+  Node.js 20 handlers — fill in logic per week
+
+  ---
+  Phase 1 — Auth Foundation (Week 1–2)
+
+  lib/studio/auth.ts              — StudioJWT sign/verify (separate secret)
+  lib/studio/dynamodb.ts          — typed helpers for the 6 new tables
+  middleware.ts                   — subdomain rewrite + role enforcement (update existing file)
+  POST /studio/api/auth/admin-login
+  POST /studio/api/auth/client-otp-request
+  POST /studio/api/auth/client-otp-verify
+  POST /studio/api/auth/magic-link-send + verify
+  app/studio/login/page.tsx       — email/password form for OWNER + ADMIN
+  app/studio/otp/page.tsx         — phone OTP form for clients
+
+  Platform Owner login is special: credentials live only in env vars (PLATFORM_OWNER_EMAIL +
+  PLATFORM_OWNER_PASSWORD_HASH). No DynamoDB lookup for the owner. This is a security design decision —
+  even if the DB is compromised, owner credentials can't be stolen from it.
+
+  ---
+  Phase 2 — Studio Admin Core (Week 3–4)
+
+  POST /studio/api/admin/projects              — create project
+  GET  /studio/api/admin/projects              — list projects for studioId
+  POST /studio/api/admin/projects/[id]/upload-url        — reuse VayuTransfer multipart S3 logic
+  POST /studio/api/admin/projects/[id]/upload-complete   — complete + trigger watermark Lambda
+  DELETE/PATCH /studio/api/admin/projects/[id]/files/[fileId]
+  app/studio/dashboard/page.tsx               — project list
+  app/studio/dashboard/projects/new/page.tsx  — create project form
+  app/studio/dashboard/projects/[id]/page.tsx — project detail + upload zone
+  Lambda: vayustudio-watermark                — resize + watermark + upload to R2
+
+  ---
+  Phase 3 — Client Gallery (Week 5–6)
+
+  POST /studio/api/admin/projects/[id]/share-link
+  GET  /studio/api/client/gallery/[token]
+  GET  /studio/api/client/gallery/[token]/selections
+  PUT  /studio/api/client/gallery/[token]/selections/[fileId]
+  POST /studio/api/client/gallery/[token]/submit
+  app/studio/gallery/[token]/page.tsx         — watermarked photo grid
+  app/studio/gallery/[token]/submit/page.tsx  — submission confirmation
+  Lambda: vayustudio-notify (SHARE_LINK_SENT + SELECTION_SUBMITTED + CLIENT_CONFIRMATION)
+
+  ---
+  Phase 4 — Selection View + Print Portal (Week 7–8)
+
+  GET  /studio/api/admin/projects/[id]/selection
+  POST /studio/api/admin/projects/[id]/selection/download  — trigger ZIP
+  GET  /studio/api/admin/projects/[id]/selection/download-status/[jobId]
+  POST /studio/api/admin/projects/[id]/print-link
+  GET  /studio/api/print/[token]
+  GET  /studio/api/print/[token]/download/[fileId]         — CloudFront signed URL
+  POST /studio/api/print/[token]/download-all
+  app/studio/dashboard/projects/[id]/selection/page.tsx
+  app/studio/download/[token]/page.tsx        — print portal
+  Lambda: vayustudio-zip
+
+  ---
+  Phase 5 — Platform Owner Admin Panel (Week 9–10)
+
+  GET  /studio/api/owner/dashboard             — platform-wide metrics
+  GET/PATCH /studio/api/owner/studios          — all studios
+  GET/PATCH /studio/api/owner/users            — all studio users + VayuTransfer users
+  GET/PATCH /studio/api/owner/tokens           — revoke/extend gallery + print links
+  POST /studio/api/owner/studios/[id]/impersonate
+  PATCH /studio/api/owner/projects/[id]/unlock
+  GET  /studio/api/owner/auditlog
+  app/studio/admin/page.tsx                    — metrics dashboard
+  app/studio/admin/studios/page.tsx
+  app/studio/admin/users/page.tsx
+  app/studio/admin/tokens/page.tsx
+  app/studio/admin/logs/page.tsx
+
+  ---
+  Phase 6 — VayuStudio Product Page + QA (Week 11–12)
+
+  app/studio-product/page.tsx   or  app/(marketing)/studio/page.tsx
+    — product landing page on vayutransfer.com/studio
+  Navbar update on vayutransfer.com — add "Studio" link
+  Load testing with BrowserStack (Indian 4G simulation)
+  Beta with 3 studios
+
+  ---
+  6. Risk & Mitigation
+
+  Risk: Vercel subdomain routing breaks existing vayutransfer.com routes
+  Likelihood: Medium        
+  Impact: High
+  Mitigation: Test middleware changes locally with NEXTJS_URL=studio.localhost:3000 before deploying. Add
+    matcher: ['/studio/:path*'] to middleware config so it never runs on root domain routes. Deploy to a
+    preview URL first.
+  ────────────────────────────────────────
+  Risk: SNS SMS sandbox blocks OTP delivery
+  Likelihood: High
+  Impact: High
+  Mitigation: Submit sandbox exit request to AWS on Day 1 (takes 1–3 business days). Meanwhile, fall back
+    to magic link (email) as the only client auth method. OTP can be added after sandbox exit.
+  ────────────────────────────────────────
+  Risk: sharp Lambda layer incompatible with arm64 vs x86
+  Likelihood: Medium
+  Impact: Medium
+  Mitigation: Deploy Lambda as x86_64 architecture. Use the public Lambda Layer for sharp by Vercel/AWS —
+    ARN available per region. Test with a sample JPEG before wiring to upload flow.
+  ────────────────────────────────────────
+  Risk: Cloudflare R2 public URL not ready before watermark Lambda
+  Likelihood: Low
+  Impact: Medium
+  Mitigation: Pre-create the R2 bucket and custom domain in Phase 0. Lambda writes to a known URL format —
+
+    it doesn't wait for the URL to be verified.
+  ────────────────────────────────────────
+  Risk: ZIP Lambda times out on large projects (300+ photos)
+  Likelihood: Medium
+  Impact: High
+  Mitigation: Set timeout to 15 min, memory 3008 MB, ephemeral storage 10 GB (as spec says). Stream files
+    in parallel (Promise.all with concurrency limit of 5). Add retry logic in the polling endpoint.
+  ────────────────────────────────────────
+  Risk: Client token leakage (gallery link shared publicly)
+  Likelihood: Medium
+  Impact: High
+  Mitigation: Watermark on all previews makes leakage harmless for previews. Originals are behind
+    CloudFront signed URLs (1h expiry). Token lookup validates expiresAt on every request — no session,
+    just token validation.
+  ────────────────────────────────────────
+  Risk: Platform Owner forgets to exit impersonation session
+  Likelihood: Low
+  Impact: Medium
+  Mitigation: Impersonation JWT expires in 1 hour hard limit. Banner is shown in the UI. All actions
+  during
+    impersonation are tagged in audit log.
+  ────────────────────────────────────────
+  Risk: DynamoDB GSI eventually consistent reads serve stale data
+  Likelihood: Low
+  Impact: Medium
+  Mitigation: For critical reads (token validation, wallet deduction analog), use ConsistentRead: true on
+    the base table. GSIs are used only for list/search views where eventual consistency is fine.
+  ────────────────────────────────────────
+  Risk: Multiple Lambda invocations watermark same file twice
+  Likelihood: Low
+  Impact: Low
+  Mitigation: DynamoDB conditional write on processingStatus: only transition from UPLOADING → PROCESSING
+  —
+    if already PROCESSING or READY, Lambda exits early. Idempotent by design.
+  ────────────────────────────────────────
+  Risk: SES still in sandbox — client confirmation emails don't arrive
+  Likelihood: High
+  Impact: Medium
+  Mitigation: Use existing verified noreply@vayutransfer.com sender. SES sandbox blocks sending to
+    unverified recipient emails. Submit SES production access request alongside SNS. In the meantime, test
+
+    with your own verified email as client.
+  ────────────────────────────────────────
+  Risk: Vercel function timeout (10s on Hobby plan) hit by heavy API routes
+  Likelihood: Low
+  Impact: High
+  Mitigation: ZIP generation and watermarking are in Lambda — not in Next.js API. Next.js routes only
+    trigger Lambda asynchronously (fire-and-forget invoke). No route should exceed 5s.
+
+  ---
+  7. Additional Tools/Services Checklist
+
+  Must enable before starting code:
+  - [ ] AWS SNS — SMS in ap-south-1 (request sandbox exit)
+  - [ ] SES production access request (if not already submitted)
+  - [ ] Cloudflare R2 bucket + public domain
+  - [ ] New S3 bucket with lifecycle rules
+  - [ ] Second CloudFront distribution + OAC
+  - [ ] CloudFront key pair (download private key — only shown once)
+
+  npm packages to install:
+  npm install jose bcryptjs archiver @aws-sdk/cloudfront-signer
+  npm install --save-dev @types/archiver @types/bcryptjs
+
+  Lambda layers needed:
+  - sharp — use AWS Lambda Layer (public ARN for ap-south-1)
+  - ffmpeg — only if video thumbnails in Phase 1 (can defer)
+
+  No new SaaS subscriptions needed. All services are AWS or Cloudflare — both of which you already have
+  accounts on.
+
+  ---
+  8. What Stays Completely Untouched
+
+  - All VayuTransfer vayu-* DynamoDB tables
+  - All existing API routes under app/api/
+  - All existing components and pages
+  - NextAuth session (Studio uses its own JWT — completely separate)
+  - Razorpay integration
+  - The main S3 bucket vayu-transfer-files
+
+  VayuStudio is purely additive. The only shared files touched are middleware.ts (adds studio routing) and
+  next.config.js (adds vercel rewrite for subdomain). Everything else is net-new under app/studio/ and
+  components/studio/.
+
+  ---
+  Recommended Starting Point
+
+  Before writing any application code, complete Phase 0 infrastructure steps. The two that will block you
+  most if delayed are:
+
+  1. SNS SMS sandbox exit — takes AWS 1–3 business days, no workaround
+  2. CloudFront key pair — private key is shown only once at creation; losing it means recreating the
+  distribution
+
+  Once Phase 0 is done, we can start Week 1 code immediately. Want to go through Phase 0 step-by-step
+  first, or start on the code in parallel?
