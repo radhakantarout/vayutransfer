@@ -41,7 +41,12 @@ export async function middleware(request: NextRequest) {
 
   // ── Studio subdomain routing (<slug>.vayustudios.com) ────────────────────
   if (studioSubdomainMatch && !RESERVED_SUBDOMAINS.has(studioSubdomainMatch)) {
-    // Rewrite everything to /studio/site/<slug>[/path]
+    // API calls from the studio website (e.g. booking form POST) must reach the actual
+    // API routes — don't rewrite them to /studio/site/...
+    if (path.startsWith('/studio/api/') || path.startsWith('/api/')) {
+      return NextResponse.next()
+    }
+    // Rewrite page requests to /studio/site/<slug>[/path]
     // e.g. ramstudio.vayustudios.com/contact → /studio/site/ramstudio/contact
     const rewritePath = path === '/'
       ? `/studio/site/${studioSubdomainMatch}`
