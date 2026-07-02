@@ -49,36 +49,38 @@ export default function ProjectDetailPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const fileInputRef              = useRef<HTMLInputElement>(null)
+  // Sequence counter — incremented on every files fetch so stale in-flight
+  // responses from concurrent loadProject/refreshFiles calls are discarded.
+  const filesSeqRef               = useRef(0)
+
+  const refreshFiles = useCallback(async () => {
+    const seq = ++filesSeqRef.current
+    const res = await fetch(`/studio/api/admin/projects/${projectId}/files`).then(r => r.json())
+    if (seq !== filesSeqRef.current) return // a newer request is in flight — discard
+    if (res.success) setFiles(res.data)
+  }, [projectId])
 
   const loadProject = useCallback(async () => {
-    const [projRes, filesRes] = await Promise.all([
-      fetch('/studio/api/admin/projects').then((r) => r.json()),
-      fetch(`/studio/api/admin/projects/${projectId}/files`).then((r) => r.json()),
-    ])
+    const projRes = await fetch('/studio/api/admin/projects').then(r => r.json())
     if (projRes.success) {
       const p = projRes.data.find((x: StudioProject) => x.projectId === projectId)
       setProject(p ?? null)
     }
-    if (filesRes.success) setFiles(filesRes.data)
+    await refreshFiles()
     setLoading(false)
-  }, [projectId])
+  }, [projectId, refreshFiles])
 
   useEffect(() => { loadProject() }, [loadProject])
 
-  // Auto-refresh every 3 s while any uploaded file is still being watermarked (PROCESSING).
-  // Driven by state so concurrent uploads can't accidentally cancel each other's polls.
+  // Auto-refresh every 3 s while any uploaded file is still watermarking (PROCESSING).
+  // State-driven so concurrent uploads can never cancel each other's polls.
   useEffect(() => {
-    const hasDoneUploads  = uploads.some(u => u.status === 'done')
-    const hasProcessing   = files.some(f => f.processingStatus === 'PROCESSING')
+    const hasDoneUploads = uploads.some(u => u.status === 'done')
+    const hasProcessing  = files.some(f => f.processingStatus === 'PROCESSING')
     if (!hasDoneUploads || !hasProcessing) return
-    const timer = setTimeout(() => {
-      fetch(`/studio/api/admin/projects/${projectId}/files`)
-        .then(r => r.json())
-        .then(res => { if (res.success) setFiles(res.data) })
-        .catch(() => {})
-    }, 3000)
+    const timer = setTimeout(refreshFiles, 3000)
     return () => clearTimeout(timer)
-  }, [files, uploads, projectId])
+  }, [files, uploads, refreshFiles])
 
   const uploadFile = async (file: File, itemId: string) => {
     const update = (patch: Partial<UploadItem>) =>
@@ -119,7 +121,7 @@ export default function ProjectDetailPage() {
 
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
       update({ status: 'done', progress: 100 })
-      loadProject()
+      refreshFiles()
     } catch (err) {
       update({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
     }
