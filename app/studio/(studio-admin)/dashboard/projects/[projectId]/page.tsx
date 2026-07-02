@@ -49,28 +49,6 @@ export default function ProjectDetailPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const fileInputRef              = useRef<HTMLInputElement>(null)
-  const pollRef                   = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollCountRef              = useRef(0)
-
-  const stopPolling = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    pollCountRef.current = 0
-  }
-
-  const startPolling = useCallback(() => {
-    if (pollRef.current) return // already running
-    pollCountRef.current = 0
-    pollRef.current = setInterval(async () => {
-      pollCountRef.current++
-      if (pollCountRef.current > 40) { stopPolling(); return } // safety: max 2 min
-      const res = await fetch(`/studio/api/admin/projects/${projectId}/files`).then(r => r.json())
-      if (res.success) {
-        setFiles(res.data)
-        const stillProcessing = res.data.some((f: MediaFile) => f.processingStatus === 'PROCESSING')
-        if (!stillProcessing) stopPolling()
-      }
-    }, 3000)
-  }, [projectId])
 
   const loadProject = useCallback(async () => {
     const [projRes, filesRes] = await Promise.all([
@@ -81,17 +59,26 @@ export default function ProjectDetailPage() {
       const p = projRes.data.find((x: StudioProject) => x.projectId === projectId)
       setProject(p ?? null)
     }
-    if (filesRes.success) {
-      setFiles(filesRes.data)
-      const hasProcessing = filesRes.data.some((f: MediaFile) => f.processingStatus === 'PROCESSING')
-      if (hasProcessing) startPolling()
-      else stopPolling()
-    }
+    if (filesRes.success) setFiles(filesRes.data)
     setLoading(false)
-  }, [projectId, startPolling])
+  }, [projectId])
 
   useEffect(() => { loadProject() }, [loadProject])
-  useEffect(() => () => stopPolling(), [])
+
+  // Auto-refresh every 3 s while any uploaded file is still being watermarked (PROCESSING).
+  // Driven by state so concurrent uploads can't accidentally cancel each other's polls.
+  useEffect(() => {
+    const hasDoneUploads  = uploads.some(u => u.status === 'done')
+    const hasProcessing   = files.some(f => f.processingStatus === 'PROCESSING')
+    if (!hasDoneUploads || !hasProcessing) return
+    const timer = setTimeout(() => {
+      fetch(`/studio/api/admin/projects/${projectId}/files`)
+        .then(r => r.json())
+        .then(res => { if (res.success) setFiles(res.data) })
+        .catch(() => {})
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [files, uploads, projectId])
 
   const uploadFile = async (file: File, itemId: string) => {
     const update = (patch: Partial<UploadItem>) =>
