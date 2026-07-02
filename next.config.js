@@ -4,7 +4,6 @@ const nextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
       { protocol: 'https', hostname: 'previews.vayustudios.com' },
-      { protocol: 'https', hostname: 'picsum.photos' },
       ...(process.env.CLOUDFRONT_DOMAIN
         ? [{ protocol: 'https', hostname: process.env.CLOUDFRONT_DOMAIN.replace('https://', '') }]
         : []),
