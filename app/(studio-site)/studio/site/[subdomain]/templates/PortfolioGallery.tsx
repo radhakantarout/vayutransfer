@@ -4,21 +4,23 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 
 interface Photo { id: string; url: string; caption?: string; category?: string }
 
-// Seeded placeholder photos — shown when the studio hasn't uploaded portfolio photos yet.
-// Using picsum.photos with stable seeds so the same demo photo appears every time.
+// Demo photos from /public — shown when the studio hasn't uploaded portfolio photos yet.
 const DEMO_PHOTOS: Photo[] = [
-  { id: 'd1', url: 'https://picsum.photos/seed/vs_w1/600/750', category: 'Wedding' },
-  { id: 'd2', url: 'https://picsum.photos/seed/vs_w2/600/750', category: 'Wedding' },
-  { id: 'd3', url: 'https://picsum.photos/seed/vs_w3/600/750', category: 'Wedding' },
-  { id: 'd4', url: 'https://picsum.photos/seed/vs_p1/600/750', category: 'Portrait' },
-  { id: 'd5', url: 'https://picsum.photos/seed/vs_p2/600/750', category: 'Portrait' },
-  { id: 'd6', url: 'https://picsum.photos/seed/vs_pw1/600/750', category: 'Pre-Wedding' },
-  { id: 'd7', url: 'https://picsum.photos/seed/vs_pw2/600/750', category: 'Pre-Wedding' },
-  { id: 'd8', url: 'https://picsum.photos/seed/vs_c1/600/750', category: 'Corporate' },
-  { id: 'd9', url: 'https://picsum.photos/seed/vs_f1/600/750', category: 'Fashion' },
-  { id: 'd10', url: 'https://picsum.photos/seed/vs_f2/600/750', category: 'Fashion' },
-  { id: 'd11', url: 'https://picsum.photos/seed/vs_g1/600/750', category: 'General' },
-  { id: 'd12', url: 'https://picsum.photos/seed/vs_g2/600/750', category: 'General' },
+  { id: 'd1',  url: '/images/gallery/wedding/wedding_1.jpeg',                    category: 'Wedding' },
+  { id: 'd2',  url: '/images/gallery/wedding/wedding_bengali.png',               category: 'Wedding' },
+  { id: 'd3',  url: '/images/gallery/wedding/Wedding_punjabi.png',               category: 'Wedding' },
+  { id: 'd4',  url: '/images/gallery/wedding/wedding_kerla.png',                 category: 'Wedding' },
+  { id: 'd5',  url: '/images/gallery/pre-wedding/pre-wedding-banglore.png',      category: 'Pre-Wedding' },
+  { id: 'd6',  url: '/images/gallery/pre-wedding/pre-wedding-konark.png',        category: 'Pre-Wedding' },
+  { id: 'd7',  url: '/images/gallery/pre-wedding/pre-wedding_rajasthan.png',     category: 'Pre-Wedding' },
+  { id: 'd8',  url: '/images/gallery/portfolio/1.png',                           category: 'Portrait' },
+  { id: 'd9',  url: '/images/gallery/portfolio/2.png',                           category: 'Portrait' },
+  { id: 'd10', url: '/images/gallery/corporate/1.png',                           category: 'Corporate' },
+  { id: 'd11', url: '/images/gallery/corporate/2.png',                           category: 'Corporate' },
+  { id: 'd12', url: '/images/gallery/fashion/1.png',                             category: 'Fashion' },
+  { id: 'd13', url: '/images/gallery/fashion/2.png',                             category: 'Fashion' },
+  { id: 'd14', url: '/images/gallery/school-college/1.png',                      category: 'School' },
+  { id: 'd15', url: '/images/gallery/school-college/2.png',                      category: 'School' },
 ]
 
 // ── AlbumBook (3D page-flip viewer) ─────────────────────────────────────────
