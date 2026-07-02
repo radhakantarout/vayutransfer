@@ -2,6 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
+import SocialIcons from './SocialIcons'
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#D4849A'
@@ -70,10 +71,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
           <h2 className="text-4xl font-light mb-8">About Us</h2>
           <p className="text-lg font-light leading-relaxed opacity-70">{site.about}</p>
           {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
-          <div className="mt-6 flex items-center justify-center gap-6">
-            {site.socialLinks?.instagram && <a href={site.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold uppercase tracking-wider transition-opacity hover:opacity-60" style={{ color: accent }}>Instagram</a>}
-            {site.socialLinks?.facebook && <a href={site.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold uppercase tracking-wider transition-opacity hover:opacity-60" style={{ color: accent }}>Facebook</a>}
-          </div>
+          <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mt-6" color={accent} />
         </div>
       </section>
 

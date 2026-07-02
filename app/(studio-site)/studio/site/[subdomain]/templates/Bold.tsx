@@ -2,6 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
+import SocialIcons from './SocialIcons'
 
 export default function Bold({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#FF3B30'
@@ -49,11 +50,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
             <p className="text-white/60 leading-relaxed">{site.about}</p>
             {site.city && <p className="mt-6 text-xs font-bold uppercase tracking-widest" style={{ color: accent }}>{site.city}</p>}
           </div>
-          <div className="flex flex-col gap-3">
-            {site.socialLinks?.instagram && <a href={site.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="border border-white/10 rounded-xl px-6 py-4 text-sm font-bold uppercase tracking-wider hover:border-white/30 transition-colors">↗ Instagram</a>}
-            {site.socialLinks?.facebook && <a href={site.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="border border-white/10 rounded-xl px-6 py-4 text-sm font-bold uppercase tracking-wider hover:border-white/30 transition-colors">↗ Facebook</a>}
-            {site.socialLinks?.youtube && <a href={site.socialLinks.youtube} target="_blank" rel="noopener noreferrer" className="border border-white/10 rounded-xl px-6 py-4 text-sm font-bold uppercase tracking-wider hover:border-white/30 transition-colors">↗ YouTube</a>}
-          </div>
+          <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="flex-col items-start gap-3" iconClassName="border border-white/10 rounded-xl px-6 py-4 hover:border-white/30 transition-colors" />
         </div>
       </section>
 

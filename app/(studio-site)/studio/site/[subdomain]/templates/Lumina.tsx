@@ -2,6 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
+import SocialIcons from './SocialIcons'
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#C9A84C'
@@ -98,11 +99,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 function SocialFooter({ site, accent }: { site: StudioWebsite; accent: string }) {
   return (
     <footer className="py-10 px-6 text-center text-xs opacity-30" style={{ borderTop: '1px solid #222' }}>
-      <div className="flex items-center justify-center gap-6 mb-4">
-        {site.socialLinks?.instagram && <a href={site.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="hover:opacity-70">Instagram</a>}
-        {site.socialLinks?.facebook && <a href={site.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="hover:opacity-70">Facebook</a>}
-        {site.socialLinks?.youtube && <a href={site.socialLinks.youtube} target="_blank" rel="noopener noreferrer" className="hover:opacity-70">YouTube</a>}
-      </div>
+      <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mb-4" />
       <p>{site.heroTitle} · Powered by <span style={{ color: accent }}>VayuStudios</span></p>
     </footer>
   )
