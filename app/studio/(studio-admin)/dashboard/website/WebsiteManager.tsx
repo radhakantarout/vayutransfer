@@ -153,12 +153,21 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
           )}
         </div>
         <div className="flex items-center gap-3">
-          {/* Live/Draft toggle */}
-          <button
-            onClick={() => save({ status: site.status === 'LIVE' ? 'DRAFT' : 'LIVE' })}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${site.status === 'LIVE' ? 'bg-green-500/15 text-green-400 border border-green-500/30' : 'bg-card border border-border text-muted'}`}>
-            {site.status === 'LIVE' ? '● Live' : '○ Draft'}
-          </button>
+          {site.status === 'LIVE' ? (
+            <button
+              onClick={() => save({ status: 'DRAFT' })}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors">
+              ● Live — click to unpublish
+            </button>
+          ) : (
+            <button
+              onClick={() => save({ status: 'LIVE' })}
+              disabled={!site.subdomain}
+              title={!site.subdomain ? 'Set a subdomain first in the Domain tab' : ''}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
+              ↑ Publish Website
+            </button>
+          )}
           <button onClick={() => save()} disabled={saving}
             className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-60 transition-opacity">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
