@@ -2,6 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
+import SocialIcons from './SocialIcons'
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#1A1A1A'
@@ -102,11 +103,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       </section>
 
       <footer className="py-8 px-6 border-t border-gray-100 text-center">
-        <div className="flex items-center justify-center gap-6 mb-3">
-          {site.socialLinks?.instagram && <a href={site.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-700 tracking-wider uppercase">Instagram</a>}
-          {site.socialLinks?.facebook && <a href={site.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-700 tracking-wider uppercase">Facebook</a>}
-          {site.socialLinks?.youtube && <a href={site.socialLinks.youtube} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-700 tracking-wider uppercase">YouTube</a>}
-        </div>
+        <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mb-3 text-gray-400" iconClassName="hover:!opacity-100 text-gray-400 hover:text-gray-700" />
         <p className="text-xs text-gray-300">{site.heroTitle} · Powered by VayuStudios</p>
       </footer>
     </div>

@@ -2,6 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
+import SocialIcons from './SocialIcons'
 
 export default function Ember({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#C4622D'
@@ -65,10 +66,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
             <h2 className="text-3xl font-light mb-6">About Us</h2>
             <p className="leading-relaxed opacity-70 text-sm">{site.about}</p>
             {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
-            <div className="mt-6 flex gap-4">
-              {site.socialLinks?.instagram && <a href={site.socialLinks.instagram} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold underline" style={{ color: accent }}>Instagram</a>}
-              {site.socialLinks?.facebook && <a href={site.socialLinks.facebook} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold underline" style={{ color: accent }}>Facebook</a>}
-            </div>
+            <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" color={accent} />
           </div>
         </div>
       </section>
