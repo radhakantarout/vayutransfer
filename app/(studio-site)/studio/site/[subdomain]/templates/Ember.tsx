@@ -1,6 +1,7 @@
 // Template: Ember — Warm earth tones, soft and inviting
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
+import PortfolioGallery from './PortfolioGallery'
 
 export default function Ember({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#C4622D'
@@ -43,21 +44,13 @@ export default function Ember({ site }: { site: StudioWebsite }) {
         </div>
       </section>
 
-      {/* Gallery */}
-      {site.galleryPhotos.length > 1 && (
-        <section id="gallery" className="py-20 px-6">
-          <div className="max-w-5xl mx-auto">
-            <h2 className="text-3xl font-light text-center mb-12">Our Work</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {site.galleryPhotos.slice(1, 10).map(photo => (
-                <div key={photo.id} className="group overflow-hidden rounded-2xl" style={{ aspectRatio: '4/5' }}>
-                  <img src={photo.url} alt={photo.caption ?? ''} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+            {/* Gallery */}
+      <section id="gallery" className="py-20 px-6">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-light text-center mb-12">Our Work</h2>
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+        </div>
+      </section>
 
       {/* About */}
       <section id="about" className="py-20 px-6" style={{ background: '#F0E8DF' }}>

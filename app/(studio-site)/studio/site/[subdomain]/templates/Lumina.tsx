@@ -1,6 +1,7 @@
 // Template: Lumina — Dark, elegant, full-bleed
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
+import PortfolioGallery from './PortfolioGallery'
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#C9A84C'
@@ -35,21 +36,12 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      {site.galleryPhotos.length > 0 && (
-        <section className="py-24 px-6">
-          <div className="max-w-6xl mx-auto">
-            <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">Portfolio</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {site.galleryPhotos.slice(0, 9).map((photo, i) => (
-                <div key={photo.id} className={`overflow-hidden ${i === 0 ? 'md:col-span-2 md:row-span-2' : ''}`}
-                  style={{ aspectRatio: i === 0 ? '16/9' : '4/3' }}>
-                  <img src={photo.url} alt={photo.caption ?? ''} className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+      <section className="py-24 px-6">
+        <div className="max-w-6xl mx-auto">
+          <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">Portfolio</p>
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+        </div>
+      </section>
 
       {/* About */}
       <section className="py-24 px-6" style={{ background: '#111' }}>

@@ -1,6 +1,7 @@
 // Template: Bold — Large typography, high contrast, modern
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
+import PortfolioGallery from './PortfolioGallery'
 
 export default function Bold({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#FF3B30'
@@ -30,35 +31,15 @@ export default function Bold({ site }: { site: StudioWebsite }) {
         </div>
       </section>
 
-      {/* Hero image strip */}
-      {site.galleryPhotos.length > 0 && (
-        <section className="flex overflow-hidden" style={{ height: '60vh' }}>
-          {site.galleryPhotos.slice(0, 3).map(photo => (
-            <div key={photo.id} className="flex-1 overflow-hidden">
-              <img src={photo.url} alt="" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* Gallery grid */}
-      {site.galleryPhotos.length > 3 && (
-        <section className="px-6 py-16 border-b border-white/10">
-          <div className="max-w-6xl mx-auto">
-            <div className="flex items-baseline justify-between mb-8">
-              <h2 className="text-3xl font-black uppercase">Work</h2>
-              <span style={{ color: accent }} className="text-xs font-bold uppercase tracking-widest">Selected Projects</span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {site.galleryPhotos.slice(3, 11).map(photo => (
-                <div key={photo.id} className="overflow-hidden" style={{ aspectRatio: '3/4' }}>
-                  <img src={photo.url} alt={photo.caption ?? ''} className="w-full h-full object-cover hover:scale-110 transition-transform duration-500" />
-                </div>
-              ))}
-            </div>
+            {/* Gallery */}
+      <section className="px-6 py-16 border-b border-white/10">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-baseline justify-between mb-8">
+            <h2 className="text-3xl font-black uppercase">Work</h2>
           </div>
-        </section>
-      )}
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+        </div>
+      </section>
 
       {/* About */}
       <section className="px-6 py-16 border-b border-white/10">

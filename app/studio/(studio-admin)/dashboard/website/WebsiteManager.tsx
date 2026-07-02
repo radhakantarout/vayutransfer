@@ -27,10 +27,9 @@ type Tab = 'template' | 'content' | 'gallery' | 'services' | 'contact' | 'bookin
 interface Props {
   studioId: string
   studioName: string
-  r2PreviewUrls?: string[]  // photos from existing projects to pick from
 }
 
-export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [] }: Props) {
+export default function WebsiteManager({ studioId, studioName }: Props) {
   const [site, setSite] = useState<StudioWebsite | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -115,13 +114,41 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
     update({ services: site.services.map(s => s.id === id ? { ...s, ...patch } : s) })
   }
 
-  const addGalleryPhoto = (url: string) => {
-    if (!site) return
-    update({ galleryPhotos: [...site.galleryPhotos, { id: randomUUID(), url, caption: '' }] })
+  const [uploading, setUploading] = useState(false)
+  const [uploadCategory, setUploadCategory] = useState('General')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const CATEGORIES = ['Wedding', 'Pre-Wedding', 'Portrait', 'Corporate', 'Fashion', 'School', 'General']
+
+  const handlePhotoUpload = async (files: FileList | null) => {
+    if (!files || !site) return
+    setUploading(true)
+    for (const file of Array.from(files)) {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('category', uploadCategory)
+      const res = await fetch('/studio/api/admin/website/portfolio-upload', { method: 'POST', body: form })
+      const data = await res.json()
+      if (data.success) {
+        setSite(prev => prev ? {
+          ...prev,
+          galleryPhotos: [...prev.galleryPhotos, { id: data.id, url: data.url, caption: '', category: data.category }]
+        } : prev)
+      }
+    }
+    setUploading(false)
   }
 
-  const removeGalleryPhoto = (id: string) => {
+  const removeGalleryPhoto = async (id: string) => {
     if (!site) return
+    const photo = site.galleryPhotos.find(p => p.id === id)
+    if (photo) {
+      fetch('/studio/api/admin/website/portfolio-upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: photo.url }),
+      }).catch(() => {})
+    }
     update({ galleryPhotos: site.galleryPhotos.filter(p => p.id !== id) })
   }
 
@@ -260,42 +287,59 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
 
       {/* ── Gallery ── */}
       {tab === 'gallery' && (
-        <div className="space-y-4">
-          <p className="text-xs text-muted">Pick photos from your projects to showcase. The first photo is your hero background.</p>
+        <div className="space-y-5">
+          <p className="text-xs text-muted">Upload your best portfolio photos. Visitors see a clean gallery with a 3D album viewer — no watermarks.</p>
 
-          {/* Current gallery */}
-          {site.galleryPhotos.length > 0 && (
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-              {site.galleryPhotos.map((photo, idx) => (
-                <div key={photo.id} className="relative group rounded-xl overflow-hidden" style={{ aspectRatio: '1' }}>
-                  <img src={photo.url} alt="" className="w-full h-full object-cover" />
-                  {idx === 0 && <span className="absolute top-1 left-1 bg-accent text-bg text-[9px] font-bold px-1.5 py-0.5 rounded-full">HERO</span>}
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
-                    <button onClick={() => movePhoto(photo.id, -1)} className="bg-white/20 text-white text-xs px-1.5 py-0.5 rounded" disabled={idx === 0}>←</button>
-                    <button onClick={() => movePhoto(photo.id, 1)} className="bg-white/20 text-white text-xs px-1.5 py-0.5 rounded" disabled={idx === site.galleryPhotos.length - 1}>→</button>
-                    <button onClick={() => removeGalleryPhoto(photo.id)} className="bg-red-500/80 text-white text-xs px-1.5 py-0.5 rounded">✕</button>
-                  </div>
-                </div>
-              ))}
+          {/* Upload area */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <select value={uploadCategory} onChange={e => setUploadCategory(e.target.value)}
+                className="bg-card border border-border rounded-xl px-3 py-2 text-sm text-text-primary outline-none focus:border-accent">
+                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-50 hover:opacity-90 transition-opacity">
+                {uploading ? 'Uploading…' : '+ Upload Photos'}
+              </button>
+              <span className="text-xs text-muted">Select category first, then upload</span>
             </div>
-          )}
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+              onChange={e => handlePhotoUpload(e.target.files)} />
 
-          {/* Add from project photos */}
-          {r2PreviewUrls.length > 0 && (
+            {/* Drop zone */}
+            <div
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); handlePhotoUpload(e.dataTransfer.files) }}
+              className="border-2 border-dashed border-border rounded-2xl p-8 text-center text-muted text-sm hover:border-accent/50 transition-colors cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}>
+              Drag & drop photos here or click to select
+            </div>
+          </div>
+
+          {/* Existing gallery grid */}
+          {site.galleryPhotos.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Add from your project photos</p>
-              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 max-h-64 overflow-y-auto">
-                {r2PreviewUrls.filter(url => !site.galleryPhotos.find(p => p.url === url)).map(url => (
-                  <button key={url} onClick={() => addGalleryPhoto(url)}
-                    className="rounded-xl overflow-hidden border-2 border-transparent hover:border-accent transition-colors" style={{ aspectRatio: '1' }}>
-                    <img src={url} alt="" className="w-full h-full object-cover" />
-                  </button>
+              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">
+                Portfolio photos ({site.galleryPhotos.length})
+              </p>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                {site.galleryPhotos.map((photo, idx) => (
+                  <div key={photo.id} className="relative group rounded-xl overflow-hidden" style={{ aspectRatio: '1' }}>
+                    <img src={photo.url} alt="" className="w-full h-full object-cover" />
+                    {photo.category && (
+                      <span className="absolute top-1 left-1 bg-black/70 text-white text-[8px] font-bold px-1 py-0.5 rounded truncate max-w-[70%]">
+                        {photo.category}
+                      </span>
+                    )}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                      <button onClick={() => movePhoto(photo.id, -1)} className="bg-white/20 text-white text-xs px-1.5 py-0.5 rounded" disabled={idx === 0}>←</button>
+                      <button onClick={() => movePhoto(photo.id, 1)} className="bg-white/20 text-white text-xs px-1.5 py-0.5 rounded" disabled={idx === site.galleryPhotos.length - 1}>→</button>
+                      <button onClick={() => removeGalleryPhoto(photo.id)} className="bg-red-500/80 text-white text-xs px-1.5 py-0.5 rounded">✕</button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
-          )}
-          {site.galleryPhotos.length === 0 && r2PreviewUrls.length === 0 && (
-            <p className="text-sm text-muted text-center py-8">Upload photos to your projects first, then you can add them to your website gallery.</p>
           )}
         </div>
       )}

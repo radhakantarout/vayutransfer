@@ -1,6 +1,7 @@
 // Template: Bloom — Pastel, feminine, airy, romantic
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
+import PortfolioGallery from './PortfolioGallery'
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#D4849A'
@@ -51,25 +52,16 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
         </div>
       </section>
 
-      {/* Gallery */}
-      {site.galleryPhotos.length > 1 && (
-        <section id="gallery" className="py-20 px-6">
-          <div className="max-w-5xl mx-auto">
-            <div className="text-center mb-12">
-              <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>Portfolio</p>
-              <h2 className="text-4xl font-light">Our Beautiful Work</h2>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {site.galleryPhotos.slice(1, 10).map((photo, i) => (
-                <div key={photo.id} className={`overflow-hidden rounded-3xl ${i === 0 ? 'md:row-span-2' : ''}`}
-                  style={{ aspectRatio: i === 0 ? '3/4' : '4/3' }}>
-                  <img src={photo.url} alt={photo.caption ?? ''} className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" />
-                </div>
-              ))}
-            </div>
+            {/* Gallery */}
+      <section id="gallery" className="py-20 px-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>Portfolio</p>
+            <h2 className="text-4xl font-light">Our Beautiful Work</h2>
           </div>
-        </section>
-      )}
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+        </div>
+      </section>
 
       {/* About */}
       <section id="about" className="py-20 px-6" style={{ background: 'linear-gradient(135deg, #FDF0EE 0%, #FDF8F6 100%)' }}>
