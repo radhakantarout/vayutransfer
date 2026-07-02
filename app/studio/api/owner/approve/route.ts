@@ -76,10 +76,16 @@ export async function GET(req: NextRequest) {
       studioPutItem(TABLES.users,   adminUser as unknown as Record<string, unknown>),
     ])
 
-    const setupUrl = `${origin}/studio/login?setup=1&email=${encodeURIComponent(email)}`
-    void sendStudioCredentialsEmail(email, adminName, studioName, email, setupUrl)
-
     console.log(`[approve] Studio created: ${studioName} (${studioId}) for ${email}`)
+
+    const setupUrl = `${origin}/studio/login?setup=1&email=${encodeURIComponent(email)}`
+    try {
+      await sendStudioCredentialsEmail(email, adminName, studioName, email, setupUrl)
+      console.log(`[approve] Credentials email sent to ${email}`)
+    } catch (emailErr) {
+      console.error(`[approve] SES failed for ${email} — studio ${studioId} created but email not sent`, emailErr)
+    }
+
     return NextResponse.redirect(
       new URL(`/studio/approved?status=created&name=${encodeURIComponent(studioName)}&email=${encodeURIComponent(email)}`, req.url)
     )

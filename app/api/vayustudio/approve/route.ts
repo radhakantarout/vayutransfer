@@ -101,7 +101,12 @@ export async function GET(req: NextRequest) {
 
   // Welcome email — setup=1 auto-opens password-set flow with email pre-filled
   const setupUrl = `${origin}/studio/login?setup=1&email=${encodeURIComponent(email)}`
-  void sendStudioCredentialsEmail(email, name, studioName, email, setupUrl)
+  try {
+    await sendStudioCredentialsEmail(email, name, studioName, email, setupUrl)
+    console.log(`[enquiry-approve] Credentials email sent to ${email}`)
+  } catch (emailErr) {
+    console.error(`[enquiry-approve] SES failed for ${email} — studio ${studioId} created but email not sent`, emailErr)
+  }
 
   return html(
     'Studio approved!',
