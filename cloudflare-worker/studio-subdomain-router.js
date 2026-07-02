@@ -16,8 +16,9 @@ export default {
 
     // Route test subdomains (*.test.vayustudios.com) to preview deployment
     const isTest     = originalHost.endsWith('.test.vayustudios.com')
-    const vercelHost = isTest ? 'test.vayustudios.com' : 'vayustudios.com'
-    const vercelUrl  = isTest ? 'https://test.vayustudios.com' : 'https://vayustudios.com'
+    // Use www.vayustudios.com (not apex) — Vercel redirects apex → www, which breaks routing
+    const vercelHost = isTest ? 'test.vayustudios.com' : 'www.vayustudios.com'
+    const vercelUrl  = isTest ? 'https://test.vayustudios.com' : 'https://www.vayustudios.com'
 
     // Build target URL: same path + query on the correct Vercel deployment
     const targetUrl = new URL(originalUrl.pathname + originalUrl.search, vercelUrl)

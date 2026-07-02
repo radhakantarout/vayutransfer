@@ -136,7 +136,16 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
     update({ galleryPhotos: arr })
   }
 
-  const publishUrl = site?.subdomain ? `https://${site.subdomain}.vayustudios.com` : null
+  const studioUrl  = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com'
+  const studioBase = studioUrl.replace(/^https?:\/\//, '')
+  const isTest     = studioBase.startsWith('test.')
+  // In test env, use a direct path URL (*.test.vayustudios.com needs paid SSL).
+  // In production, use the real subdomain URL.
+  const publishUrl = site?.subdomain
+    ? isTest
+      ? `${studioUrl}/studio/site/${site.subdomain}`
+      : `https://${site.subdomain}.${studioBase}`
+    : null
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full" /></div>
   if (!site) return null
@@ -152,12 +161,21 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
           )}
         </div>
         <div className="flex items-center gap-3">
-          {/* Live/Draft toggle */}
-          <button
-            onClick={() => save({ status: site.status === 'LIVE' ? 'DRAFT' : 'LIVE' })}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${site.status === 'LIVE' ? 'bg-green-500/15 text-green-400 border border-green-500/30' : 'bg-card border border-border text-muted'}`}>
-            {site.status === 'LIVE' ? '● Live' : '○ Draft'}
-          </button>
+          {site.status === 'LIVE' ? (
+            <button
+              onClick={() => save({ status: 'DRAFT' })}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors">
+              ● Live — click to unpublish
+            </button>
+          ) : (
+            <button
+              onClick={() => save({ status: 'LIVE' })}
+              disabled={!site.subdomain}
+              title={!site.subdomain ? 'Set a subdomain first in the Domain tab' : ''}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
+              ↑ Publish Website
+            </button>
+          )}
           <button onClick={() => save()} disabled={saving}
             className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-60 transition-opacity">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
@@ -353,7 +371,9 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
               <input value={subdomainInput} onChange={e => onSubdomainChange(e.target.value)}
                 className="flex-1 bg-card px-4 py-3 text-sm text-text-primary outline-none"
                 placeholder="ramstudio" />
-              <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">.vayustudios.com</span>
+              <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">
+                {isTest ? ` → ${studioBase}/studio/site/` : `.${studioBase}`}
+              </span>
             </div>
             {checkingSlug && <p className="text-xs text-muted mt-1.5">Checking…</p>}
             {subdomainCheck && !checkingSlug && (
@@ -371,9 +391,9 @@ export default function WebsiteManager({ studioId, studioName, r2PreviewUrls = [
           {site.subdomain && (
             <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
               <p className="text-xs font-semibold text-text-primary">Your website is at:</p>
-              <a href={`https://${site.subdomain}.vayustudios.com`} target="_blank" rel="noopener noreferrer"
+              <a href={publishUrl!} target="_blank" rel="noopener noreferrer"
                 className="text-sm text-accent hover:underline break-all">
-                https://{site.subdomain}.vayustudios.com
+                {publishUrl}
               </a>
               <p className="text-xs text-muted mt-2">Make sure your site is set to <strong>Live</strong> for it to be publicly visible.</p>
             </div>
