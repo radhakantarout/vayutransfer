@@ -19,12 +19,15 @@ export async function middleware(request: NextRequest) {
     host === 'test.vayustudios.com'     ||
     host === 'www.test.vayustudios.com'
 
-  // Studio custom subdomain: <slug>.vayustudios.com
-  // e.g. ramstudio.vayustudios.com — but NOT www.vayustudios.com
-  const studioSubdomainMatch =
-    (host.endsWith('.vayustudios.com') && !isStudioAppDomain)
-      ? host.replace('.vayustudios.com', '')
-      : null
+  // Studio custom subdomain: <slug>.vayustudios.com or <slug>.test.vayustudios.com
+  // rkrstudio.test.vayustudios.com → slug = 'rkrstudio' (strip .test.vayustudios.com)
+  // rkrstudio.vayustudios.com      → slug = 'rkrstudio' (strip .vayustudios.com)
+  let studioSubdomainMatch: string | null = null
+  if (host.endsWith('.test.vayustudios.com')) {
+    studioSubdomainMatch = host.replace('.test.vayustudios.com', '')
+  } else if (host.endsWith('.vayustudios.com') && !isStudioAppDomain) {
+    studioSubdomainMatch = host.replace('.vayustudios.com', '')
+  }
 
   // Future: custom domain (e.g. www.ramstudio.in)
   // Non-vayustudios + non-vayutransfer hosts are treated as custom studio domains.

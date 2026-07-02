@@ -1,33 +1,31 @@
 /**
  * Cloudflare Worker: Studio Subdomain Router
  *
- * Route:  *.vayustudios.com/*
- * Effect: Proxies rkrstudio.vayustudios.com → vayustudios.com
- *         and passes the original host as x-forwarded-host so
- *         Next.js middleware can detect the studio slug.
+ * Routes:
+ *   *.vayustudios.com/*      → https://vayustudios.com      (production)
+ *   *.test.vayustudios.com/* → https://test.vayustudios.com (test/preview)
  *
- * Deploy steps (in Cloudflare dashboard):
- *   1. Workers & Pages → Create Application → Create Worker
- *   2. Paste this code → Deploy
- *   3. Settings → Triggers → Add Route:
- *        Route:   *.vayustudios.com/*
- *        Zone:    vayustudios.com
+ * Passes the original host as x-studio-subdomain so Next.js middleware
+ * can detect the studio slug without Vercel overwriting x-forwarded-host.
  */
-
-const VERCEL_TARGET = 'https://vayustudios.com'
 
 export default {
   async fetch(request) {
     const originalUrl  = new URL(request.url)
     const originalHost = request.headers.get('host') // e.g. rkrstudio.vayustudios.com
 
-    // Build target URL: same path + query, but on vayustudios.com
-    const targetUrl = new URL(originalUrl.pathname + originalUrl.search, VERCEL_TARGET)
+    // Route test subdomains (*.test.vayustudios.com) to preview deployment
+    const isTest     = originalHost.endsWith('.test.vayustudios.com')
+    const vercelHost = isTest ? 'test.vayustudios.com' : 'vayustudios.com'
+    const vercelUrl  = isTest ? 'https://test.vayustudios.com' : 'https://vayustudios.com'
+
+    // Build target URL: same path + query on the correct Vercel deployment
+    const targetUrl = new URL(originalUrl.pathname + originalUrl.search, vercelUrl)
 
     // Copy all incoming headers, override Host so Vercel routes correctly,
-    // and add x-forwarded-host so Next.js middleware sees the original subdomain.
+    // and add x-studio-subdomain so Next.js middleware sees the original subdomain.
     const headers = new Headers(request.headers)
-    headers.set('host', 'vayustudios.com')
+    headers.set('host', vercelHost)
     headers.set('x-studio-subdomain', originalHost)
 
     const response = await fetch(targetUrl.toString(), {
