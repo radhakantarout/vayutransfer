@@ -123,23 +123,30 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const handlePhotoUpload = async (files: FileList | null) => {
     if (!files || !site) return
     setUploading(true)
+    const newPhotos: WebsiteGalleryPhoto[] = []
     for (const file of Array.from(files)) {
       const form = new FormData()
       form.append('file', file)
       form.append('category', uploadCategory)
       const res = await fetch('/studio/api/admin/website/portfolio-upload', { method: 'POST', body: form })
       const data = await res.json()
-      if (data.success) {
-        setSite(prev => prev ? {
-          ...prev,
-          galleryPhotos: [...prev.galleryPhotos, { id: data.id, url: data.url, caption: '', category: data.category }]
-        } : prev)
-      }
+      if (data.success) newPhotos.push({ id: data.id, url: data.url, caption: '', category: data.category })
     }
+    if (newPhotos.length > 0) {
+      const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
+      setSite(prev => prev ? { ...prev, galleryPhotos: updatedPhotos } : prev)
+      // Persist to DynamoDB immediately — don't wait for manual Save
+      fetch('/studio/api/admin/website', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
+      }).catch(() => {})
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
     setUploading(false)
   }
 
-  const removeGalleryPhoto = async (id: string) => {
+  const removeGalleryPhoto = (id: string) => {
     if (!site) return
     const photo = site.galleryPhotos.find(p => p.id === id)
     if (photo) {
@@ -149,7 +156,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         body: JSON.stringify({ url: photo.url }),
       }).catch(() => {})
     }
-    update({ galleryPhotos: site.galleryPhotos.filter(p => p.id !== id) })
+    const updatedPhotos = site.galleryPhotos.filter(p => p.id !== id)
+    update({ galleryPhotos: updatedPhotos })
+    fetch('/studio/api/admin/website', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
+    }).catch(() => {})
   }
 
   const movePhoto = (id: string, dir: -1 | 1) => {
@@ -161,6 +174,11 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     if (to < 0 || to >= arr.length) return
     ;[arr[idx], arr[to]] = [arr[to], arr[idx]]
     update({ galleryPhotos: arr })
+    fetch('/studio/api/admin/website', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...site, galleryPhotos: arr }),
+    }).catch(() => {})
   }
 
   const studioUrl  = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com'
