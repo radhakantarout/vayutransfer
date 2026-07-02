@@ -1,6 +1,7 @@
 // Template: Clarity — Minimal white, editorial
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
+import PortfolioGallery from './PortfolioGallery'
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
   const accent = site.themeAccent ?? '#1A1A1A'
@@ -41,21 +42,12 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      {site.galleryPhotos.length > 1 && (
-        <section id="work" className="py-16 px-6">
-          <div className="max-w-6xl mx-auto">
-            <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">Selected Work</p>
-            <div className="columns-2 md:columns-3 gap-3 space-y-3">
-              {site.galleryPhotos.slice(1, 10).map(photo => (
-                <div key={photo.id} className="break-inside-avoid">
-                  <img src={photo.url} alt={photo.caption ?? ''} className="w-full object-cover hover:opacity-90 transition-opacity" />
-                  {photo.caption && <p className="text-xs text-gray-400 mt-1.5 px-0.5">{photo.caption}</p>}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+      <section id="work" className="py-16 px-6">
+        <div className="max-w-6xl mx-auto">
+          <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">Selected Work</p>
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+        </div>
+      </section>
 
       {/* About */}
       <section id="about" className="py-24 px-6 bg-gray-50">

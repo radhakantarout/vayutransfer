@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { jwtVerify } from 'jose'
-import { studioGetItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
-import type { Studio, MediaFile } from '@/types/studio'
+import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import type { Studio } from '@/types/studio'
 import WebsiteManager from './WebsiteManager'
 
 async function getAuth() {
@@ -24,24 +24,9 @@ export default async function WebsitePage() {
   const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
   if (!studio) redirect('/studio/login')
 
-  // Collect a sample of READY preview URLs from this studio's projects for gallery picker
-  const allFiles = await studioQueryByIndex<MediaFile>(
-    TABLES.mediafiles,
-    'studioId-uploadedAt-index',
-    'studioId = :s',
-    { ':s': studioId },
-    undefined,
-    200
-  ).catch(() => [] as MediaFile[])
-
-  const previewUrls = allFiles
-    .filter(f => f.processingStatus === 'READY' && f.r2PreviewUrl && f.fileType === 'IMAGE')
-    .map(f => f.r2PreviewUrl!)
-    .slice(0, 100)
-
   return (
     <div className="p-6 max-w-4xl">
-      <WebsiteManager studioId={studioId} studioName={studio.name} r2PreviewUrls={previewUrls} />
+      <WebsiteManager studioId={studioId} studioName={studio.name} />
     </div>
   )
 }
