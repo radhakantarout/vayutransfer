@@ -49,6 +49,28 @@ export default function ProjectDetailPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const fileInputRef              = useRef<HTMLInputElement>(null)
+  const pollRef                   = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollCountRef              = useRef(0)
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    pollCountRef.current = 0
+  }
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return // already running
+    pollCountRef.current = 0
+    pollRef.current = setInterval(async () => {
+      pollCountRef.current++
+      if (pollCountRef.current > 40) { stopPolling(); return } // safety: max 2 min
+      const res = await fetch(`/studio/api/admin/projects/${projectId}/files`).then(r => r.json())
+      if (res.success) {
+        setFiles(res.data)
+        const stillProcessing = res.data.some((f: MediaFile) => f.processingStatus === 'PROCESSING')
+        if (!stillProcessing) stopPolling()
+      }
+    }, 3000)
+  }, [projectId])
 
   const loadProject = useCallback(async () => {
     const [projRes, filesRes] = await Promise.all([
@@ -59,11 +81,17 @@ export default function ProjectDetailPage() {
       const p = projRes.data.find((x: StudioProject) => x.projectId === projectId)
       setProject(p ?? null)
     }
-    if (filesRes.success) setFiles(filesRes.data)
+    if (filesRes.success) {
+      setFiles(filesRes.data)
+      const hasProcessing = filesRes.data.some((f: MediaFile) => f.processingStatus === 'PROCESSING')
+      if (hasProcessing) startPolling()
+      else stopPolling()
+    }
     setLoading(false)
-  }, [projectId])
+  }, [projectId, startPolling])
 
   useEffect(() => { loadProject() }, [loadProject])
+  useEffect(() => () => stopPolling(), [])
 
   const uploadFile = async (file: File, itemId: string) => {
     const update = (patch: Partial<UploadItem>) =>
