@@ -5,18 +5,44 @@ import { useRouter } from 'next/navigation'
 
 const EVENT_TYPES = ['WEDDING', 'PRE_WEDDING', 'CORPORATE', 'SCHOOL', 'OTHER']
 
+function validateEmail(v: string) {
+  if (!v) return ''
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? '' : 'Enter a valid email address'
+}
+function validatePhone(v: string) {
+  if (!v) return ''
+  return /^[+\d\s\-()\/.]{7,15}$/.test(v.trim()) ? '' : 'Enter a valid phone number (digits, spaces, + allowed)'
+}
+
 export default function NewProjectPage() {
   const router = useRouter()
   const [form, setForm] = useState({
     clientName: '', clientEmail: '', clientPhone: '', eventDate: '', eventType: 'WEDDING',
   })
+  const [errors, setErrors]   = useState({ clientName: '', clientEmail: '', clientPhone: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
 
-  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }))
+  const set = (k: string, v: string) => {
+    setForm(f => ({ ...f, [k]: v }))
+    setErrors(e => ({ ...e, [k]: '' }))
+  }
+
+  const blurValidate = (k: string, v: string) => {
+    if (k === 'clientName')  setErrors(e => ({ ...e, clientName:  v.trim().length < 2 ? 'Name must be at least 2 characters' : '' }))
+    if (k === 'clientEmail') setErrors(e => ({ ...e, clientEmail: validateEmail(v) }))
+    if (k === 'clientPhone') setErrors(e => ({ ...e, clientPhone: validatePhone(v) }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const nameErr  = form.clientName.trim().length < 2 ? 'Name must be at least 2 characters' : ''
+    const emailErr = validateEmail(form.clientEmail)
+    const phoneErr = validatePhone(form.clientPhone)
+    if (nameErr || emailErr || phoneErr) {
+      setErrors({ clientName: nameErr, clientEmail: emailErr, clientPhone: phoneErr })
+      return
+    }
     setError(null)
     setLoading(true)
     try {
@@ -35,6 +61,26 @@ export default function NewProjectPage() {
     }
   }
 
+  const field = (label: string, k: keyof typeof form, type: string, required: boolean, placeholder: string) => (
+    <div key={k} className="space-y-1.5">
+      <label className="text-sm text-muted">{label}{required && <span className="text-danger ml-0.5">*</span>}</label>
+      <input
+        type={type}
+        value={form[k]}
+        onChange={e => set(k, e.target.value)}
+        onBlur={e => blurValidate(k, e.target.value)}
+        required={required}
+        placeholder={placeholder}
+        className={`w-full bg-bg border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors ${errors[k as keyof typeof errors] ? 'border-danger' : 'border-border'}`}
+      />
+      {errors[k as keyof typeof errors] && (
+        <p className="text-xs text-danger flex items-center gap-1">
+          <span>⚠</span> {errors[k as keyof typeof errors]}
+        </p>
+      )}
+    </div>
+  )
+
   return (
     <div className="max-w-xl mx-auto px-6 py-10">
       <div className="mb-8">
@@ -45,35 +91,30 @@ export default function NewProjectPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="bg-card border border-border rounded-2xl p-8 space-y-5">
-        {[
-          { label: 'Client name', key: 'clientName', type: 'text', required: true, placeholder: 'Priya & Ravi' },
-          { label: 'Client email', key: 'clientEmail', type: 'email', required: false, placeholder: 'priya@gmail.com' },
-          { label: 'Client phone', key: 'clientPhone', type: 'tel', required: false, placeholder: '9876543210' },
-          { label: 'Event date', key: 'eventDate', type: 'date', required: true, placeholder: '' },
-        ].map(({ label, key, type, required, placeholder }) => (
-          <div key={key} className="space-y-1.5">
-            <label className="text-sm text-muted">{label}{required && <span className="text-danger ml-0.5">*</span>}</label>
-            <input
-              type={type}
-              value={form[key as keyof typeof form]}
-              onChange={(e) => set(key, e.target.value)}
-              required={required}
-              placeholder={placeholder}
-              className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent"
-            />
-          </div>
-        ))}
+        {field('Client name', 'clientName', 'text',  true,  'Priya & Ravi')}
+        {field('Client email', 'clientEmail', 'email', false, 'priya@gmail.com')}
+        {field('Client phone', 'clientPhone', 'tel',   false, '9876543210')}
+
+        {/* Date — constrained width so it doesn't stretch */}
+        <div className="space-y-1.5">
+          <label className="text-sm text-muted">Event date <span className="text-danger">*</span></label>
+          <input
+            type="date"
+            value={form.eventDate}
+            onChange={e => set('eventDate', e.target.value)}
+            required
+            className="w-48 bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+          />
+        </div>
 
         <div className="space-y-1.5">
           <label className="text-sm text-muted">Event type <span className="text-danger">*</span></label>
           <select
             value={form.eventType}
-            onChange={(e) => set('eventType', e.target.value)}
+            onChange={e => set('eventType', e.target.value)}
             className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary focus:outline-none focus:border-accent"
           >
-            {EVENT_TYPES.map((t) => (
-              <option key={t} value={t}>{t.replace('_', ' ')}</option>
-            ))}
+            {EVENT_TYPES.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
           </select>
         </div>
 

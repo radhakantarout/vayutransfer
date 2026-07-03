@@ -40,6 +40,7 @@ function GlobeIcon()     { return <svg className="w-4 h-4" fill="none" viewBox="
 function HamburgerIcon() { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg> }
 function CloseIcon()     { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg> }
 function ChevronDown()   { return <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> }
+function HomeIcon()      { return <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg> }
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   const initials = name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -119,6 +120,11 @@ export default function StudioNavbar() {
           <div className="hidden md:flex items-center gap-6 text-base">
             {isLoggedIn ? (
               <>
+                {/* Stylish home icon for all logged-in users */}
+                <Link href="/studio/home" onClick={closeAll} title="Home"
+                  className={`flex items-center justify-center w-8 h-8 rounded-xl border transition-colors ${pathname === '/studio/home' ? 'border-accent/40 text-accent bg-accent/10' : 'border-border/60 text-muted hover:text-text-primary hover:bg-border/50 hover:border-border'}`}>
+                  <HomeIcon />
+                </Link>
                 {(auth as Auth).role === 'OWNER' && (
                   <><Link href="/studio/admin/studios" className={linkCls}>Studios</Link><Link href="/studio/admin/users" className={linkCls}>Users</Link></>
                 )}
@@ -128,6 +134,9 @@ export default function StudioNavbar() {
                 {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
                   <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} className={linkCls}>My Gallery</Link>
                 )}
+                {NAV_LINKS.map(({ label, href }) => (
+                  <Link key={href} href={href} className={linkCls}>{label}</Link>
+                ))}
               </>
             ) : (
               <>
@@ -255,6 +264,9 @@ export default function StudioNavbar() {
                 </div>
                 <span className="ml-auto text-[10px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5 flex-shrink-0">{ROLE_LABEL[(auth as Auth).role]}</span>
               </div>
+              <Link href="/studio/home" onClick={closeAll} className="flex items-center gap-2 py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                <HomeIcon /><span>Home</span>
+              </Link>
               {(auth as Auth).role === 'OWNER' && (
                 <><Link href="/studio/admin/studios" onClick={closeAll} className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">Studios <span className="text-muted text-sm">→</span></Link>
                 <Link href="/studio/admin/users" onClick={closeAll} className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">Users <span className="text-muted text-sm">→</span></Link></>
@@ -265,6 +277,11 @@ export default function StudioNavbar() {
               {(auth as Auth).role === 'CLIENT' && (auth as Auth).projectToken && (
                 <Link href={`/studio/gallery/${(auth as Auth).projectToken}`} onClick={closeAll} className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">My Gallery <span className="text-muted text-sm">→</span></Link>
               )}
+              {NAV_LINKS.map(({ label, href }) => (
+                <Link key={href} href={href} onClick={closeAll} className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                  {label} <span className="text-muted text-sm">→</span>
+                </Link>
+              ))}
               <button onClick={handleLogout} className="mt-4 w-full text-center py-3 rounded-xl border border-danger/30 text-danger text-sm font-semibold hover:bg-danger/10 transition-colors">Sign out</button>
             </>
           ) : (

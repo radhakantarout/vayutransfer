@@ -32,6 +32,8 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
   const [clientPhone, setPhone]         = useState(existing?.clientPhone ?? '')
   const [saving, setSaving]             = useState(false)
   const [error, setError]               = useState('')
+  const [emailError, setEmailError]     = useState('')
+  const [phoneError, setPhoneError]     = useState('')
   const overlayRef                      = useRef<HTMLDivElement>(null)
 
   // Close on Escape
@@ -41,9 +43,19 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
+  const validateEmail = (v: string) => {
+    if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())) setEmailError('Enter a valid email address')
+    else setEmailError('')
+  }
+  const validatePhone = (v: string) => {
+    if (v && !/^[+\d\s\-()\/.]{7,15}$/.test(v.trim())) setPhoneError('Enter a valid phone number')
+    else setPhoneError('')
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!eventDate) { setError('Please pick an event date.'); return }
+    if (emailError || phoneError) return
     setSaving(true)
     setError('')
     try {
@@ -118,7 +130,7 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
               value={eventDate}
               onChange={(e) => setEventDate(e.target.value)}
               required
-              className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors"
+              className="w-48 bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors"
             />
           </div>
 
@@ -144,20 +156,24 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
                 <input
                   type="email"
                   value={clientEmail}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setEmailError('') }}
+                  onBlur={(e) => validateEmail(e.target.value)}
                   placeholder="client@email.com"
-                  className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 transition-colors"
+                  className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none transition-colors ${emailError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'}`}
                 />
+                {emailError && <p className="text-[10px] text-danger">{emailError}</p>}
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-muted uppercase tracking-wider">Phone</label>
                 <input
                   type="tel"
                   value={clientPhone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => { setPhone(e.target.value); setPhoneError('') }}
+                  onBlur={(e) => validatePhone(e.target.value)}
                   placeholder="+91 XXXXX XXXXX"
-                  className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 transition-colors"
+                  className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none transition-colors ${phoneError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'}`}
                 />
+                {phoneError && <p className="text-[10px] text-danger">{phoneError}</p>}
               </div>
             </div>
           )}

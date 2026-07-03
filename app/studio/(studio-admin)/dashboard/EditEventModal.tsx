@@ -30,8 +30,24 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
     eventType:     project.eventType,
     eventLocation: project.eventLocation ?? '',
   })
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState('')
+  const [saving, setSaving]         = useState(false)
+  const [error,  setError]          = useState('')
+  const [nameError, setNameError]   = useState('')
+  const [emailError, setEmailError] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+
+  const validateEmail = (v: string) => {
+    if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())) setEmailError('Enter a valid email address')
+    else setEmailError('')
+  }
+  const validatePhone = (v: string) => {
+    if (v && !/^[+\d\s\-()\/.]{7,15}$/.test(v.trim())) setPhoneError('Enter a valid phone number')
+    else setPhoneError('')
+  }
+  const validateName = (v: string) => {
+    if (v.trim().length < 2) setNameError('Name must be at least 2 characters')
+    else setNameError('')
+  }
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -41,6 +57,7 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
 
   const save = async () => {
     if (!form.clientName || !form.eventDate || !form.eventType) return
+    if (nameError || emailError || phoneError) return
     setSaving(true); setError('')
     try {
       const res = await fetch(`/studio/api/admin/projects/${project.projectId}`, {
@@ -97,7 +114,7 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted uppercase tracking-wider">Event Date</label>
               <input type="date" value={form.eventDate} onChange={f('eventDate')} required
-                className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors" />
+                className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors" />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted uppercase tracking-wider">Location <span className="normal-case font-normal text-muted/60">(optional)</span></label>
@@ -109,19 +126,31 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
           {/* Client info */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted uppercase tracking-wider">Client Name</label>
-            <input type="text" value={form.clientName} onChange={f('clientName')} required
-              className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors" />
+            <input type="text" value={form.clientName}
+              onChange={e => { setForm(p => ({ ...p, clientName: e.target.value })); setNameError('') }}
+              onBlur={e => validateName(e.target.value)}
+              required
+              className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none transition-colors ${nameError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'}`} />
+            {nameError && <p className="text-[10px] text-danger">{nameError}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted uppercase tracking-wider">Email</label>
-              <input type="email" value={form.clientEmail} onChange={f('clientEmail')} placeholder="client@email.com"
-                className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 transition-colors" />
+              <input type="email" value={form.clientEmail}
+                onChange={e => { setForm(p => ({ ...p, clientEmail: e.target.value })); setEmailError('') }}
+                onBlur={e => validateEmail(e.target.value)}
+                placeholder="client@email.com"
+                className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none transition-colors ${emailError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'}`} />
+              {emailError && <p className="text-[10px] text-danger">{emailError}</p>}
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-muted uppercase tracking-wider">Phone</label>
-              <input type="tel" value={form.clientPhone} onChange={f('clientPhone')} placeholder="+91 XXXXX XXXXX"
-                className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 transition-colors" />
+              <input type="tel" value={form.clientPhone}
+                onChange={e => { setForm(p => ({ ...p, clientPhone: e.target.value })); setPhoneError('') }}
+                onBlur={e => validatePhone(e.target.value)}
+                placeholder="+91 XXXXX XXXXX"
+                className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none transition-colors ${phoneError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'}`} />
+              {phoneError && <p className="text-[10px] text-danger">{phoneError}</p>}
             </div>
           </div>
 

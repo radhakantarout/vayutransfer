@@ -9,6 +9,37 @@ import { Suspense } from 'react'
 type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
 
+function validatePassword(pw: string): string | null {
+  if (pw.length < 8)               return 'At least 8 characters required'
+  if (!/[A-Z]/.test(pw))           return 'Add at least one uppercase letter (A–Z)'
+  if (!/[a-z]/.test(pw))           return 'Add at least one lowercase letter (a–z)'
+  if (!/[^A-Za-z0-9]/.test(pw))   return 'Add at least one symbol (e.g. @, #, $, !)'
+  return null
+}
+
+function PasswordStrength({ password }: { password: string }) {
+  if (!password) return null
+  const checks = [password.length >= 8, /[A-Z]/.test(password), /[a-z]/.test(password), /[^A-Za-z0-9]/.test(password)]
+  const score   = checks.filter(Boolean).length
+  const colors  = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500']
+  const labels  = ['Weak', 'Fair', 'Good', 'Strong']
+  const textCls = ['text-red-500', 'text-orange-500', 'text-yellow-500', 'text-green-500']
+  const hint    = !checks[0] ? '8+ chars needed' : !checks[1] ? 'Add uppercase letter' : !checks[2] ? 'Add lowercase letter' : !checks[3] ? 'Add a symbol (@#$!)' : 'Password looks great'
+  return (
+    <div className="space-y-1.5">
+      <div className="flex gap-1">
+        {[0,1,2,3].map(i => (
+          <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i < score ? colors[score - 1] : 'bg-border'}`} />
+        ))}
+      </div>
+      <p className={`text-[10px] font-semibold flex items-center gap-1 ${textCls[score - 1] ?? 'text-muted'}`}>
+        <span>{labels[score - 1] ?? 'Weak'}</span>
+        <span className="font-normal text-muted">— {hint}</span>
+      </p>
+    </div>
+  )
+}
+
 const ROLES: { value: Role; label: string; description: string }[] = [
   { value: 'ADMIN',  label: 'Studio Admin',  description: 'Manage projects & galleries' },
   { value: 'PRINT',  label: 'Print Admin',   description: 'Access print download links'  },
@@ -141,12 +172,10 @@ function LoginPageInner() {
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setFpError(null)
+    const pwErr = validatePassword(fpPassword)
+    if (pwErr) { setFpError(pwErr); return }
     if (fpPassword !== fpConfirm) {
-      setFpError('Passwords do not match')
-      return
-    }
-    if (fpPassword.length < 8) {
-      setFpError('Password must be at least 8 characters')
+      setFpError('Passwords do not match — please retype')
       return
     }
     setFpLoading(true)
@@ -289,26 +318,34 @@ function LoginPageInner() {
                 {/* Step 3: new password */}
                 {forgotStep === 'password' && (
                   <form onSubmit={handleSetPassword} className="space-y-3">
-                    <input
-                      type="password"
-                      value={fpPassword}
-                      onChange={(e) => { setFpPassword(e.target.value); setFpError(null) }}
-                      required
-                      autoFocus
-                      placeholder="New password (min 8 chars)"
-                      className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-                    />
-                    <input
-                      type="password"
-                      value={fpConfirm}
-                      onChange={(e) => { setFpConfirm(e.target.value); setFpError(null) }}
-                      required
-                      placeholder="Confirm new password"
-                      className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-                    />
+                    <div className="space-y-1.5">
+                      <input
+                        type="password"
+                        value={fpPassword}
+                        onChange={(e) => { setFpPassword(e.target.value); setFpError(null) }}
+                        required
+                        autoFocus
+                        placeholder="New password"
+                        className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                      />
+                      <PasswordStrength password={fpPassword} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <input
+                        type="password"
+                        value={fpConfirm}
+                        onChange={(e) => { setFpConfirm(e.target.value); setFpError(null) }}
+                        required
+                        placeholder="Confirm new password"
+                        className={`w-full bg-bg border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors ${fpConfirm && fpPassword !== fpConfirm ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'}`}
+                      />
+                      {fpConfirm && fpPassword !== fpConfirm && (
+                        <p className="text-[10px] text-danger font-medium">Passwords do not match</p>
+                      )}
+                    </div>
                     {fpError && <p className="text-xs text-danger font-medium">{fpError}</p>}
                     <button
-                      type="submit" disabled={fpLoading}
+                      type="submit" disabled={fpLoading || !!validatePassword(fpPassword) || fpPassword !== fpConfirm}
                       className="w-full bg-accent text-bg font-bold py-2.5 rounded-xl text-sm hover:bg-accent/90 transition-colors disabled:opacity-50"
                     >
                       {fpLoading ? 'Updating…' : 'Set new password'}
