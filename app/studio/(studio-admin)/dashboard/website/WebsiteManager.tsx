@@ -48,7 +48,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const [subdomainInput, setSubdomainInput] = useState('')
   const [subdomainCheck, setSubdomainCheck] = useState<{ available: boolean; message: string } | null>(null)
   const [checkingSlug, setCheckingSlug] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef    = useRef<ReturnType<typeof setTimeout>>()
+  const accentColorRef = useRef<HTMLInputElement>(null)
+  const fontColorRef   = useRef<HTMLInputElement>(null)
 
   // Load existing config
   useEffect(() => {
@@ -278,28 +280,28 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
             <div className="flex items-center gap-2 flex-wrap">
               {ACCENT_PRESETS.map(p => (
-                <button key={p.label} onClick={() => p.color ? update({ themeAccent: p.color }) : undefined}
+                <button key={p.label} onClick={() => p.color ? update({ themeAccent: p.color }) : accentColorRef.current?.click()}
                   title={p.label}
                   className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.themeAccent === p.color ? 'border-white scale-110' : 'border-transparent'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
-              <input type="color" value={site.themeAccent ?? '#6366f1'} onChange={e => update({ themeAccent: e.target.value })}
-                className="w-8 h-8 rounded-full cursor-pointer border-0 bg-transparent" title="Custom colour" />
+              <input ref={accentColorRef} type="color" value={site.themeAccent ?? '#6366f1'} onChange={e => update({ themeAccent: e.target.value })}
+                className="sr-only" title="Custom accent colour" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
             <div className="flex items-center gap-2 flex-wrap">
               {FONT_COLOR_PRESETS.map(p => (
-                <button key={p.label} onClick={() => p.color ? update({ fontColor: p.color }) : undefined}
+                <button key={p.label} onClick={() => p.color ? update({ fontColor: p.color }) : fontColorRef.current?.click()}
                   title={p.label}
                   className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
-              <input type="color" value={site.fontColor ?? '#F5F0E8'} onChange={e => update({ fontColor: e.target.value })}
-                className="w-8 h-8 rounded-full cursor-pointer border-0 bg-transparent" title="Custom colour" />
+              <input ref={fontColorRef} type="color" value={site.fontColor ?? '#F5F0E8'} onChange={e => update({ fontColor: e.target.value })}
+                className="sr-only" title="Custom font colour" />
             </div>
             <p className="text-[10px] text-muted mt-2">Leave unset to use each template&apos;s default text colour.</p>
           </div>

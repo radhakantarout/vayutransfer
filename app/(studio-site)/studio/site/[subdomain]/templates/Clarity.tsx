@@ -89,7 +89,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
           {site.bookingEnabled
             ? (
               <div style={{ '--accent': accent } as React.CSSProperties}>
-                <BookingFormLight subdomain={site.subdomain} message={site.bookingMessage} accent={accent} />
+                <BookingFormLight subdomain={site.subdomain} message={site.bookingMessage} accent={accent} fontColor={fontColor} />
               </div>
             )
             : (
@@ -111,12 +111,10 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
   )
 }
 
-// Light version of booking form for white background
-function BookingFormLight({ subdomain, message, accent }: { subdomain: string; message?: string; accent: string }) {
-  // Re-use base form but pass light styling via inline override — we import the dark one and wrap
+function BookingFormLight({ subdomain, message, accent, fontColor }: { subdomain: string; message?: string; accent: string; fontColor: string }) {
   return (
-    <div className="[&_input]:bg-gray-100 [&_input]:border-gray-200 [&_input]:text-gray-900 [&_select]:bg-gray-100 [&_select]:border-gray-200 [&_select]:text-gray-900 [&_textarea]:bg-gray-100 [&_textarea]:border-gray-200 [&_textarea]:text-gray-900 [&_input::placeholder]:text-gray-400 [&_textarea::placeholder]:text-gray-400 [&_label]:text-gray-700">
-      <BookingForm subdomain={subdomain} message={message} accentColor={accent} textOnAccent="#fff" />
+    <div className="[&_input]:bg-gray-50 [&_select]:bg-gray-50 [&_textarea]:bg-gray-50">
+      <BookingForm subdomain={subdomain} message={message} accentColor={accent} textOnAccent="#fff" fontColor={fontColor} />
     </div>
   )
 }

@@ -108,7 +108,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
           </p>
           <h2 className="text-4xl font-light mb-10">Let&apos;s Work Together</h2>
           {site.bookingEnabled
-            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} />
+            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} />
             : (
               <div className="space-y-3 text-sm opacity-70">
                 {site.contactEmail && <p>✉ {site.contactEmail}</p>}

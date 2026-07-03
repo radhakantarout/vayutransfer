@@ -80,7 +80,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
         <div className="max-w-2xl mx-auto">
           <h2 className="text-5xl font-black uppercase mb-10">{site.bookingEnabled ? 'Book' : 'Contact'}</h2>
           {site.bookingEnabled
-            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} />
+            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} />
             : (
               <div className="space-y-4 text-white/60">
                 {site.contactEmail && <p className="text-lg">{site.contactEmail}</p>}
