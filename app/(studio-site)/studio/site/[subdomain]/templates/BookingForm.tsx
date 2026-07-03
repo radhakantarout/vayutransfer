@@ -6,11 +6,12 @@ interface Props {
   message?: string
   accentColor: string
   textOnAccent?: string
+  fontColor?: string
 }
 
 const EVENT_TYPES = ['Wedding', 'Pre-Wedding', 'Engagement', 'Birthday', 'Corporate', 'Portrait', 'Other']
 
-export default function BookingForm({ subdomain, message, accentColor, textOnAccent = '#fff' }: Props) {
+export default function BookingForm({ subdomain, message, accentColor, textOnAccent = '#fff', fontColor }: Props) {
   const [form, setForm] = useState({ name: '', email: '', phone: '', eventType: '', eventDate: '', message: '' })
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
@@ -43,48 +44,72 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
     </div>
   )
 
+  const fieldStyle = {
+    borderColor: `${accentColor}60`,
+    color: fontColor,
+  }
+  const labelStyle = { color: fontColor, opacity: 0.6 }
+
   return (
     <form onSubmit={submit} className="space-y-4 max-w-lg mx-auto">
       {message && <p className="text-sm opacity-70 text-center mb-6">{message}</p>}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Name *</label>
+          <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Name *</label>
           <input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current placeholder-white/30"
+            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none placeholder-current/30"
+            style={{ ...fieldStyle, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
             placeholder="Your name" />
         </div>
         <div>
-          <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Email *</label>
+          <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Email *</label>
           <input required type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current placeholder-white/30"
+            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+            style={{ ...fieldStyle, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
             placeholder="your@email.com" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Phone</label>
+          <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Phone</label>
           <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current placeholder-white/30"
+            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+            style={{ ...fieldStyle, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
             placeholder="+91 98765 43210" />
         </div>
         <div>
-          <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Event type</label>
+          <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Event type</label>
           <select value={form.eventType} onChange={e => setForm(f => ({ ...f, eventType: e.target.value }))}
-            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current">
-            <option value="">Select…</option>
-            {EVENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+            style={{ ...fieldStyle, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}>
+            <option value="" style={{ color: '#1a1a1a' }}>Select…</option>
+            {EVENT_TYPES.map(t => <option key={t} value={t} style={{ color: '#1a1a1a' }}>{t}</option>)}
           </select>
         </div>
       </div>
       <div>
-        <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Event date</label>
+        <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Event date</label>
         <input type="date" value={form.eventDate} onChange={e => setForm(f => ({ ...f, eventDate: e.target.value }))}
-          className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current" />
+          className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+          style={{ ...fieldStyle, outlineColor: accentColor }}
+          onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+          onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)} />
       </div>
       <div>
-        <label className="block text-xs font-semibold mb-1 opacity-60 uppercase tracking-wider">Message</label>
+        <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Message</label>
         <textarea value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
-          rows={3} className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-sm outline-none focus:border-current placeholder-white/30 resize-none"
+          rows={3} className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none resize-none"
+          style={{ ...fieldStyle, outlineColor: accentColor }}
+          onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
+          onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
           placeholder="Tell us about your event…" />
       </div>
       {error && <p className="text-red-400 text-sm">{error}</p>}
