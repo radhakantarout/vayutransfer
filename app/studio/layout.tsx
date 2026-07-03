@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import StudioNavbar from '@/components/studio/StudioNavbar'
-import StudioFooter from '@/components/studio/StudioFooter'
+import ConditionalFooter from '@/components/studio/ConditionalFooter'
 
 export const metadata: Metadata = {
   title: 'VayuStudios — Gallery Delivery for Photographers',
@@ -10,12 +10,12 @@ export const metadata: Metadata = {
 
 export default function StudioLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="h-screen bg-bg text-text-primary flex flex-col overflow-hidden">
+    <div className="min-h-screen bg-bg text-text-primary flex flex-col">
       <StudioNavbar />
-      <div className="flex-1 flex flex-col overflow-auto min-h-0">
+      <div className="flex-1 flex flex-col">
         {children}
-        <StudioFooter />
       </div>
+      <ConditionalFooter />
     </div>
   )
 }
