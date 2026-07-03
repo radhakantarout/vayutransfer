@@ -6,6 +6,7 @@ type Message = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  isError?: boolean
 }
 
 const SUGGESTIONS = [
@@ -18,12 +19,15 @@ const SUGGESTIONS = [
 const WHATSAPP_URL = 'https://wa.me/918984769522'
 
 export default function ChatWidget() {
-  const [open, setOpen]         = useState(false)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput]       = useState('')
+  const [open, setOpen]           = useState(false)
+  const [messages, setMessages]   = useState<Message[]>([])
+  const [input, setInput]         = useState('')
   const [streaming, setStreaming] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef  = useRef<HTMLInputElement>(null)
+  const bottomRef    = useRef<HTMLDivElement>(null)
+  const inputRef     = useRef<HTMLInputElement>(null)
+  const messagesRef  = useRef<Message[]>([])
+
+  useEffect(() => { messagesRef.current = messages }, [messages])
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 320)
@@ -33,26 +37,15 @@ export default function ChatWidget() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const send = async (text: string) => {
-    if (!text.trim() || streaming) return
-
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text.trim() }
-    const updated = [...messages, userMsg]
-    setMessages(updated)
-    setInput('')
-    setStreaming(true)
-
-    const aId = `a-${Date.now()}`
-    setMessages(m => [...m, { id: aId, role: 'assistant', content: '' }])
-
+  const invokeBedrock = async (payload: { role: string; content: string }[], aId: string) => {
     try {
       const res = await fetch('/studio/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updated.map(m => ({ role: m.role, content: m.content })) }),
+        body: JSON.stringify({ messages: payload }),
       })
 
-      if (!res.ok || !res.body) throw new Error('Failed')
+      if (!res.ok || !res.body) throw new Error('non-ok')
 
       const reader  = res.body.getReader()
       const decoder = new TextDecoder()
@@ -64,14 +57,32 @@ export default function ChatWidget() {
         setMessages(m => m.map(msg => msg.id === aId ? { ...msg, content: msg.content + chunk } : msg))
       }
     } catch {
-      setMessages(m => m.map(msg =>
-        msg.id === aId
-          ? { ...msg, content: 'Something went wrong. Please try again or reach us on WhatsApp.' }
-          : msg
-      ))
+      setMessages(m => m.map(msg => msg.id === aId ? { ...msg, isError: true, content: '' } : msg))
     } finally {
       setStreaming(false)
     }
+  }
+
+  const send = async (text: string) => {
+    if (!text.trim() || streaming) return
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text.trim() }
+    const updated = [...messagesRef.current, userMsg]
+    setMessages(updated)
+    setInput('')
+    setStreaming(true)
+    const aId = `a-${Date.now()}`
+    setMessages(m => [...m, { id: aId, role: 'assistant', content: '' }])
+    await invokeBedrock(updated.map(m => ({ role: m.role, content: m.content })).slice(-10), aId)
+  }
+
+  const retry = async (errorMsgId: string) => {
+    if (streaming) return
+    const withoutError = messagesRef.current.filter(m => m.id !== errorMsgId)
+    const newAId = `a-retry-${Date.now()}`
+    setMessages([...withoutError, { id: newAId, role: 'assistant', content: '' }])
+    setStreaming(true)
+    const payload = withoutError.map(m => ({ role: m.role, content: m.content })).slice(-10)
+    await invokeBedrock(payload, newAId)
   }
 
   return (
@@ -116,6 +127,7 @@ export default function ChatWidget() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+
           {/* Welcome */}
           {messages.length === 0 && (
             <div className="space-y-3">
@@ -150,26 +162,31 @@ export default function ChatWidget() {
               className={`flex gap-2 items-end ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {msg.role === 'assistant' && <BotAvatar />}
-              <div
-                className={`
-                  max-w-[240px] text-sm leading-relaxed rounded-2xl px-4 py-2.5
-                  ${msg.role === 'user'
-                    ? 'bg-accent text-white rounded-br-sm'
-                    : 'bg-bg border border-border/60 text-text-primary rounded-bl-sm'}
-                `}
-              >
-                {msg.content === '' && streaming
-                  ? <TypingDots />
-                  : <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-                }
-              </div>
+
+              {msg.isError ? (
+                <ErrorCard onRetry={() => retry(msg.id)} />
+              ) : (
+                <div
+                  className={`
+                    max-w-[240px] text-sm leading-relaxed rounded-2xl px-4 py-2.5
+                    ${msg.role === 'user'
+                      ? 'bg-accent text-white rounded-br-sm'
+                      : 'bg-bg border border-border/60 text-text-primary rounded-bl-sm'}
+                  `}
+                >
+                  {msg.content === '' && streaming
+                    ? <TypingDots />
+                    : <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                  }
+                </div>
+              )}
             </div>
           ))}
           <div ref={bottomRef} />
         </div>
 
         {/* WhatsApp link — appears after a few messages */}
-        {messages.length >= 4 && (
+        {messages.filter(m => !m.isError).length >= 4 && (
           <div className="px-4 py-2.5 border-t border-border/60 bg-bg/60 flex-shrink-0">
             <a
               href={WHATSAPP_URL}
@@ -185,10 +202,7 @@ export default function ChatWidget() {
 
         {/* Input */}
         <div className="px-3 py-3 border-t border-border flex-shrink-0">
-          <form
-            onSubmit={e => { e.preventDefault(); send(input) }}
-            className="flex gap-2"
-          >
+          <form onSubmit={e => { e.preventDefault(); send(input) }} className="flex gap-2">
             <input
               ref={inputRef}
               value={input}
@@ -224,10 +238,7 @@ export default function ChatWidget() {
         aria-label={open ? 'Close AI chat' : 'Open AI chat'}
       >
         <span className={`transition-transform duration-300 ${open ? 'rotate-180' : 'rotate-0'}`}>
-          {open
-            ? <ChevronDownIcon />
-            : <SparkleIcon size={16} className="text-white" />
-          }
+          {open ? <ChevronDownIcon /> : <SparkleIcon size={16} className="text-white" />}
         </span>
         <span className="text-sm font-semibold">{open ? 'Close' : 'Ask AI'}</span>
       </button>
@@ -236,6 +247,36 @@ export default function ChatWidget() {
 }
 
 /* ── Sub-components ── */
+
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="max-w-[260px] bg-bg border border-border/60 rounded-2xl rounded-bl-sm px-4 py-3">
+      <div className="flex items-start gap-2 mb-3">
+        <span className="text-sm mt-0.5">⚠️</span>
+        <p className="text-sm text-text-primary leading-relaxed">
+          I'm having trouble connecting right now. You can try again or reach our team directly.
+        </p>
+      </div>
+      <div className="flex items-center gap-4">
+        <button
+          onClick={onRetry}
+          className="text-xs font-semibold text-accent hover:text-accent/70 transition-colors"
+        >
+          Try again
+        </button>
+        <a
+          href={WHATSAPP_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-xs font-semibold text-[#25D366] hover:text-[#128C7E] transition-colors"
+        >
+          <WhatsAppMiniIcon />
+          WhatsApp support
+        </a>
+      </div>
+    </div>
+  )
+}
 
 function BotAvatar() {
   return (
