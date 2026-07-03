@@ -192,6 +192,7 @@ export interface StudioWebsite {
     youtube?: string
   }
   themeAccent?: string
+  fontColor?: string
   bookingEnabled: boolean
   bookingMessage?: string
   createdAt: string

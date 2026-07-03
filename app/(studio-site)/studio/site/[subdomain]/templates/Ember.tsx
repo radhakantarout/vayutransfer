@@ -5,10 +5,11 @@ import PortfolioGallery from './PortfolioGallery'
 import SocialIcons from './SocialIcons'
 
 export default function Ember({ site }: { site: StudioWebsite }) {
-  const accent = site.themeAccent ?? '#C4622D'
+  const accent    = site.themeAccent ?? '#C4622D'
+  const fontColor = site.fontColor   ?? '#2C1810'
 
   return (
-    <div className="min-h-screen" style={{ background: '#FAF6F1', color: '#2C1810', fontFamily: '"Palatino Linotype", Palatino, serif' }}>
+    <div className="min-h-screen" style={{ background: '#FAF6F1', color: fontColor, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
 
       {/* Nav */}
       <header className="py-6 px-8 flex items-center justify-between" style={{ borderBottom: '1px solid #E8DDD5' }}>
@@ -66,7 +67,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
             <h2 className="text-3xl font-light mb-6">About Us</h2>
             <p className="leading-relaxed opacity-70 text-sm">{site.about}</p>
             {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
-            <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" color={accent} />
+            <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" />
           </div>
         </div>
       </section>

@@ -5,10 +5,11 @@ import PortfolioGallery from './PortfolioGallery'
 import SocialIcons from './SocialIcons'
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
-  const accent = site.themeAccent ?? '#C9A84C'
+  const accent    = site.themeAccent ?? '#C9A84C'
+  const fontColor = site.fontColor   ?? '#F5F0E8'
 
   return (
-    <div className="min-h-screen" style={{ background: '#0A0A0A', color: '#F5F0E8', fontFamily: 'Georgia, serif' }}>
+    <div className="min-h-screen" style={{ background: '#0A0A0A', color: fontColor, fontFamily: 'Georgia, serif' }}>
 
       {/* Hero */}
       <section className="relative min-h-screen flex flex-col items-center justify-center text-center px-6"

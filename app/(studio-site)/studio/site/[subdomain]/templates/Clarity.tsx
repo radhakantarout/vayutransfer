@@ -5,10 +5,11 @@ import PortfolioGallery from './PortfolioGallery'
 import SocialIcons from './SocialIcons'
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
-  const accent = site.themeAccent ?? '#1A1A1A'
+  const accent    = site.themeAccent ?? '#1A1A1A'
+  const fontColor = site.fontColor   ?? '#1A1A1A'
 
   return (
-    <div className="min-h-screen bg-white text-gray-900" style={{ fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
+    <div className="min-h-screen bg-white" style={{ color: fontColor, fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
 
       {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur border-b border-gray-100">

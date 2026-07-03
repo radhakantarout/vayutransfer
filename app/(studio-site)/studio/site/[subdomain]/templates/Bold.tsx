@@ -5,10 +5,11 @@ import PortfolioGallery from './PortfolioGallery'
 import SocialIcons from './SocialIcons'
 
 export default function Bold({ site }: { site: StudioWebsite }) {
-  const accent = site.themeAccent ?? '#FF3B30'
+  const accent    = site.themeAccent ?? '#FF3B30'
+  const fontColor = site.fontColor   ?? '#FFFFFF'
 
   return (
-    <div className="min-h-screen bg-black text-white" style={{ fontFamily: '"Inter", "Helvetica Neue", sans-serif' }}>
+    <div className="min-h-screen bg-black" style={{ color: fontColor, fontFamily: '"Inter", "Helvetica Neue", sans-serif' }}>
 
       {/* Nav */}
       <header className="sticky top-0 z-50 bg-black/95 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between">
