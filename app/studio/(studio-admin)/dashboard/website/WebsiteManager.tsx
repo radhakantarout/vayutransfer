@@ -22,6 +22,16 @@ const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Custom',    color: '' },
 ]
 
+const FONT_COLOR_PRESETS: { label: string; color: string }[] = [
+  { label: 'Cream',    color: '#F5F0E8' },
+  { label: 'White',    color: '#FFFFFF' },
+  { label: 'Dark',     color: '#1A1A1A' },
+  { label: 'Charcoal', color: '#374151' },
+  { label: 'Warm',     color: '#4A3728' },
+  { label: 'Navy',     color: '#1E3A5F' },
+  { label: 'Custom',   color: '' },
+]
+
 type Tab = 'template' | 'content' | 'gallery' | 'services' | 'contact' | 'booking' | 'domain'
 
 interface Props {
@@ -265,7 +275,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             ))}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Accent colour</label>
+            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
             <div className="flex items-center gap-2 flex-wrap">
               {ACCENT_PRESETS.map(p => (
                 <button key={p.label} onClick={() => p.color ? update({ themeAccent: p.color }) : undefined}
@@ -277,6 +287,21 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               <input type="color" value={site.themeAccent ?? '#6366f1'} onChange={e => update({ themeAccent: e.target.value })}
                 className="w-8 h-8 rounded-full cursor-pointer border-0 bg-transparent" title="Custom colour" />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {FONT_COLOR_PRESETS.map(p => (
+                <button key={p.label} onClick={() => p.color ? update({ fontColor: p.color }) : undefined}
+                  title={p.label}
+                  className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
+                  style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
+                />
+              ))}
+              <input type="color" value={site.fontColor ?? '#F5F0E8'} onChange={e => update({ fontColor: e.target.value })}
+                className="w-8 h-8 rounded-full cursor-pointer border-0 bg-transparent" title="Custom colour" />
+            </div>
+            <p className="text-[10px] text-muted mt-2">Leave unset to use each template&apos;s default text colour.</p>
           </div>
           {publishUrl && (
             <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"

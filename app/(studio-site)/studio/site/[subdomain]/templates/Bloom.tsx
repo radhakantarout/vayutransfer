@@ -5,10 +5,11 @@ import PortfolioGallery from './PortfolioGallery'
 import SocialIcons from './SocialIcons'
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
-  const accent = site.themeAccent ?? '#D4849A'
+  const accent    = site.themeAccent ?? '#D4849A'
+  const fontColor = site.fontColor   ?? '#3D2B2B'
 
   return (
-    <div className="min-h-screen" style={{ background: '#FDF8F6', color: '#3D2B2B', fontFamily: '"Cormorant Garamond", "Times New Roman", serif' }}>
+    <div className="min-h-screen" style={{ background: '#FDF8F6', color: fontColor, fontFamily: '"Cormorant Garamond", "Times New Roman", serif' }}>
 
       {/* Nav */}
       <header className="py-5 px-8 text-center" style={{ borderBottom: '1px solid #F0DDD8' }}>
@@ -71,7 +72,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
           <h2 className="text-4xl font-light mb-8">About Us</h2>
           <p className="text-lg font-light leading-relaxed opacity-70">{site.about}</p>
           {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
-          <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mt-6" color={accent} />
+          <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mt-6" />
         </div>
       </section>
 
