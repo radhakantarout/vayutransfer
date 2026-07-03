@@ -79,7 +79,7 @@ See REQUIREMENTS.md for full spec. Build in this order:
 
 ## Current Build Status
 
-Last updated: 2026-06-21
+Last updated: 2026-07-03
 
 ```
 [x] STEP 1 — Types + Constants
@@ -91,6 +91,7 @@ Last updated: 2026-06-21
 [x] STEP 7 — Pages (/, /wallet, /download/[fileId], /login, /profile, /transfers, /pricing, /privacy, /terms)
 [x] STEP 8 — Config files (.env.example, next.config.js, tailwind.config.js)
 [x] STEP 9 — Google OAuth + ₹50 signup bonus (lib/auth.ts, lib/users.ts, vayu-users table)
+[x] STEP 10 — VayuStudios AI chatbot (AWS Bedrock Claude 3 Haiku, streaming, WhatsApp escalation)
 ```
 
 Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/vayutransfer
@@ -100,6 +101,7 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - DynamoDB: all 6 tables active (including vayu-users)
 - SES: PRODUCTION (approved 2026-06-22), FROM = noreply@vayutransfer.com (domain verified + DKIM)
 - SNS: PENDING production access (OTP SMS not working in production yet — dev logs OTP to console)
+- Bedrock: PRODUCTION (ap-south-1), Claude 3 Haiku — env var AWS_BEDROCK_REGION=ap-south-1
 
 ### Key Decisions Made
 - Google OAuth users get ₹50 bonus only (dev seed skipped via skipDevSeed=true)
@@ -111,12 +113,15 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - "Download slots" renamed to plain English ("how many people can download") across all UI
 - VayuStudio enquiry approve flow: one-click link in email creates studio + emails credentials to photographer
 - test.vayutransfer.com deploys develop branch (Vercel preview, public access, same AWS infra)
+- AI chatbot: Phase 1 system prompt approach (no RAG/vector DB). Phase 2 (lightweight RAG with embeddings in S3) if needed later.
+- Chatbot model: Claude 3 Haiku (anthropic.claude-3-haiku-20240307-v1:0). Mumbai has Claude Haiku 4.5 — confirm exact model ID from Bedrock console to upgrade.
 
 ### Next Session Priorities
 1. Razorpay live keys (when account approved)
 2. SNS production access request (submit to AWS — needed for client OTP SMS)
 3. Watermark Lambda — build real implementation (currently placeholder, marks files READY in dev)
-4. Test full VayuTransfer upload → download flow on production with real Google account
+4. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
+5. Test full VayuTransfer upload → download flow on production with real Google account
 
 ---
 
