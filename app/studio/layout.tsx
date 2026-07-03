@@ -10,12 +10,12 @@ export const metadata: Metadata = {
 
 export default function StudioLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg text-text-primary flex flex-col">
+    <div className="h-screen bg-bg text-text-primary flex flex-col overflow-hidden">
       <StudioNavbar />
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-auto min-h-0">
         {children}
+        <StudioFooter />
       </div>
-      <StudioFooter />
     </div>
   )
 }
