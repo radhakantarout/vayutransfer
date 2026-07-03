@@ -795,10 +795,16 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
                   </span>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <button onClick={() => onSelectionChange(new Set(displayFiles.map(f => f.fileId)))}
-                      className="text-xs text-muted hover:text-text-primary border border-border px-2 py-1 rounded-lg hover:bg-border/40 transition-colors">
-                      Select All
-                    </button>
+                    {(() => {
+                      const allSel = displayFiles.length > 0 && displayFiles.every(f => selectedIds.has(f.fileId))
+                      return (
+                        <button
+                          onClick={() => allSel ? onSelectionChange(new Set()) : onSelectionChange(new Set(displayFiles.map(f => f.fileId)))}
+                          className={`text-xs border px-2 py-1 rounded-lg transition-colors ${allSel ? 'text-accent border-accent/40 bg-accent/10 hover:bg-accent/20' : 'text-muted hover:text-text-primary border-border hover:bg-border/40'}`}>
+                          {allSel ? 'Deselect All' : 'Select All'}
+                        </button>
+                      )
+                    })()}
                     <button onClick={() => setDeleteMode('all')}
                       className="text-xs text-red-500/60 hover:text-red-500 border border-border px-2 py-1 rounded-lg hover:border-red-500/30 hover:bg-red-500/5 transition-colors">
                       Delete All
@@ -811,7 +817,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                           <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
                         </svg>
                       </button>
-                      <input type="range" min={2} max={10} value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-20 h-1 cursor-pointer accent-accent" />
+                      <input type="range" min={2} max={10} value={12 - zoomLevel} onChange={e => setZoomLevel(12 - Number(e.target.value))} className="w-20 h-1 cursor-pointer accent-accent" />
                       <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
                         className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

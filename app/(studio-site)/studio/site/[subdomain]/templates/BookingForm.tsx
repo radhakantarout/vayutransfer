@@ -11,15 +11,40 @@ interface Props {
 
 const EVENT_TYPES = ['Wedding', 'Pre-Wedding', 'Engagement', 'Birthday', 'Corporate', 'Portrait', 'Other']
 
+function validateEmail(v: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
+}
+function validatePhone(v: string) {
+  return !v || /^[+\d\s\-()\/.]{7,15}$/.test(v.trim())
+}
+
 export default function BookingForm({ subdomain, message, accentColor, textOnAccent = '#fff', fontColor }: Props) {
   const [form, setForm] = useState({ name: '', email: '', phone: '', eventType: '', eventDate: '', message: '' })
+  const [fieldErrors, setFieldErrors] = useState({ name: '', email: '', phone: '' })
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
 
+  const setField = (k: keyof typeof form, v: string) => {
+    setForm(f => ({ ...f, [k]: v }))
+    setFieldErrors(e => ({ ...e, [k]: '' }))
+  }
+
+  const blurValidate = (k: string, v: string) => {
+    if (k === 'name')  setFieldErrors(e => ({ ...e, name:  v.trim().length < 2 ? 'Please enter your full name' : '' }))
+    if (k === 'email') setFieldErrors(e => ({ ...e, email: !validateEmail(v) ? 'Enter a valid email address' : '' }))
+    if (k === 'phone') setFieldErrors(e => ({ ...e, phone: !validatePhone(v) ? 'Enter a valid phone number' : '' }))
+  }
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.name || !form.email) return
+    const nameErr  = form.name.trim().length < 2 ? 'Please enter your full name' : ''
+    const emailErr = !validateEmail(form.email) ? 'Enter a valid email address' : ''
+    const phoneErr = !validatePhone(form.phone) ? 'Enter a valid phone number' : ''
+    if (nameErr || emailErr || phoneErr) {
+      setFieldErrors({ name: nameErr, email: emailErr, phone: phoneErr })
+      return
+    }
     setLoading(true); setError('')
     try {
       const res = await fetch(`/studio/api/public/${subdomain}/book`, {
@@ -56,36 +81,39 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Name *</label>
-          <input required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none placeholder-current/30"
-            style={{ ...fieldStyle, outlineColor: accentColor }}
-            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
-            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
-            placeholder="Your name" />
+          <input required value={form.name} onChange={e => setField('name', e.target.value)}
+            className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+            style={{ ...fieldStyle, borderColor: fieldErrors.name ? '#ef4444' : `${accentColor}60`, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = fieldErrors.name ? '#ef4444' : accentColor)}
+            onBlur={e => { e.currentTarget.style.borderColor = fieldErrors.name ? '#ef4444' : `${accentColor}60`; blurValidate('name', e.target.value) }}
+            placeholder="Your full name" />
+          {fieldErrors.name && <p className="text-[10px] text-red-400 mt-1">{fieldErrors.name}</p>}
         </div>
         <div>
           <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Email *</label>
-          <input required type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+          <input required type="email" value={form.email} onChange={e => setField('email', e.target.value)}
             className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ ...fieldStyle, outlineColor: accentColor }}
-            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
-            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
+            style={{ ...fieldStyle, borderColor: fieldErrors.email ? '#ef4444' : `${accentColor}60`, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = fieldErrors.email ? '#ef4444' : accentColor)}
+            onBlur={e => { e.currentTarget.style.borderColor = fieldErrors.email ? '#ef4444' : `${accentColor}60`; blurValidate('email', e.target.value) }}
             placeholder="your@email.com" />
+          {fieldErrors.email && <p className="text-[10px] text-red-400 mt-1">{fieldErrors.email}</p>}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Phone</label>
-          <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+          <input value={form.phone} onChange={e => setField('phone', e.target.value)}
             className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ ...fieldStyle, outlineColor: accentColor }}
-            onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
-            onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)}
+            style={{ ...fieldStyle, borderColor: fieldErrors.phone ? '#ef4444' : `${accentColor}60`, outlineColor: accentColor }}
+            onFocus={e => (e.currentTarget.style.borderColor = fieldErrors.phone ? '#ef4444' : accentColor)}
+            onBlur={e => { e.currentTarget.style.borderColor = fieldErrors.phone ? '#ef4444' : `${accentColor}60`; blurValidate('phone', e.target.value) }}
             placeholder="+91 98765 43210" />
+          {fieldErrors.phone && <p className="text-[10px] text-red-400 mt-1">{fieldErrors.phone}</p>}
         </div>
         <div>
           <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Event type</label>
-          <select value={form.eventType} onChange={e => setForm(f => ({ ...f, eventType: e.target.value }))}
+          <select value={form.eventType} onChange={e => setField('eventType', e.target.value)}
             className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
             style={{ ...fieldStyle, outlineColor: accentColor }}
             onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
@@ -97,15 +125,15 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
       </div>
       <div>
         <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Event date</label>
-        <input type="date" value={form.eventDate} onChange={e => setForm(f => ({ ...f, eventDate: e.target.value }))}
-          className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
+        <input type="date" value={form.eventDate} onChange={e => setField('eventDate', e.target.value)}
+          className="w-48 bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
           style={{ ...fieldStyle, outlineColor: accentColor }}
           onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
           onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)} />
       </div>
       <div>
         <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>Message</label>
-        <textarea value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+        <textarea value={form.message} onChange={e => setField('message', e.target.value)}
           rows={3} className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none resize-none"
           style={{ ...fieldStyle, outlineColor: accentColor }}
           onFocus={e => (e.currentTarget.style.borderColor = accentColor)}
