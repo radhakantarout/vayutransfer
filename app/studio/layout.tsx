@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import StudioNavbar from '@/components/studio/StudioNavbar'
 import ConditionalFooter from '@/components/studio/ConditionalFooter'
+import ChatWidget from '@/components/studio/ChatWidget'
 
 export const metadata: Metadata = {
   title: 'VayuStudios — Gallery Delivery for Photographers',
@@ -16,6 +17,7 @@ export default function StudioLayout({ children }: { children: React.ReactNode }
         {children}
       </div>
       <ConditionalFooter />
+      <ChatWidget />
     </div>
   )
 }
