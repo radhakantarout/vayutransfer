@@ -50,7 +50,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       <section id="gallery" className="py-20 px-6">
         <div className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-light text-center mb-12">Our Work</h2>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
         </div>
       </section>
 

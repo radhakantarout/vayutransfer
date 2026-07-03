@@ -41,7 +41,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       <section className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">Portfolio</p>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
         </div>
       </section>
 

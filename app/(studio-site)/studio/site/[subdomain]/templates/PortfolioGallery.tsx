@@ -166,8 +166,8 @@ function AlbumViewer({ photos, title, accent, onClose }: {
 
 // ── Main PortfolioGallery ────────────────────────────────────────────────────
 
-export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C' }: {
-  photos: Photo[]; studioName: string; accent?: string
+export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C', fontColor = '#ffffff' }: {
+  photos: Photo[]; studioName: string; accent?: string; fontColor?: string
 }) {
   const isDemo = photos.length === 0
   const displayPhotos = isDemo ? DEMO_PHOTOS : photos
@@ -196,7 +196,7 @@ export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C
               className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
               style={activeCategory === cat
                 ? { background: accent, color: '#000' }
-                : { background: 'transparent', color: '#fff', border: `1px solid ${accent}55` }}>
+                : { background: 'transparent', color: fontColor, border: `1px solid ${accent}55` }}>
               {cat}
             </button>
           ))}
