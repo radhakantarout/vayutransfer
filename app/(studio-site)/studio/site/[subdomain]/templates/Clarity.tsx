@@ -47,7 +47,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       <section id="work" className="py-16 px-6">
         <div className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">Selected Work</p>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
         </div>
       </section>
 

@@ -61,7 +61,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
             <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>Portfolio</p>
             <h2 className="text-4xl font-light">Our Beautiful Work</h2>
           </div>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
         </div>
       </section>
 

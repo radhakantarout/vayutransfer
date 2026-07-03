@@ -39,7 +39,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
           <div className="flex items-baseline justify-between mb-8">
             <h2 className="text-3xl font-black uppercase">Work</h2>
           </div>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} />
+          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
         </div>
       </section>
 
