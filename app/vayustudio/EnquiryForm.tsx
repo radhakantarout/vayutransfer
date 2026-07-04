@@ -7,12 +7,14 @@ export default function EnquiryForm() {
   const [loading, setLoading]  = useState(false)
   const [success, setSuccess]  = useState(false)
   const [error, setError]      = useState<string | null>(null)
+  const [emailExists, setEmailExists] = useState(false)
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setEmailExists(false)
     setLoading(true)
     try {
       const res = await fetch('/api/vayustudio/enquiry', {
@@ -20,7 +22,15 @@ export default function EnquiryForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       }).then((r) => r.json())
-      if (!res.success) { setError('Something went wrong. Please try WhatsApp below.'); return }
+      if (!res.success) {
+        if (res.error === 'EMAIL_EXISTS') {
+          setEmailExists(true)
+          setError('An account with this email already exists.')
+        } else {
+          setError('Something went wrong. Please try WhatsApp below.')
+        }
+        return
+      }
       setSuccess(true)
     } catch {
       setError('Network error — please try again.')
@@ -72,7 +82,15 @@ export default function EnquiryForm() {
       </div>
 
       {error && (
-        <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">{error}</div>
+        <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
+          {error}{' '}
+          {emailExists && (
+            <>
+              Try a different email, or{' '}
+              <a href="/studio/login" className="underline font-semibold">log in instead</a>.
+            </>
+          )}
+        </div>
       )}
 
       <button

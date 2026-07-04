@@ -226,67 +226,6 @@ export async function sendWalletCreditedEmail(
   )
 }
 
-export async function sendEnquiryNotificationEmail(
-  to: string,
-  studioName: string,
-  adminName: string,
-  adminEmail: string,
-  adminPhone: string,
-  message: string,
-  approveUrl: string
-): Promise<void> {
-  const html = `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>New Studio Enquiry</title></head>
-<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
-  <div style="max-width:560px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
-    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
-    <div style="color:#5A7090;font-size:13px;margin-bottom:32px;">Platform Owner Alert</div>
-
-    <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;color:#E0EAF8;">New Studio Registration Request</h2>
-
-    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-      ${[
-        ['Studio Name', studioName],
-        ['Contact Name', adminName],
-        ['Email', adminEmail],
-        ['Phone', adminPhone],
-        ...(message ? [['About', message]] : []),
-      ].map(([label, value]) => `
-      <tr>
-        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:120px;border-bottom:1px solid #1E2D45;">${label}</td>
-        <td style="padding:10px 0;font-size:14px;font-weight:500;border-bottom:1px solid #1E2D45;">${value}</td>
-      </tr>`).join('')}
-    </table>
-
-    <a href="${approveUrl}"
-      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;margin-bottom:16px;">
-      ✓ Approve &amp; Create Studio
-    </a>
-
-    <p style="color:#5A7090;font-size:12px;margin-top:20px;">
-      This link expires in 7 days. Clicking it will create the studio and email login credentials to the photographer.
-    </p>
-  </div>
-</body>
-</html>`.trim()
-
-  await sesClient.send(
-    new SendEmailCommand({
-      Source: `VayuStudios <${FROM_EMAIL}>`,
-      Destination: { ToAddresses: [to] },
-      Message: {
-        Subject: { Data: `New studio enquiry — ${studioName}` },
-        Body: {
-          Html: { Data: html, Charset: 'UTF-8' },
-          Text: { Data: `New studio enquiry\n\nStudio: ${studioName}\nContact: ${adminName}\nEmail: ${adminEmail}\nPhone: ${adminPhone}${message ? `\nAbout: ${message}` : ''}\n\nApprove: ${approveUrl}`, Charset: 'UTF-8' },
-        },
-      },
-    })
-  )
-}
-
 export async function sendStudioCredentialsEmail(
   to: string,
   adminName: string,
@@ -331,6 +270,62 @@ export async function sendStudioCredentialsEmail(
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: { Data: `Welcome ${adminName}!\n\nYour studio "${studioName}" is ready.\n\nYour login email: ${email}\n\nSign in here: ${setupUrl}`, Charset: 'UTF-8' },
+        },
+      },
+    })
+  )
+}
+
+export async function sendSelectionSubmittedEmail(
+  to: string,
+  clientName: string,
+  eventType: string,
+  selectedCount: number,
+  editingCount: number,
+  commentCount: number,
+  dashboardUrl: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Selection Submitted</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">Client selection submitted</div>
+
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;color:#E0EAF8;">${clientName} has submitted their photo selection</h2>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+      ${[
+        ['Event type',       eventType.replace('_', ' ')],
+        ['Photos selected',  String(selectedCount)],
+        ['Editing requested', String(editingCount)],
+        ['Comments left',    String(commentCount)],
+      ].map(([label, value]) => `
+      <tr>
+        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:150px;border-bottom:1px solid #1E2D45;">${label}</td>
+        <td style="padding:10px 0;font-size:14px;font-weight:500;border-bottom:1px solid #1E2D45;">${value}</td>
+      </tr>`).join('')}
+    </table>
+
+    <a href="${dashboardUrl}"
+      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;">
+      View Selection →
+    </a>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuStudios <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: `${clientName} submitted their selection — ${selectedCount} photo${selectedCount !== 1 ? 's' : ''}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: `${clientName} has submitted their photo selection\n\nEvent type: ${eventType.replace('_', ' ')}\nPhotos selected: ${selectedCount}\nEditing requested: ${editingCount}\nComments left: ${commentCount}\n\nView: ${dashboardUrl}`, Charset: 'UTF-8' },
         },
       },
     })
@@ -427,4 +422,111 @@ export async function sendBookingNotificationEmail(
       },
     })
   )
+}
+
+function statusEmailShell(title: string, accentColor: string, bodyHtml: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${title}</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:${accentColor};margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    ${bodyHtml}
+  </div>
+</body>
+</html>`.trim()
+}
+
+export async function sendStudioSuspendedEmail(
+  to: string,
+  studioName: string,
+  reason?: string
+): Promise<void> {
+  const html = statusEmailShell('Account Suspended', '#F87171', `
+    <h2 style="font-size:18px;font-weight:700;margin:24px 0 12px;color:#E0EAF8;">Your studio account has been suspended</h2>
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 20px;">
+      <strong style="color:#E0EAF8;">${studioName}</strong> has been temporarily suspended by the VayuStudios team.
+      Your galleries and dashboard are inaccessible until it's reactivated.
+    </p>
+    ${reason ? `
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+      <div style="color:#5A7090;font-size:12px;margin-bottom:4px;">Reason</div>
+      <div style="font-size:14px;color:#E0EAF8;">${reason}</div>
+    </div>` : ''}
+    <p style="color:#5A7090;font-size:13px;line-height:1.6;margin:0;">
+      This is usually reversible. Reply to this email or contact support@vayutransfer.com if you have questions.
+    </p>
+  `)
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `Your studio account has been suspended — ${studioName}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Your studio "${studioName}" has been suspended.${reason ? `\n\nReason: ${reason}` : ''}\n\nContact support@vayutransfer.com if you have questions.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+export async function sendStudioReactivatedEmail(
+  to: string,
+  studioName: string
+): Promise<void> {
+  const html = statusEmailShell('Account Reactivated', '#00E5A0', `
+    <h2 style="font-size:18px;font-weight:700;margin:24px 0 12px;color:#E0EAF8;">Welcome back! 🎉</h2>
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 20px;">
+      <strong style="color:#E0EAF8;">${studioName}</strong> has been reactivated. Your dashboard, galleries, and
+      client links are working again.
+    </p>
+  `)
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `Your studio account is active again — ${studioName}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Good news — "${studioName}" has been reactivated and is accessible again.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+export async function sendStudioDeletedEmail(
+  to: string,
+  studioName: string,
+  reason?: string
+): Promise<void> {
+  const html = statusEmailShell('Account Deleted', '#F87171', `
+    <h2 style="font-size:18px;font-weight:700;margin:24px 0 12px;color:#E0EAF8;">Your studio account has been deleted</h2>
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 20px;">
+      <strong style="color:#E0EAF8;">${studioName}</strong> and all its projects, photos, and client data have been
+      permanently removed from VayuStudios by the platform team.
+    </p>
+    ${reason ? `
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+      <div style="color:#5A7090;font-size:12px;margin-bottom:4px;">Reason</div>
+      <div style="font-size:14px;color:#E0EAF8;">${reason}</div>
+    </div>` : ''}
+    <p style="color:#5A7090;font-size:13px;line-height:1.6;margin:0;">
+      If you believe this was a mistake, contact support@vayutransfer.com as soon as possible.
+    </p>
+  `)
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `Your studio account has been deleted — ${studioName}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Your studio "${studioName}" and all its data have been permanently deleted.${reason ? `\n\nReason: ${reason}` : ''}\n\nContact support@vayutransfer.com if you believe this was a mistake.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
 }

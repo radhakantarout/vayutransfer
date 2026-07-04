@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'
 import { SignJWT } from 'jose'
+import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
+import type { StudioUser } from '@/types/studio'
 
 const ses = new SESClient({
   region: process.env.SES_REGION ?? 'ap-south-1',
@@ -23,6 +25,16 @@ export async function POST(req: NextRequest) {
     }
 
     const email = rawEmail.trim().toLowerCase()
+
+    // Check for an existing studio account before emailing the owner — catches duplicates
+    // at submission time instead of leaving the requester waiting on an enquiry that will
+    // just get rejected implicitly when the owner clicks approve.
+    const existing = await studioQueryByIndex<StudioUser>(
+      TABLES.users, 'email-index', 'email = :e', { ':e': email }
+    )
+    if (existing.length > 0) {
+      return NextResponse.json({ success: false, error: 'EMAIL_EXISTS' }, { status: 409 })
+    }
 
     // Signed token embeds all enquiry data — approve link works from any device, no login needed
     const token = await new SignJWT({ name, studioName, email, phone })
