@@ -15,7 +15,7 @@ function validateEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
 }
 function validatePhone(v: string) {
-  return !v || /^[+\d\s\-()\/.]{7,15}$/.test(v.trim())
+  return !v || /^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(v.trim())
 }
 
 export default function BookingForm({ subdomain, message, accentColor, textOnAccent = '#fff', fontColor }: Props) {
@@ -33,14 +33,14 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
   const blurValidate = (k: string, v: string) => {
     if (k === 'name')  setFieldErrors(e => ({ ...e, name:  v.trim().length < 2 ? 'Please enter your full name' : '' }))
     if (k === 'email') setFieldErrors(e => ({ ...e, email: !validateEmail(v) ? 'Enter a valid email address' : '' }))
-    if (k === 'phone') setFieldErrors(e => ({ ...e, phone: !validatePhone(v) ? 'Enter a valid phone number' : '' }))
+    if (k === 'phone') setFieldErrors(e => ({ ...e, phone: !validatePhone(v) ? 'Enter a valid 10-digit Indian mobile number' : '' }))
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const nameErr  = form.name.trim().length < 2 ? 'Please enter your full name' : ''
     const emailErr = !validateEmail(form.email) ? 'Enter a valid email address' : ''
-    const phoneErr = !validatePhone(form.phone) ? 'Enter a valid phone number' : ''
+    const phoneErr = !validatePhone(form.phone) ? 'Enter a valid 10-digit Indian mobile number' : ''
     if (nameErr || emailErr || phoneErr) {
       setFieldErrors({ name: nameErr, email: emailErr, phone: phoneErr })
       return

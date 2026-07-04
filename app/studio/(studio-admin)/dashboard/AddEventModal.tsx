@@ -48,14 +48,18 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
     else setEmailError('')
   }
   const validatePhone = (v: string) => {
-    if (v && !/^[+\d\s\-()\/.]{7,15}$/.test(v.trim())) setPhoneError('Enter a valid phone number')
+    if (v && !/^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(v.trim())) setPhoneError('Enter a valid 10-digit Indian mobile number (e.g. 98765 43210)')
     else setPhoneError('')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!eventDate) { setError('Please pick an event date.'); return }
-    if (emailError || phoneError) return
+    const phoneErr = clientPhone && !/^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(clientPhone.trim()) ? 'Enter a valid 10-digit Indian mobile number (e.g. 98765 43210)' : ''
+    const emailErr = clientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim()) ? 'Enter a valid email address' : ''
+    if (phoneErr) setPhoneError(phoneErr)
+    if (emailErr) setEmailError(emailErr)
+    if (phoneErr || emailErr) return
     setSaving(true)
     setError('')
     try {
