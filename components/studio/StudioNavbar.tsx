@@ -40,7 +40,7 @@ function GlobeIcon()     { return <svg className="w-4 h-4" fill="none" viewBox="
 function HamburgerIcon() { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg> }
 function CloseIcon()     { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg> }
 function ChevronDown()   { return <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> }
-function HomeIcon()      { return <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg> }
+function HomeIcon()      { return <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg> }
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   const initials = name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -78,6 +78,13 @@ export default function StudioNavbar() {
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [profileOpen])
+
+  useEffect(() => {
+    if (!productsOpen) return
+    const h = (e: MouseEvent) => { if (productsRef.current && !productsRef.current.contains(e.target as Node)) setProductsOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [productsOpen])
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : ''
@@ -141,41 +148,40 @@ export default function StudioNavbar() {
             ) : (
               <>
                 {/* Products dropdown */}
-                <div
-                  ref={productsRef}
-                  className="relative"
-                  onMouseEnter={() => setProductsOpen(true)}
-                  onMouseLeave={() => setProductsOpen(false)}
-                >
-                  <button className={`flex items-center gap-1.5 ${linkCls}`}>
+                <div ref={productsRef} className="relative">
+                  <button
+                    onClick={() => setProductsOpen(v => !v)}
+                    className={`flex items-center gap-1.5 ${linkCls}`}
+                  >
                     Products <span className={`transition-transform duration-200 ${productsOpen ? 'rotate-180' : ''}`}><ChevronDown /></span>
                   </button>
 
-                  {/* Dropdown panel */}
-                  <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[480px] bg-card border border-border rounded-2xl shadow-2xl shadow-black/40 overflow-hidden transition-all duration-200 ${productsOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
-                    <div className="p-2 grid grid-cols-2 gap-1">
+                  {/* Dropdown panel — single column */}
+                  <div className={`absolute top-full left-0 mt-2 w-72 bg-card border border-border rounded-2xl shadow-2xl shadow-black/40 overflow-hidden transition-all duration-200 ${productsOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+                    <div className="p-2 space-y-0.5">
                       {PRODUCTS.map((p) => (
                         <Link
                           key={p.href}
                           href={p.href}
                           onClick={closeAll}
-                          className="flex items-start gap-3 px-3 py-3 rounded-xl hover:bg-accent/5 hover:border-accent/20 border border-transparent transition-all group"
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-accent/5 border border-transparent hover:border-accent/15 transition-all group"
                         >
-                          <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent flex-shrink-0 group-hover:bg-accent/15 transition-colors">
+                          <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent flex-shrink-0 group-hover:bg-accent group-hover:text-white group-hover:border-accent transition-all">
                             {p.icon}
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-text-primary group-hover:text-accent transition-colors">{p.label}</span>
                               {p.badge && <span className="text-[9px] font-bold text-accent bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded-full">{p.badge}</span>}
                             </div>
-                            <p className="text-xs text-muted mt-0.5 leading-snug">{p.desc}</p>
+                            <p className="text-xs text-muted leading-snug">{p.desc}</p>
                           </div>
+                          <svg className="w-3.5 h-3.5 text-muted/40 group-hover:text-accent/60 flex-shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>
                         </Link>
                       ))}
                     </div>
                     <div className="border-t border-border px-4 py-2.5 flex items-center justify-between">
-                      <span className="text-xs text-muted">Everything you need to deliver memories</span>
+                      <span className="text-xs text-muted">All-in-one photography platform</span>
                       <Link href="/studio/home#get-started" onClick={closeAll} className="text-xs text-accent font-semibold hover:underline">Get started →</Link>
                     </div>
                   </div>
