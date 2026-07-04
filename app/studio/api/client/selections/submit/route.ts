@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { getStudioAdminEmails } from '@/lib/studio/notify'
+import { sendSelectionSubmittedEmail } from '@/lib/aws/ses'
 import type { Selection, StudioProject } from '@/types/studio'
 
 async function resolveProjectId(auth: { projectId?: string; studioId?: string }, requestedId?: string): Promise<string | null> {
@@ -13,8 +14,6 @@ async function resolveProjectId(auth: { projectId?: string; studioId?: string },
   if (!entry || !requested || entry.clientEmail !== requested.clientEmail) return null
   return requestedId
 }
-
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
 export async function POST(req: NextRequest) {
   try {
@@ -85,25 +84,16 @@ export async function POST(req: NextRequest) {
       { '#s': 'status' }
     )
 
-    // Notify studio async (fire-and-forget)
-    if (process.env.NOTIFY_LAMBDA_ARN) {
-      lambda.send(new InvokeCommand({
-        FunctionName: process.env.NOTIFY_LAMBDA_ARN,
-        InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify({
-          event: 'SELECTION_SUBMITTED',
-          projectId,
-          studioId,
-          clientName:       project.clientName,
-          clientEmail:      project.clientEmail,
-          selectedCount:    selected.length,
-          editingCount,
-          submittedAt:      now,
-        })),
-      })).catch((err: unknown) => console.error('[notify-lambda invoke]', err))
-    } else {
-      console.log(`[DEV] Selection submitted — project: ${projectId}, selected: ${selected.length}`)
-    }
+    // Notify studio admins async (fire-and-forget)
+    const dashboardUrl = `${req.nextUrl.origin}/studio/dashboard/projects/${projectId}/selections`
+    getStudioAdminEmails(studioId)
+      .then((emails) => emails.forEach((to) =>
+        sendSelectionSubmittedEmail(
+          to, project.clientName, project.eventType,
+          selected.length, editingCount, commentCount, dashboardUrl
+        ).catch((err) => console.error('[selection email]', err))
+      ))
+      .catch((err) => console.error('[selection email — admin lookup]', err))
 
     return NextResponse.json({ success: true, data: { selectedCount: selected.length, submittedAt } })
   } catch (err) {

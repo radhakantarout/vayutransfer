@@ -125,6 +125,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router    = useRouter()
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
+  const [authChecked, setAuthChecked]   = useState(false)
   const [treeOpen, setTreeOpen]         = useState(true)
   const [sidebarOpen, setSidebarOpen]   = useState(true)
   const [selectedIds, setSelectedIds]   = useState<string[]>([])
@@ -165,8 +166,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const fetchProjects = () => {
     fetch('/studio/api/admin/projects')
-      .then(r => r.json())
-      .then(d => { if (d.success) setProjects(d.data) })
+      .then(r => {
+        if (r.status === 401 || r.status === 403) {
+          router.replace(`/studio/login?next=${encodeURIComponent(pathname)}`)
+          return null
+        }
+        setAuthChecked(true)
+        return r.json()
+      })
+      .then(d => { if (d?.success) setProjects(d.data) })
       .catch(() => {})
   }
 
@@ -283,6 +291,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
     .filter((p): p is StudioProject => !!p)
+
+  if (!authChecked) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-bg">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-1 overflow-hidden">

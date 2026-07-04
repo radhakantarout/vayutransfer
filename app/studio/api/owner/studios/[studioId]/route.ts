@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { sendStudioSuspendedEmail, sendStudioReactivatedEmail, sendStudioDeletedEmail } from '@/lib/aws/ses'
 import type { Studio, StudioUser, StudioProject, MediaFile, Selection } from '@/types/studio'
 
 export async function GET(
@@ -38,9 +39,10 @@ export async function PATCH(
     }
 
     const body = await req.json()
-    const { status, featureFlag } = body as {
+    const { status, featureFlag, reason } = body as {
       status?: string
       featureFlag?: { key: string; value: boolean }
+      reason?: string
     }
 
     const { studioId } = params
@@ -85,13 +87,23 @@ export async function PATCH(
       { ':sid': studioId }
     ).catch(() => [] as StudioUser[])
 
+    const admins = adminUsers.filter((u) => u.role === 'ADMIN')
+
     await Promise.all(
-      adminUsers
-        .filter((u) => u.role === 'ADMIN')
-        .map((u) =>
-          studioUpdateItem(TABLES.users, { userId: u.userId }, 'SET #s = :status, updatedAt = :now', { ':status': status, ':now': now }, { '#s': 'status' })
-        )
+      admins.map((u) =>
+        studioUpdateItem(TABLES.users, { userId: u.userId }, 'SET #s = :status, updatedAt = :now', { ':status': status, ':now': now }, { '#s': 'status' })
+      )
     )
+
+    // Notify admins async (fire-and-forget) — only on an actual status change, never blocks the response
+    if (status !== studio.status) {
+      admins.filter((u) => u.email).forEach((u) => {
+        const send = status === 'SUSPENDED'
+          ? sendStudioSuspendedEmail(u.email!, studio.name, reason)
+          : sendStudioReactivatedEmail(u.email!, studio.name)
+        send.catch((err) => console.error('[studio status email]', err))
+      })
+    }
 
     return NextResponse.json({ success: true, data: { studioId, status } })
   } catch (err) {
@@ -112,6 +124,8 @@ export async function DELETE(
     }
 
     const { studioId } = params
+    const { reason } = await req.json().catch(() => ({})) as { reason?: string }
+
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
@@ -139,6 +153,14 @@ export async function DELETE(
       ...users.map((u) => studioDeleteItem(TABLES.users, { userId: u.userId })),
     ])
     await studioDeleteItem(TABLES.studios, { studioId })
+
+    // Notify former admins async (fire-and-forget) — captured emails before the cascade delete above
+    users
+      .filter((u) => u.role === 'ADMIN' && u.email)
+      .forEach((u) => {
+        sendStudioDeletedEmail(u.email!, studio.name, reason)
+          .catch((err) => console.error('[studio deleted email]', err))
+      })
 
     return NextResponse.json({ success: true, data: { studioId } })
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getWebsiteBySubdomain } from '@/lib/studio/website'
 import { createBooking } from '@/lib/studio/bookings'
+import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendBookingNotificationEmail } from '@/lib/aws/ses'
 
 export async function POST(
@@ -32,14 +33,15 @@ export async function POST(
       message: message?.trim(),
     })
 
-    // Fire-and-forget email to studio
-    if (site.contactEmail) {
-      sendBookingNotificationEmail(
-        site.contactEmail,
-        site.heroTitle,
-        booking
-      ).catch(err => console.error('[booking] email failed', err))
-    }
+    // Fire-and-forget email to studio — contactEmail if set, else fall back to admin accounts
+    const recipients = site.contactEmail
+      ? [site.contactEmail]
+      : await getStudioAdminEmails(site.studioId)
+
+    recipients.forEach((to) => {
+      sendBookingNotificationEmail(to, site.heroTitle, booking)
+        .catch(err => console.error('[booking] email failed', err))
+    })
 
     return NextResponse.json({ success: true, data: { bookingId: booking.bookingId } })
   } catch (err) {
