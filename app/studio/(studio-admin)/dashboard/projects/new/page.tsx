@@ -11,7 +11,7 @@ function validateEmail(v: string) {
 }
 function validatePhone(v: string) {
   if (!v) return ''
-  return /^[+\d\s\-()\/.]{7,15}$/.test(v.trim()) ? '' : 'Enter a valid phone number (digits, spaces, + allowed)'
+  return /^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(v.trim()) ? '' : 'Enter a valid 10-digit Indian mobile number (e.g. 98765 43210)'
 }
 
 export default function NewProjectPage() {

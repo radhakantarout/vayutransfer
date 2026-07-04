@@ -41,7 +41,7 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
     else setEmailError('')
   }
   const validatePhone = (v: string) => {
-    if (v && !/^[+\d\s\-()\/.]{7,15}$/.test(v.trim())) setPhoneError('Enter a valid phone number')
+    if (v && !/^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(v.trim())) setPhoneError('Enter a valid 10-digit Indian mobile number (e.g. 98765 43210)')
     else setPhoneError('')
   }
   const validateName = (v: string) => {
@@ -56,8 +56,13 @@ export default function EditEventModal({ project, onClose, onSaved }: Props) {
   }, [onClose])
 
   const save = async () => {
-    if (!form.clientName || !form.eventDate || !form.eventType) return
-    if (nameError || emailError || phoneError) return
+    const nameErr  = form.clientName.trim().length < 2 ? 'Name must be at least 2 characters' : ''
+    const emailErr = form.clientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.clientEmail.trim()) ? 'Enter a valid email address' : ''
+    const phoneErr = form.clientPhone && !/^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(form.clientPhone.trim()) ? 'Enter a valid 10-digit Indian mobile number (e.g. 98765 43210)' : ''
+    if (nameErr)  setNameError(nameErr)
+    if (emailErr) setEmailError(emailErr)
+    if (phoneErr) setPhoneError(phoneErr)
+    if (nameErr || emailErr || phoneErr || !form.eventDate || !form.eventType) return
     setSaving(true); setError('')
     try {
       const res = await fetch(`/studio/api/admin/projects/${project.projectId}`, {
