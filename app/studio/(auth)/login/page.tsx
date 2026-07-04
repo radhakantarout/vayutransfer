@@ -106,7 +106,8 @@ function LoginPageInner() {
         )
         return
       }
-      router.push(ROLE_REDIRECT[data.data.role] ?? '/studio/dashboard')
+      const next = searchParams.get('next')
+      router.push(next?.startsWith('/studio/') ? next : (ROLE_REDIRECT[data.data.role] ?? '/studio/dashboard'))
     } catch {
       setLoginError('Network error — please try again')
     } finally {
