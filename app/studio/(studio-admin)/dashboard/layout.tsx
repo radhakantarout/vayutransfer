@@ -403,7 +403,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </span>
                 )}
               </div>
-              <button onClick={clearSelection}
+              <button onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
                 className="text-xs text-muted hover:text-text-primary border border-border px-2.5 py-1 rounded-lg hover:bg-border/40 transition-colors">
                 Clear
               </button>
