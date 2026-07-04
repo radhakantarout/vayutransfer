@@ -625,7 +625,7 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                 <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
               </svg>
             </button>
-            <input type="range" min={2} max={5} value={zoomLevel} onChange={e => setZoomLevel(Number(e.target.value))} className="w-16 h-1 cursor-pointer accent-accent" />
+            <input type="range" min={2} max={5} value={7 - zoomLevel} onChange={e => setZoomLevel(7 - Number(e.target.value))} className="w-16 h-1 cursor-pointer accent-accent" />
             <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
               className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
