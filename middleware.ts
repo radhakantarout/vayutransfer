@@ -4,6 +4,9 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 // Known non-studio subdomains that should NOT be treated as studio sites
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
+// Shared pages that live outside /studio but must still be reachable on the studio app domain
+const SHARED_PAGES = new Set(['/privacy', '/terms'])
+
 export async function middleware(request: NextRequest) {
   // x-studio-subdomain is set by the Cloudflare Worker that proxies *.vayustudios.com
   // (x-forwarded-host is avoided because Vercel overwrites it with its own value)
@@ -70,7 +73,7 @@ export async function middleware(request: NextRequest) {
     if (path === '/') {
       return NextResponse.rewrite(new URL('/studio/home', request.url))
     }
-    const isAllowed = path.startsWith('/studio') || path.startsWith('/api')
+    const isAllowed = path.startsWith('/studio') || path.startsWith('/api') || SHARED_PAGES.has(path)
     if (!isAllowed) {
       return NextResponse.redirect(new URL('/studio/home', request.url))
     }

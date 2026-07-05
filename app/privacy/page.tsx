@@ -1,82 +1,168 @@
+import type { Metadata } from 'next'
+import { LegalHero, LegalToc, LegalSection, TrustBadge, Icons } from '@/components/legal/LegalShell'
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy — VayuTransfer & VayuStudios',
+  description: 'How VayuTransfer and VayuStudios collect, store, and protect your data — encryption, hosting, retention, and your rights.',
+}
+
+const TOC = [
+  { id: 'overview',    label: 'Overview' },
+  { id: 'collect',     label: 'What We Collect' },
+  { id: 'use',         label: 'How We Use It' },
+  { id: 'face',        label: 'Face Recognition' },
+  { id: 'storage',     label: 'Storage & Security' },
+  { id: 'sharing',     label: 'Third Parties' },
+  { id: 'galleries',   label: 'Client Galleries' },
+  { id: 'cookies',     label: 'Cookies' },
+  { id: 'retention',   label: 'Retention & Deletion' },
+  { id: 'rights',      label: 'Your Rights' },
+  { id: 'children',    label: "Minors' Photos" },
+  { id: 'contact',     label: 'Contact' },
+]
+
 export default function PrivacyPage() {
   return (
-    <main className="max-w-3xl mx-auto px-4 py-16">
-      <h1 className="text-3xl font-extrabold text-text-primary mb-2">Privacy Policy</h1>
-      <p className="text-muted text-sm mb-10">Last updated: June 2025</p>
+    <main className="min-h-screen bg-bg">
+      <LegalHero
+        eyebrow="Privacy Policy"
+        title="Your data, handled with care"
+        tagline="VayuTransfer and VayuStudios are built by the same team on the same principle: collect only what's needed to run the service, encrypt it, host it in India, and delete it when it's no longer needed."
+        updated="July 2026"
+      />
 
-      <div className="prose prose-invert max-w-none space-y-8 text-text-primary">
+      <div className="max-w-3xl mx-auto px-4 py-12 space-y-10">
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">1. Information We Collect</h2>
-          <p className="text-muted leading-relaxed">
-            When you sign in with Google, we receive your name, email address, and profile photo from Google OAuth. We store this to associate your wallet and transfer history with your account.
+        {/* Trust bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <TrustBadge icon={<Icons.Lock />}   label="Encrypted"        sub="At rest (S3/DynamoDB) & in transit (TLS)" />
+          <TrustBadge icon={<Icons.Server />} label="Hosted in India"  sub="AWS Mumbai (ap-south-1) region" />
+          <TrustBadge icon={<Icons.Clock />}  label="Auto-deleted"     sub="Files & projects expire on schedule" />
+          <TrustBadge icon={<Icons.Card />}   label="PCI-DSS payments" sub="Razorpay handles all card data — never us" />
+          <TrustBadge icon={<Icons.Face />}   label="Face data is scoped" sub="Used only for your own gallery's search" />
+          <TrustBadge icon={<Icons.Users />}  label="No data resale"   sub="We never sell or rent your information" />
+        </div>
+
+        <LegalToc items={TOC} />
+
+        <LegalSection id="overview" icon={<Icons.Doc />} title="1. Overview">
+          <p>
+            This policy covers both products operated by the same team: <strong>VayuTransfer</strong> (prepaid file
+            transfer at vayutransfer.com) and <strong>VayuStudios</strong> (photo gallery delivery for photographers
+            at vayustudios.com). Wherever a section applies to only one product, it says so explicitly.
           </p>
-          <p className="text-muted leading-relaxed mt-3">
-            When you upload a file, we store metadata about the transfer (file name, size, expiry time, download limit) but we do not read or analyse your file contents.
-          </p>
-        </section>
+        </LegalSection>
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">2. How We Use Your Information</h2>
-          <ul className="text-muted space-y-2 list-disc list-inside leading-relaxed">
-            <li>To create and manage your prepaid wallet</li>
-            <li>To process file transfers and generate shareable links</li>
-            <li>To send download notification emails to your recipients (only if you provide their email)</li>
-            <li>To maintain an audit log for security and fraud prevention</li>
-            <li>To credit your ₹50 welcome bonus on first sign-in</li>
+        <LegalSection id="collect" icon={<Icons.Users />} title="2. Information We Collect">
+          <p><strong>VayuTransfer</strong></p>
+          <ul>
+            <li>Name, email, and profile photo from Google OAuth (if you sign in)</li>
+            <li>Transfer metadata: file name, size, expiry time, download limit — we never read or analyse file contents</li>
+            <li>Wallet balance and transaction history</li>
           </ul>
-        </section>
-
-        <section>
-          <h2 className="text-xl font-bold mb-3">3. Data Storage</h2>
-          <p className="text-muted leading-relaxed">
-            Files are stored on Amazon S3 (ap-south-1 — Mumbai region) with server-side encryption. User records and wallet data are stored on Amazon DynamoDB. All data is hosted within India.
-          </p>
-          <p className="text-muted leading-relaxed mt-3">
-            Files are automatically deleted when their transfer link expires (default: 24 hours). We do not retain file contents after expiry.
-          </p>
-        </section>
-
-        <section>
-          <h2 className="text-xl font-bold mb-3">4. Data Sharing</h2>
-          <p className="text-muted leading-relaxed">
-            We do not sell, rent, or share your personal data with third parties for marketing purposes. We use the following services to operate the platform:
-          </p>
-          <ul className="text-muted space-y-2 list-disc list-inside mt-3 leading-relaxed">
-            <li>Amazon Web Services (S3, DynamoDB, SES) — file storage and email delivery</li>
-            <li>Google OAuth — authentication only</li>
-            <li>Razorpay — payment processing (when you top up your wallet)</li>
-            <li>Vercel — web hosting</li>
+          <p className="pt-2"><strong>VayuStudios</strong></p>
+          <ul>
+            <li>Studio admin: name, email, phone, password (hashed, never stored in plain text)</li>
+            <li>Client/event details entered by the studio admin: client name, email, phone, event type and date</li>
+            <li>Photos you upload — both watermarked previews and original full-resolution files</li>
+            <li>Booking enquiries submitted through a studio's public website (name, email, phone, event details, message)</li>
+            <li>Face vectors generated by AWS Rekognition when Selfie Search is enabled (see Section 4)</li>
           </ul>
-        </section>
+        </LegalSection>
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">5. Download Recipient Privacy</h2>
-          <p className="text-muted leading-relaxed">
-            When a file is downloaded, we log an anonymised IP hash (SHA-256, never the raw IP) and browser user agent for security purposes. We do not link download events to any personal identity unless the downloader is a registered user.
-          </p>
-        </section>
+        <LegalSection id="use" icon={<Icons.Shield />} title="3. How We Use Your Information">
+          <ul>
+            <li>To create and manage your wallet, studio account, or client gallery access</li>
+            <li>To process file transfers, photo uploads, and generate secure shareable links</li>
+            <li>To send transactional emails: download links, booking notifications, selection updates, and account status changes</li>
+            <li>To maintain a security audit log and prevent fraud</li>
+            <li>To power the VayuStudios AI chat assistant (AWS Bedrock) — conversations are used only to answer your question, not for training or advertising</li>
+          </ul>
+        </LegalSection>
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">6. Your Rights</h2>
-          <p className="text-muted leading-relaxed">
-            You may request deletion of your account and all associated data by emailing <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">support@vayutransfer.com</a>. Note that wallet transactions are retained for financial compliance purposes for up to 7 years.
+        <LegalSection id="face" icon={<Icons.Camera />} title="4. Face Recognition (Selfie Search)">
+          <p>
+            When a studio enables Selfie Search, we use AWS Rekognition to index faces in that studio's uploaded
+            photos and match them against a selfie a client or guest submits.
           </p>
-        </section>
+          <ul>
+            <li>Face data is indexed <strong>per project</strong> — it is never compared across different studios or different clients' events</li>
+            <li>We do not use face data for identification outside the gallery it was created for, and never share it with third parties beyond the AWS service that powers the match</li>
+            <li>Deleting a project or a studio account permanently deletes its associated face index</li>
+            <li>Studio admins are responsible for obtaining consent from clients and guests before enabling face search for an event — see Terms of Service, Section 5</li>
+          </ul>
+        </LegalSection>
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">7. Cookies</h2>
-          <p className="text-muted leading-relaxed">
-            We use a single secure HTTP-only session cookie to maintain your wallet session (for anonymous users) or your login state (for signed-in users). We do not use tracking or advertising cookies.
+        <LegalSection id="storage" icon={<Icons.Server />} title="5. Data Storage & Security">
+          <p>
+            Files and photos are stored on Amazon S3 (ap-south-1 — Mumbai) with server-side encryption. Watermarked
+            preview images are additionally cached on Cloudflare R2 for fast gallery loading. Structured data
+            (wallets, projects, users, bookings) is stored on Amazon DynamoDB, also in Mumbai. All traffic between
+            your browser and our servers is encrypted with TLS.
           </p>
-        </section>
+        </LegalSection>
 
-        <section>
-          <h2 className="text-xl font-bold mb-3">8. Contact</h2>
-          <p className="text-muted leading-relaxed">
-            For privacy-related questions, email <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">support@vayutransfer.com</a>.
+        <LegalSection id="sharing" icon={<Icons.Users />} title="6. Data Sharing & Third-Party Services">
+          <p>We do not sell, rent, or share your personal data for marketing. We use the following services to operate the platform:</p>
+          <ul>
+            <li><strong>Amazon Web Services</strong> — S3, DynamoDB, SES (email), Rekognition (face search), Bedrock (AI chat)</li>
+            <li><strong>Cloudflare R2</strong> — CDN caching for watermarked photo previews</li>
+            <li><strong>Google OAuth</strong> — authentication only, for VayuTransfer sign-in</li>
+            <li><strong>Razorpay</strong> — PCI-DSS compliant payment processing; we never see or store your card details</li>
+            <li><strong>Vercel</strong> — web application hosting</li>
+          </ul>
+        </LegalSection>
+
+        <LegalSection id="galleries" icon={<Icons.Lock />} title="7. Client Gallery Privacy">
+          <p>
+            Each client gallery is private and accessible only via a unique secure link, verified with a one-time
+            password (OTP) sent to the client's phone or a magic link sent to their email. Clients cannot see or
+            search other clients' galleries. Download activity is logged with a hashed (SHA-256) IP address for
+            security — never the raw IP, and never linked to identity unless the downloader is a registered user.
           </p>
-        </section>
+        </LegalSection>
+
+        <LegalSection id="cookies" icon={<Icons.Doc />} title="8. Cookies">
+          <p>
+            We use a single secure, HTTP-only session cookie to keep you signed in — on VayuTransfer (wallet/login
+            session) and VayuStudios (studio admin or client gallery session). We do not use advertising or
+            cross-site tracking cookies.
+          </p>
+        </LegalSection>
+
+        <LegalSection id="retention" icon={<Icons.Clock />} title="9. Data Retention & Deletion">
+          <ul>
+            <li>VayuTransfer files are deleted automatically when their transfer link expires (default: 24 hours)</li>
+            <li>VayuStudios galleries remain accessible until the studio admin closes the project or their account</li>
+            <li>If a studio account is suspended or deleted by the platform, the studio admin is notified by email; on deletion, all associated projects, photos, and face-index data are permanently removed</li>
+            <li>Wallet transaction records are retained for up to 7 years for financial compliance</li>
+          </ul>
+        </LegalSection>
+
+        <LegalSection id="rights" icon={<Icons.Shield />} title="10. Your Rights">
+          <p>
+            You may request a copy or deletion of your account and associated data at any time by emailing{' '}
+            <a href="mailto:support@vayutransfer.com">support@vayutransfer.com</a>. Financial records may be retained
+            longer where required by law.
+          </p>
+        </LegalSection>
+
+        <LegalSection id="children" icon={<Icons.Alert />} title="11. Photos Involving Minors">
+          <p>
+            VayuStudios is used to deliver event photography that may include minors (e.g. birthdays, school events,
+            family functions). The studio admin uploading such photos is responsible for having appropriate consent
+            from parents or guardians. We do not knowingly collect account registrations from children — studio
+            admin and client accounts are intended for adults.
+          </p>
+        </LegalSection>
+
+        <LegalSection id="contact" icon={<Icons.Mail />} title="12. Contact">
+          <p>
+            Questions about this policy? Email{' '}
+            <a href="mailto:support@vayutransfer.com">support@vayutransfer.com</a> or reach us on{' '}
+            <a href="https://wa.me/918984769522" target="_blank" rel="noopener noreferrer">WhatsApp</a>.
+          </p>
+        </LegalSection>
       </div>
     </main>
   )
