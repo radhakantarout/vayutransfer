@@ -105,10 +105,10 @@ export default function ChatWidget() {
         <div className="flex items-center justify-between px-4 py-3 bg-accent flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <SparkleIcon size={16} className="text-white" />
+              <RobotIcon size={18} className="text-white animate-pavan-bob" />
             </div>
             <div>
-              <p className="text-sm font-bold text-white leading-snug">VayuStudios AI</p>
+              <p className="text-sm font-bold text-white leading-snug">Pavan</p>
               <div className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
                 <p className="text-[10px] text-white/70">Replies instantly</p>
@@ -136,7 +136,7 @@ export default function ChatWidget() {
                 <div className="bg-bg border border-border/60 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[260px]">
                   <p className="text-sm font-semibold text-text-primary mb-1">Hi there! 👋</p>
                   <p className="text-xs text-muted leading-relaxed">
-                    I'm the VayuStudios assistant. Ask me anything about features, how-tos, or getting started.
+                    I'm Pavan, your VayuStudios assistant. Ask me anything about features, how-tos, or getting started.
                   </p>
                 </div>
               </div>
@@ -235,12 +235,12 @@ export default function ChatWidget() {
           hover:scale-105 active:scale-95
           transition-all duration-200
         `}
-        aria-label={open ? 'Close AI chat' : 'Open AI chat'}
+        aria-label={open ? 'Close chat with Pavan' : 'Open chat with Pavan'}
       >
         <span className={`transition-transform duration-300 ${open ? 'rotate-180' : 'rotate-0'}`}>
-          {open ? <ChevronDownIcon /> : <SparkleIcon size={16} className="text-white" />}
+          {open ? <ChevronDownIcon /> : <RobotIcon size={18} className="text-white animate-pavan-bob" />}
         </span>
-        <span className="text-sm font-semibold">{open ? 'Close' : 'Ask AI'}</span>
+        <span className="text-sm font-semibold">{open ? 'Close' : 'Pavan'}</span>
       </button>
     </>
   )
@@ -281,7 +281,7 @@ function ErrorCard({ onRetry }: { onRetry: () => void }) {
 function BotAvatar() {
   return (
     <div className="w-6 h-6 rounded-full bg-accent/15 flex items-center justify-center flex-shrink-0 mb-0.5">
-      <SparkleIcon size={12} className="text-accent" />
+      <RobotIcon size={14} className="text-accent" />
     </div>
   )
 }
@@ -300,10 +300,22 @@ function TypingDots() {
   )
 }
 
-function SparkleIcon({ size = 20, className = '' }: { size?: number; className?: string }) {
+function RobotIcon({ size = 20, className = '' }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-      <path d="M12 2L9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5z" />
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+      {/* antenna */}
+      <circle cx="12" cy="2.6" r="1.3" fill="currentColor" />
+      <line x1="12" y1="3.9" x2="12" y2="6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      {/* ears */}
+      <rect x="1.6" y="10" width="2" height="4.5" rx="1" fill="currentColor" />
+      <rect x="20.4" y="10" width="2" height="4.5" rx="1" fill="currentColor" />
+      {/* head */}
+      <rect x="4.2" y="6" width="15.6" height="13" rx="4.5" fill="currentColor" />
+      {/* eyes */}
+      <circle cx="9.2" cy="12.7" r="1.7" fill="white" />
+      <circle cx="14.8" cy="12.7" r="1.7" fill="white" />
+      {/* mouth */}
+      <rect x="9" y="16" width="6" height="1.4" rx="0.7" fill="white" opacity="0.85" />
     </svg>
   )
 }

@@ -72,6 +72,15 @@ body {
   opacity: 0;
 }
 
+/* Pavan (chat assistant) — gentle idle bob + antenna wiggle */
+@keyframes pavan-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%       { transform: translateY(-2px) rotate(-4deg); }
+}
+.animate-pavan-bob {
+  animation: pavan-bob 1.8s ease-in-out infinite;
+}
+
 /* Thin scrollbar for event photo grids */
 .vayu-scroll {
   scrollbar-width: thin;
