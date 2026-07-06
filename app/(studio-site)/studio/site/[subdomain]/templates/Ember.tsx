@@ -2,11 +2,12 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
-import SocialIcons from './SocialIcons'
+import SocialIcons, { WhatsAppButton } from './SocialIcons'
 
 export default function Ember({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#C4622D'
   const fontColor = site.fontColor   ?? '#2C1810'
+  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
 
   return (
     <div className="min-h-screen" style={{ background: '#FAF6F1', color: fontColor, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
@@ -27,9 +28,9 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
       {/* Hero */}
       <section className="relative overflow-hidden" style={{ minHeight: '80vh' }}>
-        {site.galleryPhotos[0] ? (
+        {heroImg ? (
           <>
-            <img src={site.galleryPhotos[0].url} alt="" className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: 0.85 }} />
+            <img src={heroImg} alt="" className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: 0.85 }} />
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(250,246,241,0.9) 40%, transparent 100%)' }} />
           </>
         ) : (
@@ -103,7 +104,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
               <div className="space-y-3 text-sm opacity-70">
                 {site.contactEmail && <p>✉ {site.contactEmail}</p>}
                 {site.contactPhone && <p>☎ {site.contactPhone}</p>}
-                {site.whatsapp && <a href={`https://wa.me/${site.whatsapp.replace(/\D/g,'')}`} className="block underline" style={{ color: accent }}>Chat on WhatsApp</a>}
+                <WhatsAppButton number={site.whatsapp} />
               </div>
             )
           }

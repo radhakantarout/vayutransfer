@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { StudioWebsite, WebsiteTemplateId, WebsiteService, WebsiteGalleryPhoto } from '@/types/studio'
-import { randomUUID } from 'crypto'
 
 const TEMPLATES: { id: WebsiteTemplateId; name: string; desc: string; preview: string }[] = [
   { id: 'lumina',  name: 'Lumina',  desc: 'Dark & elegant, full-bleed',     preview: 'bg-gradient-to-br from-zinc-900 to-amber-950' },
@@ -113,7 +112,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const addService = () => {
     if (!site) return
-    update({ services: [...site.services, { id: randomUUID(), name: '', description: '', price: '' }] })
+    update({ services: [...site.services, { id: crypto.randomUUID(), name: '', description: '', price: '' }] })
   }
 
   const removeService = (id: string) => {
@@ -127,35 +126,99 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   }
 
   const [uploading, setUploading] = useState(false)
+  const [uploadingHero, setUploadingHero] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploadCategory, setUploadCategory] = useState('General')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const heroFileInputRef = useRef<HTMLInputElement>(null)
 
   const CATEGORIES = ['Wedding', 'Pre-Wedding', 'Portrait', 'Corporate', 'Fashion', 'School', 'General']
+  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 // 10 MB
+
+  // Gets a presigned R2 URL and PUTs the file directly to storage — the file bytes
+  // never pass through our server, so it isn't limited by serverless body-size caps.
+  const uploadImageToR2 = async (file: File, kind: 'portfolio' | 'hero', category?: string) => {
+    if (!file.type.startsWith('image/')) throw new Error(`${file.name}: only image files are allowed`)
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name}: max file size is 10 MB`)
+
+    const initRes = await fetch('/studio/api/admin/website/portfolio-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type, category, kind }),
+    }).then(r => r.json())
+    if (!initRes.success) throw new Error(initRes.error ?? 'Failed to prepare upload')
+
+    const putRes = await fetch(initRes.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    if (!putRes.ok) throw new Error('Upload to storage failed — please try again')
+
+    return { id: initRes.id as string, url: initRes.publicUrl as string, category: initRes.category as string }
+  }
 
   const handlePhotoUpload = async (files: FileList | null) => {
     if (!files || !site) return
     setUploading(true)
-    const newPhotos: WebsiteGalleryPhoto[] = []
-    for (const file of Array.from(files)) {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('category', uploadCategory)
-      const res = await fetch('/studio/api/admin/website/portfolio-upload', { method: 'POST', body: form })
-      const data = await res.json()
-      if (data.success) newPhotos.push({ id: data.id, url: data.url, caption: '', category: data.category })
+    setUploadError(null)
+    try {
+      const newPhotos: WebsiteGalleryPhoto[] = []
+      for (const file of Array.from(files)) {
+        const { id, url, category } = await uploadImageToR2(file, 'portfolio', uploadCategory)
+        newPhotos.push({ id, url, caption: '', category })
+      }
+      if (newPhotos.length > 0) {
+        const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
+        setSite(prev => prev ? { ...prev, galleryPhotos: updatedPhotos } : prev)
+        const saveRes = await fetch('/studio/api/admin/website', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
+        }).then(r => r.json())
+        if (!saveRes.success) throw new Error('Photo uploaded but could not be saved — please try again')
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed — please try again')
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setUploading(false)
     }
-    if (newPhotos.length > 0) {
-      const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
-      setSite(prev => prev ? { ...prev, galleryPhotos: updatedPhotos } : prev)
-      // Persist to DynamoDB immediately — don't wait for manual Save
-      fetch('/studio/api/admin/website', {
+  }
+
+  const handleHeroImageUpload = async (files: FileList | null) => {
+    const file = files?.[0]
+    if (!file || !site) return
+    setUploadingHero(true)
+    setUploadError(null)
+    try {
+      const { url } = await uploadImageToR2(file, 'hero')
+      setSite(prev => prev ? { ...prev, heroImageUrl: url } : prev)
+      const saveRes = await fetch('/studio/api/admin/website', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
-      }).catch(() => {})
+        body: JSON.stringify({ ...site, heroImageUrl: url }),
+      }).then(r => r.json())
+      if (!saveRes.success) throw new Error('Cover image uploaded but could not be saved — please try again')
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Cover image upload failed — please try again')
+    } finally {
+      if (heroFileInputRef.current) heroFileInputRef.current.value = ''
+      setUploadingHero(false)
     }
-    if (fileInputRef.current) fileInputRef.current.value = ''
-    setUploading(false)
+  }
+
+  const removeHeroImage = () => {
+    if (!site) return
+    // Empty string (not undefined) so it survives JSON — the API merges by spreading
+    // the request body over the existing record, and `undefined` keys are dropped by
+    // JSON.stringify before the request is even sent, so the old value would stick.
+    update({ heroImageUrl: '' })
+    fetch('/studio/api/admin/website', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...site, heroImageUrl: '' }),
+    }).catch(() => {})
   }
 
   const removeGalleryPhoto = (id: string) => {
@@ -327,6 +390,32 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               placeholder="Tell your story…" />
           </div>
           <Field label="City / Location" value={site.city ?? ''} onChange={v => update({ city: v })} placeholder="Bhubaneswar, Odisha" />
+
+          <div>
+            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+              Cover image <span className="font-normal normal-case">(hero background)</span>
+            </label>
+            {site.heroImageUrl ? (
+              <div className="relative rounded-xl overflow-hidden border border-border" style={{ aspectRatio: '16/7' }}>
+                <img src={site.heroImageUrl} alt="" className="w-full h-full object-cover" />
+                <button onClick={removeHeroImage}
+                  className="absolute top-2 right-2 bg-black/70 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-red-500/80 transition-colors">
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => heroFileInputRef.current?.click()} disabled={uploadingHero}
+                className="w-full border-2 border-dashed border-border rounded-2xl py-8 text-center text-sm text-muted hover:border-accent hover:text-accent transition-colors disabled:opacity-50">
+                {uploadingHero ? 'Uploading…' : '+ Upload a cover image'}
+              </button>
+            )}
+            <input ref={heroFileInputRef} type="file" accept="image/*" className="hidden"
+              onChange={e => handleHeroImageUpload(e.target.files)} />
+            {uploadError && (
+              <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-xs text-danger mt-2">{uploadError}</div>
+            )}
+            <p className="text-[10px] text-muted mt-2">Shown behind your hero title. If left unset, your first portfolio photo is used instead.</p>
+          </div>
         </div>
       )}
 
@@ -350,6 +439,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             </div>
             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
               onChange={e => handlePhotoUpload(e.target.files)} />
+
+            {uploadError && (
+              <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-xs text-danger">{uploadError}</div>
+            )}
 
             {/* Drop zone */}
             <div

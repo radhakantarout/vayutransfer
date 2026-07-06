@@ -2,7 +2,7 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
-import SocialIcons from './SocialIcons'
+import SocialIcons, { WhatsAppButton } from './SocialIcons'
 
 export default function Bold({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#FF3B30'
@@ -85,7 +85,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
               <div className="space-y-4 text-white/60">
                 {site.contactEmail && <p className="text-lg">{site.contactEmail}</p>}
                 {site.contactPhone && <p className="text-lg">{site.contactPhone}</p>}
-                {site.whatsapp && <a href={`https://wa.me/${site.whatsapp.replace(/\D/g,'')}`} className="inline-block text-lg font-bold underline" style={{ color: accent }}>WhatsApp →</a>}
+                <WhatsAppButton number={site.whatsapp} />
               </div>
             )
           }

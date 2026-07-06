@@ -183,6 +183,7 @@ export interface StudioWebsite {
   city?: string
   services: WebsiteService[]
   galleryPhotos: WebsiteGalleryPhoto[]
+  heroImageUrl?: string
   contactEmail?: string
   contactPhone?: string
   whatsapp?: string
