@@ -9,6 +9,7 @@ import Clarity from './templates/Clarity'
 import Ember from './templates/Ember'
 import Bold from './templates/Bold'
 import Bloom from './templates/Bloom'
+import { WhatsAppFloatingButton } from './templates/SocialIcons'
 
 async function getSite(subdomain: string): Promise<StudioWebsite | null> {
   if (subdomain === '__custom') {
@@ -41,12 +42,21 @@ export default async function StudioSitePage({ params }: { params: Promise<{ sub
 
   if (!site || site.status === 'DRAFT') notFound()
 
-  switch (site.templateId) {
-    case 'lumina':  return <Lumina site={site} />
-    case 'clarity': return <Clarity site={site} />
-    case 'ember':   return <Ember site={site} />
-    case 'bold':    return <Bold site={site} />
-    case 'bloom':   return <Bloom site={site} />
-    default:        return <Lumina site={site} />
-  }
+  const template = (() => {
+    switch (site.templateId) {
+      case 'lumina':  return <Lumina site={site} />
+      case 'clarity': return <Clarity site={site} />
+      case 'ember':   return <Ember site={site} />
+      case 'bold':    return <Bold site={site} />
+      case 'bloom':   return <Bloom site={site} />
+      default:        return <Lumina site={site} />
+    }
+  })()
+
+  return (
+    <>
+      {template}
+      <WhatsAppFloatingButton number={site.whatsapp} />
+    </>
+  )
 }
