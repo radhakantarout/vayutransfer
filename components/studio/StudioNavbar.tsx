@@ -15,13 +15,13 @@ const ROLE_LABEL: Record<StudioRole, string> = {
   PRINT: 'Print Admin',
 }
 
-const PRODUCTS = [
+const PRODUCTS: { label: string; href: string; desc: string; icon: JSX.Element; badge?: string }[] = [
   { label: 'Client Gallery',   href: '/studio/products/client-gallery',  desc: 'Secure watermarked gallery for clients',      icon: <GalleryIcon /> },
   { label: 'Guest QR Code',    href: '/studio/products/guest-qr',         desc: 'Guests scan & find their own photos',         icon: <QRIcon /> },
   { label: 'AI Face Search',   href: '/studio/products/ai-search',        desc: 'Find photos instantly with a selfie',         icon: <AIIcon /> },
   { label: 'Print Delivery',   href: '/studio/products/print-delivery',   desc: 'Secure 7-day links for your print lab',       icon: <PrintIcon /> },
   { label: 'Studio Dashboard', href: '/studio/products/dashboard',        desc: 'Manage every shoot in one place',             icon: <DashboardIcon /> },
-  { label: 'Studio Website',   href: '/studio/products/studio-website',   desc: 'Your own branded booking page',               icon: <GlobeIcon />, badge: 'Soon' },
+  { label: 'Studio Website',   href: '/studio/products/studio-website',   desc: 'Your own branded booking page',               icon: <GlobeIcon /> },
 ]
 
 const NAV_LINKS = [
