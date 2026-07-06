@@ -2,11 +2,12 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
-import SocialIcons from './SocialIcons'
+import SocialIcons, { WhatsAppButton } from './SocialIcons'
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#C9A84C'
   const fontColor = site.fontColor   ?? '#F5F0E8'
+  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
 
   return (
     <div className="min-h-screen" style={{ background: '#0A0A0A', color: fontColor, fontFamily: 'Georgia, serif' }}>
@@ -14,9 +15,9 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       {/* Hero */}
       <section className="relative min-h-screen flex flex-col items-center justify-center text-center px-6"
         style={{ background: 'linear-gradient(160deg, #0A0A0A 0%, #1A1208 100%)' }}>
-        {site.galleryPhotos[0] && (
+        {heroImg && (
           <div className="absolute inset-0 opacity-20">
-            <img src={site.galleryPhotos[0].url} alt="" className="w-full h-full object-cover" />
+            <img src={heroImg} alt="" className="w-full h-full object-cover" />
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, #0A0A0A 0%, transparent 40%, #0A0A0A 100%)' }} />
           </div>
         )}
@@ -85,7 +86,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
               <div className="space-y-3 text-sm opacity-60">
                 {site.contactEmail && <p>✉ {site.contactEmail}</p>}
                 {site.contactPhone && <p>☎ {site.contactPhone}</p>}
-                {site.whatsapp && <p><a href={`https://wa.me/${site.whatsapp.replace(/\D/g,'')}`} className="underline">WhatsApp</a></p>}
+                <WhatsAppButton number={site.whatsapp} />
               </div>
             )
           }

@@ -2,11 +2,12 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
-import SocialIcons from './SocialIcons'
+import SocialIcons, { WhatsAppButton } from './SocialIcons'
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#D4849A'
   const fontColor = site.fontColor   ?? '#3D2B2B'
+  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
 
   return (
     <div className="min-h-screen" style={{ background: '#FDF8F6', color: fontColor, fontFamily: '"Cormorant Garamond", "Times New Roman", serif' }}>
@@ -44,10 +45,10 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
                 style={{ borderColor: accent, color: accent }}>View Gallery</a>
             </div>
           </div>
-          {site.galleryPhotos[0] && (
+          {heroImg && (
             <div className="flex-1 max-w-sm">
               <div className="rounded-[3rem] overflow-hidden shadow-2xl shadow-pink-100" style={{ aspectRatio: '3/4' }}>
-                <img src={site.galleryPhotos[0].url} alt="" className="w-full h-full object-cover" />
+                <img src={heroImg} alt="" className="w-full h-full object-cover" />
               </div>
             </div>
           )}
@@ -113,7 +114,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
               <div className="space-y-3 text-sm opacity-70">
                 {site.contactEmail && <p>✉ {site.contactEmail}</p>}
                 {site.contactPhone && <p>☎ {site.contactPhone}</p>}
-                {site.whatsapp && <a href={`https://wa.me/${site.whatsapp.replace(/\D/g,'')}`} className="block font-semibold" style={{ color: accent }}>Chat on WhatsApp ♥</a>}
+                <WhatsAppButton number={site.whatsapp} />
               </div>
             )
           }

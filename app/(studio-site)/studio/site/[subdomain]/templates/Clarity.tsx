@@ -2,11 +2,12 @@
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
-import SocialIcons from './SocialIcons'
+import SocialIcons, { WhatsAppButton } from './SocialIcons'
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#1A1A1A'
   const fontColor = site.fontColor   ?? '#1A1A1A'
+  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
 
   return (
     <div className="min-h-screen bg-white" style={{ color: fontColor, fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
@@ -26,9 +27,9 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
 
       {/* Hero */}
       <section className="pt-20">
-        {site.galleryPhotos[0] ? (
+        {heroImg ? (
           <div className="relative h-[90vh]">
-            <img src={site.galleryPhotos[0].url} alt="" className="w-full h-full object-cover" />
+            <img src={heroImg} alt="" className="w-full h-full object-cover" />
             <div className="absolute inset-0 bg-black/20" />
             <div className="absolute bottom-12 left-12">
               <h1 className="text-5xl sm:text-7xl font-light text-white leading-none">{site.heroTitle}</h1>
@@ -96,7 +97,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
               <div className="space-y-3 text-sm text-gray-600">
                 {site.contactEmail && <p>{site.contactEmail}</p>}
                 {site.contactPhone && <p>{site.contactPhone}</p>}
-                {site.whatsapp && <p><a href={`https://wa.me/${site.whatsapp.replace(/\D/g,'')}`} className="underline">WhatsApp</a></p>}
+                <WhatsAppButton number={site.whatsapp} />
               </div>
             )
           }
