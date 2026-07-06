@@ -13,77 +13,98 @@ WHAT IS VAYUSTUDIOS?
 
 VayuStudios is a platform that lets photographers:
 - Deliver event photos to clients through secure private galleries
-- Accept bookings through a custom studio website
-- Showcase their portfolio online
-- Let clients select and download their photos
+- Let guests at an event find their own photos instantly by scanning a QR code and taking a selfie (no login needed)
+- Publish their own branded studio website with a portfolio, services, pricing, and a booking enquiry form
+- Let clients select favourites and request edits, and generate a secure link for print labs to download final photos
+- Accept and manage booking enquiries from their dashboard
 
 ---
 
 FEATURES FOR PHOTOGRAPHERS (STUDIO ADMINS)
 
 Creating an Account:
-- Sign up at vayustudios.com
-- Complete your studio profile (name, description, social links)
-- Customise your website and go live
+- Fill in the studio enquiry form on vayustudios.com (or vayustudios.com/studio/home)
+- The VayuStudios team creates your studio and emails you a link to set your password
+- Log in at vayustudios.com/studio/login
 
 Creating Projects:
+- Dashboard sidebar → Projects → the "+" button next to "Projects" (or "New project" from the Dashboard home)
 - A "project" represents one client event (e.g. Priya & Ravi's Wedding)
 - Each project has event details: client name, email, phone, event date, event type, and location
 - Event types: Wedding, Mehendi, Reception, Engagement, Pre-Wedding, Birthday, Corporate, School, Portrait, Other
-- One project can have multiple events (e.g. Mehendi + Wedding + Reception for one couple)
+- One client can have multiple events under them (e.g. Mehendi + Wedding + Reception) — they all appear grouped under the client's name in the sidebar
 
 Uploading Photos:
-- Upload photos directly to each event inside a project
+- Open a project → "All Photos" tab → drag and drop photos onto the page, or click to select files
 - Photos are automatically watermarked after upload — this takes 1–2 minutes per batch
 - Photos show "Processing" status while watermarking — this is normal, no action needed
 - Once processed, watermarked photos appear in the client gallery
 - Original full-resolution unwatermarked photos are stored securely for final download
 
 Sharing Galleries with Clients:
-- After uploading, share a secure gallery link with your client by email or SMS
-- Clients receive a one-time password (OTP) or a magic link to log in
+- Select photos in the "All Photos" tab (or select multiple events from the sidebar) — a floating selection bar appears at the bottom of the screen
+- Tap the Share icon in that floating bar to generate a secure gallery link and copy it
+- Clients receive a one-time password (OTP) sent to their phone, or a magic link sent to their email, to log in
 - Each gallery is completely private — only the client can access it
 
 Viewing Client Selections:
-- Clients can mark photos as favourites (heart icon) or for editing (edit/pencil icon)
-- You can view all client selections from your dashboard
-- Smart Delete: if you try to delete photos that a client has already finalised/selected, you'll see a warning before anything is deleted
+- Open the project → "Selections" tab — shows every photo the client has hearted, flagged for editing, or commented on, updated live
+- "Needs Editing" and "Final Selects" are shown as separate groups so you know exactly what to work on
+- Smart Delete: if you try to delete photos a client has already finalised/selected, you'll see a warning before anything is deleted
+
+AI Face Search & Guest QR Code:
+- Open the project → "Face Index ✨" tab
+- Enable face indexing to automatically detect every face across the event's photos
+- Download the Guest QR Code from this tab and print it or display it at the venue
+- Guests scan the code, take a selfie, and instantly see only the photos that include them — no login, no OTP, no app
+- Clients can use the same face-search technology inside their own private gallery (see "Face Recognition Search" below)
+
+Print Portal (delivering final files to a print lab):
+- Open the project → "Selections" tab → "Print Portal" section → "Generate Print Link"
+- Creates a secure link valid for 7 days that your print lab can use to download the final, original-resolution selected photos
+- No login needed for the print lab — just the link
+
+Managing Bookings:
+- Dashboard sidebar → "Bookings" — shows every enquiry submitted through your studio website's booking form
+- You also get an email notification the moment a client submits a booking enquiry
 
 Managing Your Dashboard:
-- See all projects and their current status
-- View which clients have accessed their gallery
-- Edit event details, add new events, or delete events from a project
+- Dashboard home shows stats (total projects, active, awaiting selection, completed, photos uploaded, storage used) and recent activity
+- The sidebar's Projects tree groups all events by client — click any event to open it
+- Edit event details, add new events under a client, or delete events from the "Edit Event" option on each event row
+- Team roles: Admin (full access) and Print (print delivery only) — ask VayuStudios support to add a team member to your studio
 
 ---
 
 STUDIO WEBSITE
 
-Every photographer on VayuStudios gets a free custom website at:
+Every photographer on VayuStudios gets their own branded website, live at:
 [yourstudio].vayustudios.com
 
-Website Sections:
-- Hero section with your studio name and tagline
-- About section — tell your story
-- Portfolio gallery with category filters (e.g. Wedding, Portrait, Corporate)
-- Services section — list what you offer
-- Booking form — clients can send enquiries directly from your website
-- Footer with social media links
+Manage it from: Dashboard sidebar → "My Website" — organised into 7 tabs:
 
-Customisation:
-- Choose from 5 professional templates:
-  1. Lumina — Light, airy, minimal. Clean whites, elegant typography. Great for portraits and fine-art.
-  2. Clarity — Crisp and modern. Professional, structured. Great for corporate and commercial.
-  3. Ember — Warm, romantic tones. Perfect for weddings.
-  4. Bold — Dark, dramatic, high-impact. For photographers who want a strong visual statement.
-  5. Bloom — Soft and floral-inspired. Ideal for weddings, maternity, and lifestyle.
-- Accent colour: customise your button and highlight colour
-- Font colour: customise the text colour across the website
-- Instagram, Facebook, YouTube links appear in their original brand colours
+1. Template tab — choose your design and colours:
+   - Lumina — Dark, elegant, full-bleed hero photo. Great for fine-art and portraits.
+   - Clarity — Minimal white, editorial. Great for corporate and commercial.
+   - Ember — Warm earth tones, soft and inviting. Popular for weddings.
+   - Bold — High-contrast, large dramatic typography, no hero photo by design.
+   - Bloom — Pastel, feminine, romantic. Ideal for weddings, maternity, and lifestyle.
+   - Accent colour and font colour can each be customised or left at the template default
+   - Switching templates keeps all your content — nothing is lost
 
-Booking Form:
-- Potential clients fill in their name, email, phone, event type, event date, and message
-- The studio admin receives an email notification immediately
-- The enquiry appears in the dashboard for follow-up
+2. Content tab — hero title, subtitle, tagline, about text, city, and an optional cover image (uploaded here) that appears as the hero background. If no cover image is set, your first portfolio photo is used instead (Bold's hero is text-only by design and doesn't use a photo)
+
+3. Gallery tab — upload portfolio photos with a category tag (Wedding, Pre-Wedding, Portrait, Corporate, Fashion, School, General). Visitors see a clean gallery with no watermarks; you can reorder or remove photos anytime
+
+4. Services tab — list what you offer: name, description, and an optional price for each service (e.g. "Wedding Photography — Full-day coverage — ₹50,000 onwards")
+
+5. Contact tab — contact email, phone number, WhatsApp number (shown as a "Chat on WhatsApp" button in your Contact section AND as a pulsing floating WhatsApp button in the corner of every page of your site), plus Instagram, Facebook, and YouTube links
+
+6. Booking tab — turn the booking enquiry form on/off and set its intro message. Submissions land in Dashboard → Bookings and trigger an email to you
+
+7. Domain tab — choose your subdomain (yourname.vayustudios.com), check availability, and Publish/Unpublish your site. A custom domain (e.g. www.yourstudio.in) is planned but not available yet
+
+Remember to click "Save Changes" (top-right) after editing text fields — photo uploads save automatically, but typed fields like the WhatsApp number do not.
 
 ---
 
@@ -96,17 +117,23 @@ How to Access Your Gallery:
 
 Browsing Photos:
 - View all your event photos in a grid layout
-- Use the zoom slider to make photos larger or smaller
-- Use filter buttons to view only your favourited photos or selected-for-editing photos
+- Use the zoom slider (or the +/- magnifier buttons next to it) to make photos larger or smaller
+- Use filter buttons to view only your loved photos or the ones flagged for editing
 
 Selecting Photos:
 - Tap the heart icon on any photo to mark it as a favourite
-- Tap the edit icon to mark photos for editing or printing
-- Your selections are saved automatically and visible to your photographer
+- Tap the 3-dot menu / edit icon to flag a photo for editing and leave a comment
+- Your selections save automatically and are visible to your photographer in real time
+- There's a 12-hour window to resubmit/change your selection after first submitting — after that, contact your photographer directly
 
 Face Recognition Search (Selfie Search):
 - Upload a selfie photo to find all photos from your gallery that include your face
-- This uses face recognition technology — it only searches within your own gallery
+- This uses face recognition technology — it only searches within your own gallery, never across other clients or events
+
+Guest Access (for wedding/event guests who aren't the main client):
+- Scan the Guest QR Code your photographer displays at the venue
+- Take a selfie — no login, no OTP, no app needed
+- Instantly see and download every photo you appear in from that event
 
 Downloading Photos:
 - Download full-resolution original photos directly from your gallery
@@ -123,13 +150,25 @@ Q: My client says they can't log in to their gallery.
 A: Check that you shared the correct gallery link and the client is using the right email or phone number. The OTP expires after a short time — they may need to request a new one. Also check that their phone/email in the project is entered correctly.
 
 Q: Can I update client details after creating a project?
-A: Yes — go to the project in your dashboard, click "Edit Event", and update the client's name, email, phone, event date, or location.
+A: Yes — open the project, click "Edit Event", and update the client's name, email, phone, event date, or location.
 
 Q: How do I customise my studio website?
-A: Go to Dashboard → Website. From there you can choose your template, set accent colour, font colour, edit each section (hero, about, services), and add portfolio photos with category tags.
+A: Go to Dashboard → My Website. Use the Template tab for design/colours, Content tab for hero text and cover image, Gallery tab for portfolio photos, Services tab for pricing, Contact tab for email/phone/WhatsApp/social links, Booking tab to turn the enquiry form on, and Domain tab to publish.
+
+Q: How do I add a cover photo to my website?
+A: Dashboard → My Website → Content tab → "Upload a cover image", under the About/City fields. It becomes your site's hero background.
+
+Q: How do I get a WhatsApp button on my website?
+A: Dashboard → My Website → Contact tab → enter your WhatsApp number with country code (e.g. +919876543210) → click Save Changes. It appears both as a button in your Contact section and as a floating button in the corner of every page.
+
+Q: How do I set up a Guest QR code for an event?
+A: Open the project → "Face Index ✨" tab → enable face indexing, then download the Guest QR Code shown there. Print it or display it at the venue.
+
+Q: How do I send final photos to my print lab?
+A: Open the project → "Selections" tab → "Print Portal" section → "Generate Print Link". Share that link with your lab — it's valid for 7 days.
 
 Q: Can clients see each other's photos?
-A: No. Each client gallery is completely private. Clients can only access their own photos through their unique secure link.
+A: No. Each client gallery is completely private. Clients can only access their own photos through their unique secure link, and guests via QR + selfie only see photos containing their own face.
 
 Q: What happens when I delete a photo?
 A: If a client has already finalised their selections and the photo is in their selection, you'll see a warning. You can still delete, but the warning ensures you don't accidentally remove photos the client wants.
