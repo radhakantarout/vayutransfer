@@ -236,7 +236,7 @@ function LoginPageInner() {
 
         {!showForgot && (
           <div className="text-center space-y-2">
-            <h1 className="text-2xl font-extrabold text-text-primary">Log in to VayuStudios</h1>
+            <h1 className="text-2xl font-extrabold text-text-primary">Log in to Vayu<span className="text-accent">Studios</span></h1>
             <p className="text-sm text-muted">
               New to VayuStudios?{' '}
               <Link href="/studio/home#get-started" className="text-accent hover:underline">
