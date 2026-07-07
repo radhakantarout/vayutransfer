@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Suspense } from 'react'
 import AuthShell from '@/components/studio/AuthShell'
+import GoogleIcon from '@/components/studio/GoogleIcon'
 
 type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
@@ -15,17 +16,6 @@ function validatePassword(pw: string): string | null {
   if (!/[a-z]/.test(pw))           return 'Add at least one lowercase letter (a–z)'
   if (!/[^A-Za-z0-9]/.test(pw))   return 'Add at least one symbol (e.g. @, #, $, !)'
   return null
-}
-
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24">
-      <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.47a5.53 5.53 0 01-2.4 3.63v3h3.89c2.28-2.1 3.56-5.19 3.56-8.82z"/>
-      <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.95-2.91l-3.89-3c-1.08.73-2.46 1.16-4.06 1.16-3.12 0-5.77-2.11-6.71-4.94H1.28v3.1A12 12 0 0012 24z"/>
-      <path fill="#FBBC05" d="M5.29 14.31A7.2 7.2 0 014.9 12c0-.8.14-1.58.39-2.31v-3.1H1.28A12 12 0 000 12c0 1.94.46 3.77 1.28 5.4z"/>
-      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.45-3.45C17.95 1.19 15.24 0 12 0A12 12 0 001.28 6.6l4.01 3.1C6.23 6.86 8.88 4.75 12 4.75z"/>
-    </svg>
-  )
 }
 
 function PasswordStrength({ password }: { password: string }) {

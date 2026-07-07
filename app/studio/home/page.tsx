@@ -3,6 +3,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import EnquiryForm from './EnquiryForm'
 import ProductLifecycle from '@/components/studio/ProductLifecycle'
+import GoogleIcon from '@/components/studio/GoogleIcon'
 import { getPhotosForSlug, getSamplePhotos } from '@/lib/studio/sampleImages'
 
 export const metadata: Metadata = {
@@ -421,6 +422,18 @@ export default async function StudioHomePage() {
               <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>No credit card</span>
               <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>Response in 24h</span>
             </div>
+          </div>
+          <a
+            href="/studio/api/auth/google?next=/studio/dashboard"
+            className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-3 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors mb-6"
+          >
+            <GoogleIcon />
+            Create with Google
+          </a>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted whitespace-nowrap">Or fill in your details</span>
+            <div className="flex-1 h-px bg-border" />
           </div>
           <EnquiryForm />
           <p className="text-center text-xs text-muted mt-8">
