@@ -3,8 +3,9 @@ import Image from 'next/image'
 interface Props {
   uploadSamples: string[]
   mockupPhotos: string[]
-  // 'grid' — original 4-column layout used on the marketing home page.
-  // 'stack' — single vertical column, used as the side panel on the register page.
+  // 'grid' — full detailed mockup cards, used on the marketing home page.
+  // 'stack' — compact vertical timeline (no mockup graphics), sized to fit
+  // a fixed-height side panel with no scrolling.
   variant?: 'grid' | 'stack'
 }
 
@@ -31,24 +32,65 @@ function StepLabel({ n, title, body }: { n: number; title: string; body: string 
   )
 }
 
+const STEPS = [
+  { title: 'Upload your shoot',       body: 'Drag in full-res files. Watermarked previews generate automatically in the cloud.' },
+  { title: 'Share the gallery',       body: 'One secure link. Client logs in with OTP — no app, no password.' },
+  { title: 'Client picks favourites', body: 'Heart to keep, pencil to retouch. You see every selection live.' },
+  { title: 'Print-ready delivery',    body: 'Generate a 7-day secure download link for your print lab. Job done.' },
+]
+
+function CompactTimeline() {
+  return (
+    <div>
+      {STEPS.map((s, i) => (
+        <div key={s.title} className="flex gap-3.5">
+          <div className="flex flex-col items-center flex-shrink-0">
+            <span className="w-7 h-7 rounded-full bg-accent/10 border border-accent/30 flex items-center justify-center text-xs font-black text-accent">
+              {i + 1}
+            </span>
+            {i < STEPS.length - 1 && <span className="w-px flex-1 bg-border my-1" />}
+          </div>
+          <div className={i < STEPS.length - 1 ? 'pb-5' : ''}>
+            <h3 className="font-bold text-text-primary text-sm mb-1">{s.title}</h3>
+            <p className="text-muted text-xs leading-relaxed">{s.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function ProductLifecycle({ uploadSamples, mockupPhotos, variant = 'grid' }: Props) {
-  const isStack = variant === 'stack'
+  if (variant === 'stack') {
+    return (
+      <div className="w-full max-w-sm">
+        <div className="mb-6">
+          <span className="inline-block text-accent text-xs font-bold uppercase tracking-widest mb-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full">
+            Product lifecycle
+          </span>
+          <h2 className="text-xl font-extrabold text-text-primary mt-2">From shoot to client in 4 steps</h2>
+          <p className="text-muted mt-2 text-xs">Everything happens inside VayuStudios — no third-party tools, no manual handoffs.</p>
+        </div>
+        <CompactTimeline />
+      </div>
+    )
+  }
 
   return (
-    <div className={isStack ? 'w-full max-w-sm' : 'max-w-6xl mx-auto px-4'}>
-      <div className={isStack ? 'mb-8' : 'text-center mb-14'}>
+    <div className="max-w-6xl mx-auto px-4">
+      <div className="text-center mb-14">
         <span className="inline-block text-accent text-xs font-bold uppercase tracking-widest mb-3 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full">
           Product lifecycle
         </span>
-        <h2 className={isStack ? 'text-2xl font-extrabold text-text-primary mt-2' : 'text-3xl sm:text-4xl font-extrabold text-text-primary mt-2'}>
+        <h2 className="text-3xl sm:text-4xl font-extrabold text-text-primary mt-2">
           From shoot to client in 4 steps
         </h2>
-        <p className={`text-muted mt-3 text-sm ${isStack ? '' : 'max-w-lg mx-auto'}`}>
+        <p className="text-muted mt-3 text-sm max-w-lg mx-auto">
           Everything happens inside VayuStudios — no third-party tools, no manual handoffs.
         </p>
       </div>
 
-      <div className={isStack ? 'space-y-5' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
         {/* Step 1 — Upload */}
         <div className="relative bg-bg border border-border rounded-2xl p-5 hover:border-accent/40 hover:-translate-y-1 transition-all duration-300">
@@ -74,7 +116,7 @@ export default function ProductLifecycle({ uploadSamples, mockupPhotos, variant 
             </div>
           </StepShell>
           <StepLabel n={1} title="Upload your shoot" body="Drag in full-res files. Watermarked previews generate automatically in the cloud." />
-          {!isStack && <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>}
+          <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>
         </div>
 
         {/* Step 2 — Watermark + share */}
@@ -102,7 +144,7 @@ export default function ProductLifecycle({ uploadSamples, mockupPhotos, variant 
             </div>
           </StepShell>
           <StepLabel n={2} title="Share the gallery" body="One secure link. Client logs in with OTP — no app, no password. Originals stay locked in the cloud." />
-          {!isStack && <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>}
+          <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>
         </div>
 
         {/* Step 3 — Client selects */}
@@ -140,7 +182,7 @@ export default function ProductLifecycle({ uploadSamples, mockupPhotos, variant 
             </div>
           </StepShell>
           <StepLabel n={3} title="Client picks favourites" body="Heart to keep, pencil to retouch. Comments per photo. You see every selection live." />
-          {!isStack && <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>}
+          <div className="hidden lg:flex absolute -right-3 top-24 z-10 w-6 h-6 items-center justify-center rounded-full bg-border border border-border text-accent text-xs font-bold">›</div>
         </div>
 
         {/* Step 4 — Deliver */}
