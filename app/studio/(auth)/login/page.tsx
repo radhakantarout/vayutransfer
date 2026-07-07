@@ -229,7 +229,7 @@ function LoginPageInner() {
             <h1 className="text-2xl font-extrabold text-text-primary">Log in to Vayu<span className="text-accent">Studios</span></h1>
             <p className="text-sm text-muted">
               New to VayuStudios?{' '}
-              <Link href="/studio/home#get-started" className="text-accent hover:underline">
+              <Link href="/studio/get-started" className="text-accent hover:underline">
                 Request studio setup →
               </Link>
             </p>

@@ -21,7 +21,7 @@ export default function StudioWebsitePage() {
             Your own branded booking page — portfolio, services, pricing, and a booking enquiry form — all live on your own subdomain. No developer required.
           </p>
           <div className="flex items-center justify-center gap-4 mt-8 flex-wrap">
-            <Link href="/studio/home#get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get your website live</Link>
+            <Link href="/studio/get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get your website live</Link>
             <Link href="/studio/examples" className="text-accent font-medium hover:underline">See examples →</Link>
           </div>
         </div>
@@ -74,7 +74,7 @@ export default function StudioWebsitePage() {
       <section className="max-w-2xl mx-auto px-4 py-16 text-center">
         <h2 className="text-2xl font-extrabold text-text-primary mb-3">Ready to launch your studio website?</h2>
         <p className="text-muted text-sm mb-6">Fill in the enquiry form and we&apos;ll set up your studio within 24 hours.</p>
-        <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started →</Link>
+        <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started →</Link>
       </section>
     </main>
   )

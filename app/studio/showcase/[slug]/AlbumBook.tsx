@@ -369,7 +369,7 @@ function PageFace({ content, catName, side }: { content: PageContent; catName: s
           Branded, shareable, print-ready.<br/>No design skills needed.
         </p>
         <Link
-          href="/studio/home#get-started"
+          href="/studio/get-started"
           onClick={e => e.stopPropagation()}
           style={{
             fontSize: 10, fontWeight: 700, padding: '7px 18px',

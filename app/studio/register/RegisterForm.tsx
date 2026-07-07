@@ -26,6 +26,7 @@ function RegisterFormInner({ uploadSamples, mockupPhotos }: Props) {
   const [studioName, setStudioName] = useState('')
   const [adminName, setAdminName]   = useState('')
   const [phoneDigits, setPhoneDigits] = useState('')
+  const [message, setMessage]       = useState('')
   const [touched, setTouched]       = useState<Record<string, boolean>>({})
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -74,6 +75,7 @@ function RegisterFormInner({ uploadSamples, mockupPhotos }: Props) {
           studioName: studioName.trim(),
           adminName: adminName.trim(),
           phone: `+91${phoneDigits}`,
+          message: message.trim(),
         }),
       }).then((r) => r.json())
       if (!res.success) {
@@ -166,6 +168,17 @@ function RegisterFormInner({ uploadSamples, mockupPhotos }: Props) {
                 />
               </div>
               {fieldError('phoneDigits') && <p className="text-xs text-danger">{fieldError('phoneDigits')}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted">Tell us about your studio <span className="text-muted font-normal">(optional)</span></label>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={3}
+                placeholder="Type of events you shoot, number of clients per month, anything you'd like us to know…"
+                className={`${inputBase} border-border focus:border-accent resize-none`}
+              />
             </div>
 
             {submitError && (

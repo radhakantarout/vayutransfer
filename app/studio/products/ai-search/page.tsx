@@ -21,7 +21,7 @@ export default function AISearchPage() {
             Your client takes a selfie. Our AI scans thousands of event photos and surfaces every single shot they appear in — in seconds. No endless scrolling required.
           </p>
           <div className="flex items-center justify-center gap-4 mt-8 flex-wrap">
-            <Link href="/studio/home#get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Enable AI search</Link>
+            <Link href="/studio/get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Enable AI search</Link>
             <Link href="/studio/products/guest-qr" className="text-accent font-medium hover:underline">See Guest QR Code →</Link>
           </div>
         </div>
@@ -73,7 +73,7 @@ export default function AISearchPage() {
       <section className="max-w-2xl mx-auto px-4 py-16 text-center">
         <h2 className="text-2xl font-extrabold text-text-primary mb-3">Let your clients find themselves</h2>
         <p className="text-muted text-sm mb-6">Set up AI face search for your studio today.</p>
-        <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started →</Link>
+        <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started →</Link>
       </section>
     </main>
   )

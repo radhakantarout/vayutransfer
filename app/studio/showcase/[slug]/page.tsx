@@ -105,7 +105,7 @@ export default async function ShowcasePage({ params }: { params: Promise<{ slug:
 
       {/* Bottom nav */}
       <div className="max-w-5xl mx-auto px-4 pb-16 text-center">
-        <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors text-sm shadow-lg shadow-accent/20 mr-4">
+        <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors text-sm shadow-lg shadow-accent/20 mr-4">
           Set up your studio →
         </Link>
         <Link href="/studio/examples" className="inline-block border border-white/15 text-white/45 font-medium px-8 py-4 rounded-xl hover:border-white/30 hover:text-white/70 transition-colors text-sm">

@@ -182,7 +182,7 @@ export default function StudioNavbar() {
                     </div>
                     <div className="border-t border-border px-4 py-2.5 flex items-center justify-between">
                       <span className="text-xs text-muted">All-in-one photography platform</span>
-                      <Link href="/studio/home#get-started" onClick={closeAll} className="text-xs text-accent font-semibold hover:underline">Get started →</Link>
+                      <Link href="/studio/get-started" onClick={closeAll} className="text-xs text-accent font-semibold hover:underline">Get started →</Link>
                     </div>
                   </div>
                 </div>
@@ -242,7 +242,7 @@ export default function StudioNavbar() {
             ) : (
               <>
                 <Link href="/studio/login" className={`text-base font-semibold px-4 py-2 rounded-lg border transition-colors ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10' : 'border-border text-text-primary hover:bg-border/40'}`}>Login</Link>
-                <Link href="/studio/home#get-started" className="text-base font-bold px-4 py-2 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors">Get Started</Link>
+                <Link href="/studio/get-started" className="text-base font-bold px-4 py-2 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors">Get Started</Link>
               </>
             )}
           </div>
@@ -322,7 +322,7 @@ export default function StudioNavbar() {
 
               <div className="grid grid-cols-2 gap-3 mt-5">
                 <Link href="/studio/login" onClick={closeAll} className="py-3 rounded-xl border border-border text-text-primary text-sm font-semibold text-center hover:bg-border/40 transition-colors">Login</Link>
-                <Link href="/studio/home#get-started" onClick={closeAll} className="py-3 rounded-xl bg-accent text-bg text-sm font-bold text-center hover:bg-accent/90 transition-colors">Get Started</Link>
+                <Link href="/studio/get-started" onClick={closeAll} className="py-3 rounded-xl bg-accent text-bg text-sm font-bold text-center hover:bg-accent/90 transition-colors">Get Started</Link>
               </div>
             </>
           )}

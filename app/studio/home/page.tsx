@@ -1,9 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
-import EnquiryForm from './EnquiryForm'
 import ProductLifecycle from '@/components/studio/ProductLifecycle'
-import GoogleIcon from '@/components/studio/GoogleIcon'
 import { getPhotosForSlug, getSamplePhotos } from '@/lib/studio/sampleImages'
 
 export const metadata: Metadata = {
@@ -102,7 +100,7 @@ export default async function StudioHomePage() {
 
             <div className="flex items-center gap-4 flex-wrap">
               <a
-                href="#get-started"
+                href="/studio/get-started"
                 className="bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors text-base shadow-lg shadow-accent/25"
               >
                 Get your studio setup
@@ -391,7 +389,7 @@ export default async function StudioHomePage() {
                 ))}
               </ul>
               <a
-                href="#get-started"
+                href="/studio/get-started"
                 className={`text-center text-sm font-bold py-3 rounded-xl transition-colors ${
                   tier.accent
                     ? 'bg-accent text-[#0B0F1A] hover:bg-accent/90'
@@ -405,37 +403,28 @@ export default async function StudioHomePage() {
         </div>
       </section>
 
-      {/* ── CTA + Enquiry form ──────────────────────────────────────── */}
+      {/* ── CTA banner → dedicated Get Started page ─────────────────── */}
       <section id="get-started" className="relative overflow-hidden border-t border-border">
         <div className="absolute inset-0 bg-gradient-to-br from-accent/5 via-transparent to-transparent pointer-events-none" />
-        <div className="relative max-w-2xl mx-auto px-4 py-20">
-          <div className="text-center mb-10">
-            <span className="inline-block text-accent text-xs font-bold uppercase tracking-widest mb-3 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full">
-              Get started
-            </span>
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-text-primary mt-2">Set up your studio today</h2>
-            <p className="text-muted mt-3 text-sm">
-              Fill in the form — we&apos;ll set up your studio, onboard your team, and have you delivering galleries within 24 hours.
-            </p>
-            <div className="flex items-center justify-center gap-6 mt-5 text-xs text-muted">
-              <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>Free setup</span>
-              <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>No credit card</span>
-              <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>Response in 24h</span>
-            </div>
+        <div className="relative max-w-2xl mx-auto px-4 py-20 text-center">
+          <span className="inline-block text-accent text-xs font-bold uppercase tracking-widest mb-3 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full">
+            Get started
+          </span>
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-text-primary mt-2">Set up your studio today</h2>
+          <p className="text-muted mt-3 text-sm">
+            Create with Google, or fill in a few details — we&apos;ll set up your studio, onboard your team, and have you delivering galleries within 24 hours.
+          </p>
+          <div className="flex items-center justify-center gap-6 mt-5 text-xs text-muted">
+            <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>Free setup</span>
+            <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>No credit card</span>
+            <span className="flex items-center gap-1.5"><svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>Response in 24h</span>
           </div>
-          <a
-            href="/studio/api/auth/google?next=/studio/dashboard"
-            className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-3 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors mb-6"
+          <Link
+            href="/studio/get-started"
+            className="inline-block mt-8 bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20"
           >
-            <GoogleIcon />
-            Create with Google
-          </a>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-xs text-muted whitespace-nowrap">Or fill in your details</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
-          <EnquiryForm />
+            Get started →
+          </Link>
           <p className="text-center text-xs text-muted mt-8">
             Already have an account?{' '}
             <Link href="/studio/login" className="text-accent hover:underline">Sign in to VayuStudios →</Link>

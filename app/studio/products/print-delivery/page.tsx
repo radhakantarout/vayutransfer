@@ -19,7 +19,7 @@ export default function PrintDeliveryPage() {
           <p className="text-muted text-lg max-w-2xl mx-auto leading-relaxed">
             Upload your edited finals. Generate a 7-day secure download link and send it straight to your print lab. No email attachments. No WeTransfer. No risk.
           </p>
-          <Link href="/studio/home#get-started" className="inline-block mt-8 bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started</Link>
+          <Link href="/studio/get-started" className="inline-block mt-8 bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started</Link>
         </div>
       </section>
 
@@ -44,7 +44,7 @@ export default function PrintDeliveryPage() {
         <div className="bg-card border border-green-500/20 rounded-2xl p-8 space-y-4">
           <h2 className="text-xl font-extrabold text-text-primary">Streamline your lab workflow</h2>
           <p className="text-muted text-sm">No more email attachments or Google Drive headaches.</p>
-          <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
+          <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
         </div>
       </section>
     </main>

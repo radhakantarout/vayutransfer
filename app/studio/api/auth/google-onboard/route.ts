@@ -28,7 +28,7 @@ function isValidPhone(digits: string) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null) as {
-      token?: string; studioName?: string; adminName?: string; phone?: string
+      token?: string; studioName?: string; adminName?: string; phone?: string; message?: string
     } | null
 
     if (!body?.token || !body.studioName?.trim() || !body.adminName?.trim() || !body.phone) {
@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
     const studioName = body.studioName.trim()
     const adminName  = body.adminName.trim()
     const phone      = `+91${phoneDigits}`
+    const message    = body.message?.trim() || undefined
 
     // Race guard — if an account appeared between callback and submit, just log them in
     const existing = await studioQueryByIndex<StudioUser>(TABLES.users, 'email-index', 'email = :e', { ':e': email })
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
     // Fire-and-forget notifications — never block the response on SES
     const ownerEmail = process.env.PLATFORM_OWNER_EMAIL
     if (ownerEmail) {
-      sendOwnerStudioCreatedEmail(ownerEmail, studioName, adminName, email)
+      sendOwnerStudioCreatedEmail(ownerEmail, studioName, adminName, email, message)
         .catch((err) => console.error('[google-onboard] owner email failed', err))
     }
     const setupUrl = `${req.nextUrl.origin}/studio/login?setup=1&email=${encodeURIComponent(email)}`

@@ -19,7 +19,7 @@ export default function DashboardPage() {
           <p className="text-muted text-lg max-w-2xl mx-auto leading-relaxed">
             Every shoot, every client, every selection — managed from one clean dashboard. Track project status in real time and know exactly where each delivery stands.
           </p>
-          <Link href="/studio/home#get-started" className="inline-block mt-8 bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started</Link>
+          <Link href="/studio/get-started" className="inline-block mt-8 bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Get started</Link>
         </div>
       </section>
 
@@ -60,7 +60,7 @@ export default function DashboardPage() {
       <section className="max-w-2xl mx-auto px-4 py-16 text-center">
         <h2 className="text-2xl font-extrabold text-text-primary mb-3">Run your studio with clarity</h2>
         <p className="text-muted text-sm mb-6">Every shoot tracked. Every client served. Zero confusion.</p>
-        <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
+        <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-4 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
       </section>
     </main>
   )

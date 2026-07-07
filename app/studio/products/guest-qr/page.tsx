@@ -21,7 +21,7 @@ export default function GuestQRPage() {
             Place a printed QR code at the venue. Guests scan it, enter their phone number, and instantly see every photo in which they appear — powered by AI face matching.
           </p>
           <div className="flex items-center justify-center gap-4 mt-8 flex-wrap">
-            <Link href="/studio/home#get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Enable for my studio</Link>
+            <Link href="/studio/get-started" className="bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">Enable for my studio</Link>
             <Link href="/studio/products/ai-search" className="text-accent font-medium hover:underline">See AI Face Search →</Link>
           </div>
         </div>
@@ -84,7 +84,7 @@ export default function GuestQRPage() {
         <div className="bg-card border border-accent/20 rounded-2xl p-8 space-y-4">
           <h2 className="text-xl font-extrabold text-text-primary">Delight every guest at your next event</h2>
           <p className="text-muted text-sm">Get your studio set up with Guest QR today.</p>
-          <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
+          <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Get started →</Link>
         </div>
       </section>
     </main>

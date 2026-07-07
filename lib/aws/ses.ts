@@ -336,7 +336,8 @@ export async function sendOwnerStudioCreatedEmail(
   to: string,
   studioName: string,
   adminName: string,
-  adminEmail: string
+  adminEmail: string,
+  message?: string
 ): Promise<void> {
   const now = new Date().toLocaleString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
@@ -359,9 +360,10 @@ export async function sendOwnerStudioCreatedEmail(
         ['Admin Name',  adminName],
         ['Admin Email', adminEmail],
         ['Created At',  now],
+        ...(message ? [['About', message]] : []),
       ].map(([label, value]) => `
       <tr>
-        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:120px;border-bottom:1px solid #1E2D45;">${label}</td>
+        <td style="padding:10px 0;color:#5A7090;font-size:13px;width:120px;border-bottom:1px solid #1E2D45;vertical-align:top;">${label}</td>
         <td style="padding:10px 0;font-size:14px;font-weight:500;border-bottom:1px solid #1E2D45;">${value}</td>
       </tr>`).join('')}
     </table>
@@ -382,7 +384,7 @@ export async function sendOwnerStudioCreatedEmail(
         Subject: { Data: `Studio created — ${studioName} (${adminEmail})` },
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
-          Text: { Data: `Studio created\n\nStudio: ${studioName}\nAdmin: ${adminName}\nEmail: ${adminEmail}\nCreated: ${now}`, Charset: 'UTF-8' },
+          Text: { Data: `Studio created\n\nStudio: ${studioName}\nAdmin: ${adminName}\nEmail: ${adminEmail}\nCreated: ${now}${message ? `\nAbout: ${message}` : ''}`, Charset: 'UTF-8' },
         },
       },
     })

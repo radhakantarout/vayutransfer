@@ -94,7 +94,7 @@ export default function ExamplesPage() {
               </div>
             ))}
           </div>
-          <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">
+          <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20">
             Get your studio set up →
           </Link>
         </div>

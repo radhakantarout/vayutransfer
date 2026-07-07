@@ -112,7 +112,7 @@ export default function EventsPage() {
         <div className="bg-accent/5 border border-accent/20 rounded-2xl p-8 space-y-4">
           <h2 className="text-xl font-extrabold text-text-primary">Shoot any of these events?</h2>
           <p className="text-muted text-sm">VayuStudios handles the gallery delivery so you can focus on the shoot.</p>
-          <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Set up your studio →</Link>
+          <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Set up your studio →</Link>
         </div>
       </section>
     </main>

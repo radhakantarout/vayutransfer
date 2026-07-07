@@ -95,7 +95,7 @@ export default function PricingPage() {
                   </li>
                 ))}
               </ul>
-              <Link href="/studio/home#get-started" className={`text-center text-sm font-bold py-3 rounded-xl transition-colors ${tier.accent ? 'bg-accent text-[#0B0F1A] hover:bg-accent/90' : 'border border-border text-text-primary hover:border-accent/50 hover:text-accent'}`}>
+              <Link href="/studio/get-started" className={`text-center text-sm font-bold py-3 rounded-xl transition-colors ${tier.accent ? 'bg-accent text-[#0B0F1A] hover:bg-accent/90' : 'border border-border text-text-primary hover:border-accent/50 hover:text-accent'}`}>
                 Get a quote →
               </Link>
             </div>
@@ -138,7 +138,7 @@ export default function PricingPage() {
         <div className="bg-accent/5 border border-accent/20 rounded-2xl p-8 space-y-4">
           <h2 className="text-xl font-extrabold text-text-primary">Ready to get a quote?</h2>
           <p className="text-muted text-sm">Fill in the form and we&apos;ll send you a tailored pricing proposal within 24 hours.</p>
-          <Link href="/studio/home#get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Contact us for pricing →</Link>
+          <Link href="/studio/get-started" className="inline-block bg-accent text-bg font-bold px-8 py-3.5 rounded-xl hover:bg-accent/90 transition-colors">Contact us for pricing →</Link>
         </div>
       </section>
     </main>
