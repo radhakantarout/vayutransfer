@@ -545,8 +545,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         </div>
       )}
 
+      {/* z-20, not z-50 — this is a fullscreen *view*, not a modal, and must never
+          paint over the delete-confirm/edit/share modals or global overlays that
+          also target z-50; those need to stay reachable while the grid is expanded. */}
       <div className={expanded
-        ? 'fixed inset-0 z-50 overflow-auto bg-bg'
+        ? 'fixed inset-0 z-20 overflow-auto bg-bg'
         : 'border border-border rounded-2xl overflow-hidden bg-card'
       }>
 
