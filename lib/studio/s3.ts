@@ -115,7 +115,7 @@ export async function getStudioObjectBuffer(key: string): Promise<Buffer> {
   return Buffer.from(bytes)
 }
 
-export async function getStudioSignedDownloadUrl(key: string, filename: string): Promise<string> {
+export async function getStudioSignedDownloadUrl(key: string, filename: string, expiresInSeconds = 3600): Promise<string> {
   return getSignedUrl(
     studioS3,
     new GetObjectCommand({
@@ -123,7 +123,7 @@ export async function getStudioSignedDownloadUrl(key: string, filename: string):
       Key: key,
       ResponseContentDisposition: `attachment; filename="${encodeURIComponent(filename)}"`,
     }),
-    { expiresIn: 3600 }
+    { expiresIn: expiresInSeconds }
   )
 }
 
