@@ -21,9 +21,20 @@ export async function recordDownload(studioId: string, bytes: number): Promise<v
   )
 }
 
+// A record can legitimately exist with only one of these two fields set —
+// e.g. a download top-up purchased before any download happens this month
+// writes via `ADD downloadTopupBytes`, which creates the item WITHOUT a
+// downloadBytes attribute at all (not zero — genuinely absent). Normalize
+// both fields here so every caller always gets real numbers.
 export async function getMonthUsage(studioId: string, month = currentMonthKey()): Promise<StudioUsageMonth> {
   const existing = await studioGetItem<StudioUsageMonth>(TABLES.usage, { studioId, month })
-  return existing ?? { studioId, month, downloadBytes: 0, downloadTopupBytes: 0, updatedAt: new Date().toISOString() }
+  return {
+    studioId,
+    month,
+    downloadBytes: existing?.downloadBytes ?? 0,
+    downloadTopupBytes: existing?.downloadTopupBytes ?? 0,
+    updatedAt: existing?.updatedAt ?? new Date().toISOString(),
+  }
 }
 
 // Total currently-active storage grant (free baseline + any unexpired top-ups).

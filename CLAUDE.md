@@ -92,7 +92,7 @@ Last updated: 2026-07-08
 [x] STEP 8 — Config files (.env.example, next.config.js, tailwind.config.js)
 [x] STEP 9 — Google OAuth + ₹50 signup bonus (lib/auth.ts, lib/users.ts, vayu-users table)
 [x] STEP 10 — VayuStudios AI chatbot (AWS Bedrock Claude 3 Haiku, streaming, WhatsApp escalation)
-[x] STEP 11 — VayuStudios usage-based billing (Razorpay top-ups, PDF receipts, storage retention) — built on develop, Razorpay still in TEST MODE, not yet merged to main
+[x] STEP 11 — VayuStudios usage-based billing (Razorpay top-ups, PDF receipts, storage retention) — MERGED TO MAIN, live in production. Razorpay still in TEST MODE (live key swap still pending, see priorities below)
 ```
 
 Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/vayutransfer
@@ -121,17 +121,19 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - Storage top-ups are time-bound grants ("N GB for M months"), not open-ended — keeps one-time payments profitable against AWS's recurring storage cost. Download top-ups are one-time (downloads don't persist)
 - Storage overage policy: configurable grace period (default 25 days) with 3 reminder emails, then oldest-projects-first auto-delete via daily Vercel cron (`app/studio/api/cron/storage-check`) — never merges/auto-renews, always requires the studio to top up
 - `Studio.billableStorageBytes` is the new live, delete-aware storage metric (used for billing); `storageUsedBytes` stays untouched as the historical "Total Upload Size" dashboard stat
-- Must run `npm run backfill:billable-storage` (dry run) then `-- --apply` once against production before enabling quota enforcement live — seeds `billableStorageBytes` for studios that existed before this feature
+- `npm run backfill:billable-storage --apply` run successfully against production 2026-07-08 (4/9 studios had real storage backfilled: rkrstudio 304MB, Mystudio_T 2.7MB, Saheb 15MB, Kiran Studio 4MB)
+- Razorpay Authorized Domains: had to add `test.vayustudios.com` (and `studio.vayutransfer.com`) in the Razorpay Dashboard under Settings → Configuration/Website & App Settings before Checkout would accept payments on those domains — same merchant account as VayuTransfer, which only had `vayutransfer.com` registered
+- Print portal single-file download switched from CloudFront signed URLs to direct S3 presigned URLs (`getStudioSignedDownloadUrl`, same mechanism as every other download path) — CloudFront was throwing in both environments (env var config) and the one distribution's origin only points at the production bucket anyway, breaking test-env files structurally. `getStudioCloudFrontSignedUrl` is left in `lib/studio/s3.ts`, unused but ready if CDN acceleration is worth revisiting later
+- Watermark Lambda (`lambda/vayustudio-watermark/index.js`) uploads previews to R2 with `Cache-Control: public, max-age=31536000, immutable` — any time a preview needs to change for the same fileId (e.g. edited-photo re-watermarking), it MUST get a new r2Key/URL (see `previewKeySuffix` in `lib/studio/watermark.ts`), never reuse the old one — immutable caching means browsers/CDN will never re-fetch it
+- Editing a photo (studio admin "Upload Edited") re-invokes the same watermark Lambda against the edited file so the preview shown everywhere (admin grid, client gallery, print portal) is properly watermarked — never the raw unwatermarked edited original, which would defeat the whole watermark/paywall model
 
 ### Next Session Priorities
-1. Verify VayuStudios billing on test.vayustudios.com: trigger a storage + download top-up with Razorpay test cards, confirm PDF receipt email arrives, confirm dashboard quota numbers update
-2. Manually invoke `/studio/api/cron/storage-check` against a test studio pushed over quota — verify reminder emails at the right intervals and correct oldest-first deletion
-3. Run `npm run backfill:billable-storage` (dry run first) against production once test-mode verification above is done, before merging billing feature to main
-4. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
-5. SNS production access request (submit to AWS — needed for client OTP SMS)
-6. Watermark Lambda — build real implementation (currently placeholder, marks files READY in dev)
-7. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
-8. Test full VayuTransfer upload → download flow on production with real Google account
+1. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
+2. SNS production access request (submit to AWS — needed for client OTP SMS)
+3. Watermark Lambda enhancements — currently works for original + edited uploads; consider whether the orphaned old preview objects in R2 (left behind after each edit re-watermark) need periodic cleanup
+4. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
+5. Test full VayuTransfer upload → download flow on production with real Google account
+6. Decide whether to build a dedicated CloudFront distribution + key pair for the test bucket (skipped for now — test.vayustudios.com's print single-download was moved to direct S3 instead)
 
 ---
 
