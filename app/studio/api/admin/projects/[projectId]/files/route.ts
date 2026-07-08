@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedViewUrl } from '@/lib/studio/s3'
+import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import type { MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -43,21 +43,14 @@ export async function GET(
       return (a.uploadedAt ?? '').localeCompare(b.uploadedAt ?? '')
     })
 
-    // For READY image files without an R2 preview (dev mode / pre-Lambda), generate
-    // a presigned S3 view URL so the admin can see photos immediately.
+    // For READY image files without an R2 preview (dev mode / pre-Lambda), or
+    // with an edited version (whose preview is never cached), generate a
+    // presigned view URL so the admin sees the current photo immediately.
     const enriched = await Promise.all(
       files.map(async (f) => {
-        if (f.processingStatus === 'READY' && f.fileType === 'IMAGE' && !f.r2PreviewUrl) {
-          try {
-            const viewUrl = await getStudioSignedViewUrl(f.s3Key)
-            console.log(`[files] presigned URL generated for ${f.fileId}: ${viewUrl.substring(0, 80)}...`)
-            return { ...f, r2PreviewUrl: viewUrl }
-          } catch (err) {
-            console.error(`[files] presigned URL FAILED for fileId=${f.fileId} s3Key=${f.s3Key}`, err)
-            return f
-          }
-        }
-        return f
+        if (f.processingStatus !== 'READY') return f
+        const previewUrl = await resolveMediaPreviewUrl(f)
+        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!f.editedS3Key }
       })
     )
 

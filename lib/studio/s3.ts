@@ -89,6 +89,24 @@ export async function getStudioSignedViewUrl(key: string): Promise<string> {
   )
 }
 
+// The R2 watermark preview (r2PreviewUrl) is generated once at original
+// upload and never invalidated — once an edited version exists, that cached
+// preview is permanently stale. Regenerate a fresh signed view straight from
+// editedS3Key on every fetch instead of trusting the cached field.
+export async function resolveMediaPreviewUrl(file: {
+  fileType: string
+  editedS3Key?: string
+  s3Key: string
+  r2PreviewUrl?: string
+}): Promise<string | undefined> {
+  if (file.fileType !== 'IMAGE') return file.r2PreviewUrl
+  if (file.editedS3Key) {
+    try { return await getStudioSignedViewUrl(file.editedS3Key) } catch { return file.r2PreviewUrl }
+  }
+  if (file.r2PreviewUrl) return file.r2PreviewUrl
+  try { return await getStudioSignedViewUrl(file.s3Key) } catch { return undefined }
+}
+
 // Fetches a full object into memory — used for server-side zip assembly
 // (print portal "download all"). Only called for modest, already-selected
 // batches; not intended for arbitrary bulk export.

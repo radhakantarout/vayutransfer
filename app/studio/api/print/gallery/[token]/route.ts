@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioCloudFrontSignedUrl } from '@/lib/studio/s3'
+import { getStudioCloudFrontSignedUrl, resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import { recordDownload } from '@/lib/studio/usage'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 
@@ -40,7 +40,7 @@ export async function GET(
     const expirySeconds = parseInt(process.env.PRINT_LINK_EXPIRY_SECONDS ?? '604800', 10)
 
     // Generate CloudFront signed download URLs — edited version if available, else original
-    const printFiles = selectedFiles.map((f) => {
+    const printFiles = await Promise.all(selectedFiles.map(async (f) => {
       const s3Key    = f.editedS3Key ?? f.s3Key
       const isEdited = !!f.editedS3Key
       let downloadUrl = ''
@@ -50,16 +50,19 @@ export async function GET(
         console.error(`[print gallery] CloudFront signing failed for fileId=${f.fileId} s3Key=${s3Key}`, err)
         downloadUrl = ''
       }
+      // The cached R2 preview only ever reflects the original upload — for
+      // edited files, regenerate straight from the edited key.
+      const previewUrl = await resolveMediaPreviewUrl(f)
       return {
         fileId:           f.fileId,
         originalFilename: f.originalFilename,
-        r2PreviewUrl:     f.r2PreviewUrl ?? null,
+        r2PreviewUrl:     previewUrl ?? null,
         isEdited,
         downloadUrl,
         sizeBytes:        f.sizeBytes,
         selection:        allSelections.find((s) => s.fileId === f.fileId) ?? null,
       }
-    })
+    }))
 
     // Batch of links issued at once — record the sum against this studio's
     // monthly quota, same "counted at URL issuance" approximation used for

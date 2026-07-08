@@ -722,7 +722,9 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                   <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}>
                     <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
                   </div>
-                  {f.editingRequired && (
+                  {f.editedS3Key ? (
+                    <div className="absolute top-1.5 left-1.5 bg-success text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">Edited</div>
+                  ) : f.editingRequired && (
                     <div className="absolute top-1.5 left-1.5 bg-yellow-400 text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">Edits</div>
                   )}
                   <button
@@ -939,7 +941,9 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
               </button>
             )}
           </div>
-          {selectedPhotos[selectionPreviewIdx]?.editingRequired && (
+          {selectedPhotos[selectionPreviewIdx]?.editedS3Key ? (
+            <div className="absolute top-20 left-4 bg-success/90 text-white text-xs font-bold px-2.5 py-1 rounded-full pointer-events-none">✓ Edited</div>
+          ) : selectedPhotos[selectionPreviewIdx]?.editingRequired && (
             <div className="absolute top-20 left-4 bg-orange-500/90 text-white text-xs font-bold px-2.5 py-1 rounded-full pointer-events-none">✏️ Edit requested</div>
           )}
           <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>

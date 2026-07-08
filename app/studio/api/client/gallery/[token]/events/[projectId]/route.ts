@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioGetItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedViewUrl } from '@/lib/studio/s3'
+import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -60,18 +60,13 @@ export async function GET(
       .filter(f => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
       .sort((a, b) => a.displayOrder - b.displayOrder)
 
-    // Enrich with signed URL if r2PreviewUrl missing
+    // Enrich with a fresh signed URL when preview is missing, or when an
+    // edited version exists (client must see the edited photo, not the stale
+    // cached preview from the original upload)
     const enriched = await Promise.all(
       readyFiles.map(async (f) => {
-        if (f.fileType === 'IMAGE' && !f.r2PreviewUrl) {
-          try {
-            const viewUrl = await getStudioSignedViewUrl(f.s3Key)
-            return { ...f, r2PreviewUrl: viewUrl }
-          } catch {
-            return f
-          }
-        }
-        return f
+        const previewUrl = await resolveMediaPreviewUrl(f)
+        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!f.editedS3Key }
       })
     )
 

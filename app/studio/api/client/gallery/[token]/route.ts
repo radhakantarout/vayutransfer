@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioQueryByIndex, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedViewUrl } from '@/lib/studio/s3'
+import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import type { StudioProject, MediaFile, Selection, Studio } from '@/types/studio'
 
 export async function GET(
@@ -67,10 +67,7 @@ export async function GET(
           .sort((a, b) => a.displayOrder - b.displayOrder)
 
         // Cover = first ready photo
-        let coverUrl: string | null = readyFiles[0]?.r2PreviewUrl ?? null
-        if (!coverUrl && readyFiles[0]) {
-          try { coverUrl = await getStudioSignedViewUrl(readyFiles[0].s3Key) } catch { /* noop */ }
-        }
+        const coverUrl: string | null = readyFiles[0] ? (await resolveMediaPreviewUrl(readyFiles[0])) ?? null : null
 
         const lovedCount = selections.filter(s => s.isSelected).length
         const editCount  = selections.filter(s => s.editingRequired).length
