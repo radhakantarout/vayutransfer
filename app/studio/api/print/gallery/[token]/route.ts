@@ -46,7 +46,8 @@ export async function GET(
       let downloadUrl = ''
       try {
         downloadUrl = getStudioCloudFrontSignedUrl(s3Key, expirySeconds)
-      } catch {
+      } catch (err) {
+        console.error(`[print gallery] CloudFront signing failed for fileId=${f.fileId} s3Key=${s3Key}`, err)
         downloadUrl = ''
       }
       return {
