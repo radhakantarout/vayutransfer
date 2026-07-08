@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioUpdateItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendSelectionSubmittedEmail } from '@/lib/aws/ses'
 import type { Selection, StudioProject } from '@/types/studio'
+
+interface DraftSelection {
+  fileId: string
+  isSelected: boolean
+  editingRequired: boolean
+  comment: string
+}
 
 async function resolveProjectId(auth: { projectId?: string; studioId?: string }, requestedId?: string): Promise<string | null> {
   if (!requestedId) return auth.projectId ?? null
@@ -22,7 +29,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
-    const { projectId: reqProjectId } = await req.json().catch(() => ({}))
+    const { projectId: reqProjectId, selections: draftSelections } = await req.json().catch(() => ({})) as {
+      projectId?: string
+      selections?: DraftSelection[]
+    }
     const resolvedId = await resolveProjectId(auth, reqProjectId)
     if (!resolvedId) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
@@ -53,8 +63,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const allSelections = await studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId)
-    const selected = allSelections.filter((s) => s.isSelected)
+    if (!Array.isArray(draftSelections)) {
+      return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    }
+
+    const selected = draftSelections.filter((s) => s.isSelected)
 
     if (selected.length === 0) {
       return NextResponse.json(
@@ -63,9 +76,28 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const editingCount  = selected.filter((s) => s.editingRequired).length
-    const commentCount  = allSelections.filter((s) => s.comment && s.comment.trim()).length
+    const editingCount = selected.filter((s) => s.editingRequired).length
+    const commentCount = draftSelections.filter((s) => s.comment && s.comment.trim()).length
     const now = new Date().toISOString()
+
+    // Single write point — replaces the old per-tap live-write model. The client
+    // only sends its draft here on Submit/Resubmit, never on individual taps.
+    await Promise.all(
+      draftSelections.map((s) => {
+        const selection: Selection = {
+          projectId,
+          fileId: s.fileId,
+          studioId,
+          clientId: auth.userId,
+          isSelected: s.isSelected,
+          editingRequired: s.editingRequired,
+          comment: s.comment,
+          selectedAt: now,
+          updatedAt: now,
+        }
+        return studioPutItem(TABLES.selections, selection as unknown as Record<string, unknown>)
+      })
+    )
     // Preserve the original submission timestamp so the 12h window is anchored to first submit
     const submittedAt = firstSubmittedAt ?? now
 
