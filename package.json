@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "backfill:billable-storage": "node --env-file=.env.local scripts/backfill-billable-storage.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
@@ -19,6 +20,7 @@
     "@aws-sdk/cloudfront-signer": "^3.1069.0",
     "@aws-sdk/lib-dynamodb": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0",
+    "@react-pdf/renderer": "^4.5.1",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^3.0.3",
     "jszip": "^3.10.1",

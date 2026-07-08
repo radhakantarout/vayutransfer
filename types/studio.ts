@@ -20,6 +20,15 @@ export interface StudioUser {
   updatedAt: string
 }
 
+export interface StorageGrant {
+  id: string
+  bytes: number
+  expiresAt: string | null   // null = free baseline grant, never expires on its own
+  source: 'free' | 'topup'
+  purchasedTxnId?: string
+  createdAt: string
+}
+
 export interface Studio {
   studioId: string
   name: string
@@ -30,7 +39,16 @@ export interface Studio {
     primaryColor?: string
     galleryTitle?: string
   }
+  // Historical, monotonically-increasing total of everything ever uploaded —
+  // shown on the dashboard as "Total Upload Size". Never decrements.
   storageUsedBytes: number
+  // Live, accurate current storage — increments on upload, decrements on
+  // delete. This is the number billing/quota enforcement actually uses.
+  billableStorageBytes: number
+  storageGrants: StorageGrant[]
+  dataRetentionGraceDays: number
+  storageOverageStartedAt?: string
+  storageReminderCount?: number
   projectCount: number
   status: StudioStatus
   createdAt: string
@@ -216,4 +234,33 @@ export interface Booking {
   message?: string
   status: BookingStatus
   createdAt: string
+}
+
+// ── Billing ───────────────────────────────────────────────────────────────────
+
+export type StudioTxnType = 'storage_topup' | 'download_topup'
+export type StudioTxnStatus = 'pending' | 'success' | 'failed'
+
+export interface StudioTransaction {
+  txnId: string
+  studioId: string
+  type: StudioTxnType
+  packageId: string
+  amountPaise: number
+  gbPurchased: number
+  months?: number            // set for storage_topup only
+  razorpayOrderId?: string
+  razorpayPaymentId?: string
+  status: StudioTxnStatus
+  createdAt: string
+}
+
+// Monthly download counter — PK studioId, SK month ("2026-07"). A new month
+// simply starts a fresh record at zero, no reset job needed.
+export interface StudioUsageMonth {
+  studioId: string
+  month: string
+  downloadBytes: number
+  downloadTopupBytes: number
+  updatedAt: string
 }

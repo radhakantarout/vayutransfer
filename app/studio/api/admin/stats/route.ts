@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import { activeStorageGrantBytes, currentStorageBytes, getMonthUsage, isOverStorageQuota, monthDownloadQuota } from '@/lib/studio/usage'
+import { DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
@@ -17,12 +19,24 @@ export async function GET(req: NextRequest) {
     if (!studio) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
+
+    const monthUsage = await getMonthUsage(studioId)
+
     return NextResponse.json({
       success: true,
       data: {
         studioName:       studio.name,
         storageUsedBytes: studio.storageUsedBytes,
         plan:             studio.plan,
+        billing: {
+          storageUsedBytes:  currentStorageBytes(studio),
+          storageGrantBytes: activeStorageGrantBytes(studio),
+          storageOverQuota:  isOverStorageQuota(studio),
+          storageOverageStartedAt: studio.storageOverageStartedAt ?? null,
+          dataRetentionGraceDays: studio.dataRetentionGraceDays ?? DEFAULT_RETENTION_GRACE_DAYS,
+          downloadUsedBytes: monthUsage.downloadBytes,
+          downloadQuotaBytes: monthDownloadQuota(monthUsage),
+        },
       },
     })
   } catch (err) {

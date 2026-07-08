@@ -49,11 +49,12 @@ export async function POST(
       { '#s': 'status' }
     )
 
-    // Update studio storage usage
+    // storageUsedBytes = historical "Total Upload Size", never decrements.
+    // billableStorageBytes = live figure billing/quota checks actually use.
     await studioUpdateItem(
       TABLES.studios,
       { studioId },
-      'ADD storageUsedBytes :size SET updatedAt = :now',
+      'ADD storageUsedBytes :size, billableStorageBytes :size SET updatedAt = :now',
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioSignedDownloadUrl } from '@/lib/studio/s3'
+import { recordDownload } from '@/lib/studio/usage'
 import type { MediaFile } from '@/types/studio'
 
 function getSecret() {
@@ -32,6 +33,7 @@ export async function GET(
     }
 
     const downloadUrl = await getStudioSignedDownloadUrl(file.s3Key, file.originalFilename)
+    recordDownload(file.studioId, file.sizeBytes).catch((e) => console.error('[usage record]', e))
     return NextResponse.redirect(downloadUrl)
   } catch (err) {
     console.error('[guest download GET]', err)
