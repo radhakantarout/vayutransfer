@@ -89,6 +89,15 @@ export async function getStudioSignedViewUrl(key: string): Promise<string> {
   )
 }
 
+// Fetches a full object into memory — used for server-side zip assembly
+// (print portal "download all"). Only called for modest, already-selected
+// batches; not intended for arbitrary bulk export.
+export async function getStudioObjectBuffer(key: string): Promise<Buffer> {
+  const res = await studioS3.send(new GetObjectCommand({ Bucket: STUDIO_BUCKET, Key: key }))
+  const bytes = await res.Body!.transformToByteArray()
+  return Buffer.from(bytes)
+}
+
 export async function getStudioSignedDownloadUrl(key: string, filename: string): Promise<string> {
   return getSignedUrl(
     studioS3,
