@@ -46,6 +46,11 @@ interface FaceStatus {
   activeJob: { jobId: string; status: string } | null; lastCompletedAt: string | null
 }
 type SelectionItem = { selection: Selection; file: MediaFile }
+interface EditUploadState {
+  status: 'idle' | 'uploading' | 'done' | 'error'
+  progress: number
+  error?: string
+}
 
 interface Props {
   project: StudioProject
@@ -118,6 +123,10 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [printUrl, setPrintUrl]               = useState<string | null>(null)
   const [printCopied, setPrintCopied]         = useState(false)
   const [printGenerating, setPrintGenerating] = useState(false)
+  const [printBlockedMessage, setPrintBlockedMessage] = useState<string | null>(null)
+  const [editUploadStates, setEditUploadStates] = useState<Map<string, EditUploadState>>(new Map())
+  const editFileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  const needsEditingRef   = useRef<HTMLDivElement>(null)
 
   // ── Admin photo preview (for floating selection pill) ─────
   const [showAdminPreview, setShowAdminPreview] = useState(false)
@@ -299,9 +308,65 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
   const generatePrintLink = async () => {
     setPrintGenerating(true)
+    setPrintBlockedMessage(null)
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/print-link`, { method: 'POST' }).then(r => r.json())
     setPrintGenerating(false)
-    if (res.success) setPrintUrl(res.data.printUrl)
+    if (res.success) {
+      setPrintUrl(res.data.printUrl)
+    } else if (res.error === 'EDITS_PENDING') {
+      setPrintBlockedMessage(res.message)
+      needsEditingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      setPrintBlockedMessage(res.message ?? 'Could not generate print link. Please try again.')
+    }
+  }
+
+  const setEditUploadState = (fileId: string, patch: Partial<EditUploadState>) =>
+    setEditUploadStates((prev) => {
+      const next = new Map(prev)
+      next.set(fileId, { ...(prev.get(fileId) ?? { status: 'idle', progress: 0 }), ...patch })
+      return next
+    })
+
+  const handleEditUpload = async (fileId: string, file: File) => {
+    setEditUploadState(fileId, { status: 'uploading', progress: 0 })
+    try {
+      const initRes = await fetch(
+        `/studio/api/admin/projects/${project.projectId}/files/${fileId}/upload-edited`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, mimeType: file.type }) }
+      ).then(r => r.json())
+      if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
+      const { presignedUrl, editedS3Key } = initRes.data
+
+      const xhr = new XMLHttpRequest()
+      await new Promise<void>((resolve, reject) => {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setEditUploadState(fileId, { progress: Math.round((e.loaded / e.total) * 100) })
+        }
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 PUT ${xhr.status}`)))
+        xhr.onerror = () => reject(new Error('Network error'))
+        xhr.open('PUT', presignedUrl)
+        xhr.setRequestHeader('Content-Type', file.type)
+        xhr.send(file)
+      })
+
+      const completeRes = await fetch(
+        `/studio/api/admin/projects/${project.projectId}/files/${fileId}/upload-edited-complete`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedS3Key }) }
+      ).then(r => r.json())
+      if (!completeRes.success) throw new Error('Failed to confirm upload')
+
+      setEditUploadState(fileId, { status: 'done', progress: 100 })
+      const refreshed = await fetch(`/studio/api/admin/projects/${project.projectId}/selections`).then(r => r.json())
+      if (refreshed.success) setSelItems(refreshed.data)
+    } catch (err) {
+      setEditUploadState(fileId, { status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
+    }
+  }
+
+  const downloadOriginalEdit = async (fileId: string) => {
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/download`).then(r => r.json())
+    if (res.success) window.open(res.data.url, '_blank')
   }
 
   // ── Client selections filter (header buttons) ─────────────
@@ -1074,23 +1139,70 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
                 {/* Needs editing */}
                 {selItems.filter(i => i.selection.editingRequired).length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-sm font-semibold text-text-primary">✏️ Needs Editing</p>
-                    {selItems.filter(i => i.selection.editingRequired).map(({ selection, file }) => (
-                      <div key={file.fileId} className="bg-bg border border-border rounded-xl p-3 flex gap-3">
-                        <div className="w-16 h-16 rounded-lg overflow-hidden bg-card border border-border flex-shrink-0">
-                          {file.r2PreviewUrl
-                            ? <img src={file.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
-                            : <div className="w-full h-full flex items-center justify-center text-muted text-xs">📄</div>}
+                  <div ref={needsEditingRef} className="space-y-3 scroll-mt-6">
+                    <p className="text-sm font-semibold text-text-primary">
+                      ✏️ Needs Editing
+                      <span className="text-xs text-muted font-normal ml-2">
+                        ({selItems.filter(i => i.selection.editingRequired && (!!i.file.editedS3Key || editUploadStates.get(i.file.fileId)?.status === 'done')).length}/{selItems.filter(i => i.selection.editingRequired).length} done)
+                      </span>
+                    </p>
+                    {selItems.filter(i => i.selection.editingRequired).map(({ selection, file }) => {
+                      const upState = editUploadStates.get(file.fileId) ?? { status: 'idle' as const, progress: 0 }
+                      const isEditedDone = !!file.editedS3Key || upState.status === 'done'
+                      return (
+                        <div key={file.fileId} className="bg-bg border border-border rounded-xl p-3 flex gap-3">
+                          <div className="w-16 h-16 rounded-lg overflow-hidden bg-card border border-border flex-shrink-0">
+                            {file.r2PreviewUrl
+                              ? <img src={file.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                              : <div className="w-full h-full flex items-center justify-center text-muted text-xs">📄</div>}
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-1.5">
+                            <p className="text-xs font-medium text-text-primary truncate">{file.originalFilename}</p>
+                            {selection.comment && (
+                              <p className="text-[11px] text-muted italic">&ldquo;{selection.comment}&rdquo;</p>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {isEditedDone ? (
+                                <span className="text-xs text-success font-semibold">✓ Edited version uploaded</span>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => downloadOriginalEdit(file.fileId)}
+                                    className="text-xs bg-card border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
+                                  >
+                                    ↓ Download Original
+                                  </button>
+                                  <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
+                                    ↑ Upload Edited
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      ref={(el) => { if (el) editFileInputRefs.current.set(file.fileId, el) }}
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0]
+                                        if (f) handleEditUpload(file.fileId, f)
+                                      }}
+                                    />
+                                  </label>
+                                </>
+                              )}
+                            </div>
+                            {upState.status === 'uploading' && (
+                              <div className="space-y-1">
+                                <div className="h-1.5 bg-border rounded-full overflow-hidden">
+                                  <div className="h-full bg-accent transition-all rounded-full" style={{ width: `${upState.progress}%` }} />
+                                </div>
+                                <div className="text-[11px] text-muted">{upState.progress}%</div>
+                              </div>
+                            )}
+                            {upState.status === 'error' && (
+                              <div className="text-[11px] text-danger">{upState.error}</div>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-text-primary truncate">{file.originalFilename}</p>
-                          {selection.comment && (
-                            <p className="text-[11px] text-muted mt-1 italic">&ldquo;{selection.comment}&rdquo;</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
@@ -1128,10 +1240,17 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       </button>
                     </div>
                   ) : (
-                    <button onClick={generatePrintLink} disabled={printGenerating}
-                      className="bg-accent text-bg font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm">
-                      {printGenerating ? 'Generating…' : 'Generate Print Link'}
-                    </button>
+                    <div className="space-y-2">
+                      {printBlockedMessage && (
+                        <div className="bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 text-xs text-yellow-400">
+                          ⚠️ {printBlockedMessage}
+                        </div>
+                      )}
+                      <button onClick={generatePrintLink} disabled={printGenerating}
+                        className="bg-accent text-bg font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm">
+                        {printGenerating ? 'Generating…' : 'Generate Print Link'}
+                      </button>
+                    </div>
                   )}
                 </div>
               </>
