@@ -11,15 +11,18 @@ interface WatermarkSource {
   s3Key: string
   watermarkEnabled: boolean
   fileType: string
+  // Distinguishes a re-generated preview (e.g. after an edited re-upload)
+  // from the original. The Lambda uploads previews with a one-year immutable
+  // Cache-Control header — reusing the exact same r2Key/URL for a re-edit
+  // means browsers/CDNs never re-fetch it, so the old image sticks around
+  // forever even though the underlying object changed. A distinct suffix
+  // gives every regeneration a brand-new, never-cached URL instead.
+  previewKeySuffix?: string
 }
 
-// Always writes to the SAME r2 key the original upload used
-// (studios/{studioId}/projects/{projectId}/previews/{fileId}.jpg) — invoking
-// this again after an edited version is uploaded overwrites that preview in
-// place, so every consumer reading MediaFile.r2PreviewUrl automatically shows
-// the new watermarked content with no other code changes needed.
 export async function invokeStudioWatermarkLambda(source: WatermarkSource): Promise<void> {
   const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: source.studioId })
+  const previewFilename = source.previewKeySuffix ? `${source.fileId}-${source.previewKeySuffix}` : source.fileId
 
   const payload = {
     fileId: source.fileId,
@@ -28,7 +31,7 @@ export async function invokeStudioWatermarkLambda(source: WatermarkSource): Prom
     s3Bucket: process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
     s3Key: source.s3Key,
     r2Bucket: process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews',
-    r2Key: `studios/${source.studioId}/projects/${source.projectId}/previews/${source.fileId}.jpg`,
+    r2Key: `studios/${source.studioId}/projects/${source.projectId}/previews/${previewFilename}.jpg`,
     r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,

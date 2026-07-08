@@ -58,6 +58,7 @@ export async function POST(
       s3Key: editedS3Key,
       watermarkEnabled: file.watermarkEnabled,
       fileType: file.fileType,
+      previewKeySuffix: `edited-${Date.now()}`,
     }).catch((err: unknown) => console.error('[watermark-lambda invoke — edited]', err))
 
     return NextResponse.json({ success: true, data: { status: 'PROCESSING' } })
