@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Image from 'next/image'
 import Link from 'next/link'
 import { Suspense } from 'react'
+import AuthShell from '@/components/studio/AuthShell'
+import GoogleIcon from '@/components/studio/GoogleIcon'
 
 type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
@@ -85,6 +86,17 @@ function LoginPageInner() {
       setShowForgot(true)
     }
   }, [])
+
+  /* ── Surface errors redirected back from Google sign-in ─ */
+  useEffect(() => {
+    const error = searchParams.get('error')
+    if (error === 'SUSPENDED') setLoginError('Your account has been suspended')
+    else if (error === 'INVALID_ACCOUNT') setLoginError('No studio admin account found for this Google email')
+    else if (error === 'OAUTH_FAILED') setLoginError('Google sign-in failed — please try again')
+  }, [])
+
+  const nextParam = searchParams.get('next')
+  const googleHref = `/studio/api/auth/google${nextParam ? `?next=${encodeURIComponent(nextParam)}` : ''}`
 
   /* ── Login submit ────────────────────────────── */
   const handleLogin = async (e: React.FormEvent) => {
@@ -209,16 +221,20 @@ function LoginPageInner() {
 
   /* ── Render ──────────────────────────────────── */
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-sm space-y-6">
+    <AuthShell>
+      <div className="w-full max-w-sm space-y-6 pt-4">
 
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-2">
-          <Image src="/logo.png" alt="VayuStudios" width={44} height={44} className="h-11 w-11" />
-          <div className="text-xl font-extrabold text-text-primary">
-            Vayu<span className="text-accent">Studios</span>
+        {!showForgot && (
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-extrabold text-text-primary">Log in to Vayu<span className="text-accent">Studios</span></h1>
+            <p className="text-sm text-muted">
+              New to VayuStudios?{' '}
+              <Link href="/studio/get-started" className="text-accent hover:underline">
+                Request studio setup →
+              </Link>
+            </p>
           </div>
-        </div>
+        )}
 
         {/* ── FORGOT PASSWORD FLOW ─────────────────── */}
         {showForgot ? (
@@ -405,6 +421,23 @@ function LoginPageInner() {
                 </p>
               </div>
             ) : (
+              <div className="space-y-4">
+                {role === 'ADMIN' && (
+                  <>
+                    <a
+                      href={googleHref}
+                      className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors"
+                    >
+                      <GoogleIcon />
+                      Continue with Google
+                    </a>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-border" />
+                      <span className="text-xs text-muted whitespace-nowrap">Or use your email</span>
+                      <div className="flex-1 h-px bg-border" />
+                    </div>
+                  </>
+                )}
               <form onSubmit={handleLogin} className="bg-card border border-border rounded-2xl p-6 space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted">Email</label>
@@ -454,24 +487,18 @@ function LoginPageInner() {
                   Forgot password?
                 </button>
               </form>
+              </div>
             )}
-
-            <p className="text-center text-xs text-muted">
-              New to VayuStudios?{' '}
-              <Link href="/studio/home#get-started" className="text-accent hover:underline">
-                Request studio setup →
-              </Link>
-            </p>
           </>
         )}
       </div>
-    </div>
+    </AuthShell>
   )
 }
 
 export default function StudioLoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-[80vh] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" /></div>}>
+    <Suspense fallback={<AuthShell><div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin mt-20" /></AuthShell>}>
       <LoginPageInner />
     </Suspense>
   )

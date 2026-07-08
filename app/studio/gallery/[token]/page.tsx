@@ -199,6 +199,10 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
 
   const [project, setProject]         = useState<StudioProject | null>(null)
   const [files, setFiles]             = useState<GalleryFile[]>([])
+  // Snapshot of what was actually last submitted (or empty, if never submitted).
+  // The bar/dirty-check compares live `files` against this — never mutated except
+  // right after load() and right after a successful submit.
+  const [baseline, setBaseline]       = useState<GalleryFile[]>([])
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState<string | null>(null)
   const [viewMode, setViewMode]       = useState<ViewMode>('grid')
@@ -217,7 +221,16 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
   const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
   const [showSelfie, setShowSelfie]     = useState(false)
   const [selfieFiles, setSelfieFiles]   = useState<MediaFile[] | null>(null)
-  const saveQueue                       = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  // Per-tile thumbnail load state — undefined defaults to "loading" so a fresh
+  // tile shows the spinner until its <img> fires onLoad/onError.
+  const [imgStatus, setImgStatus]       = useState<Record<string, 'loaded' | 'error'>>({})
+  const [imgRetry, setImgRetry]         = useState<Record<string, number>>({})
+
+  const draftKey = `vayu_gallery_draft_${token}_${projectId}`
+  const retryImage = (fileId: string) => {
+    setImgStatus((s) => { const next = { ...s }; delete next[fileId]; return next })
+    setImgRetry((r) => ({ ...r, [fileId]: (r[fileId] ?? 0) + 1 }))
+  }
 
   useEffect(() => {
     if (!openMenu) return
@@ -270,68 +283,49 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
     })
 
     setProject(galleryData.data.project)
-    setFiles(merged)
+    setBaseline(merged)
+
+    // Apply any in-progress local draft on top of the submitted baseline — a
+    // purely client-side safety net so an accidental refresh before Submit
+    // doesn't lose unsaved picks. Never touches the backend.
+    let withDraft = merged
+    try {
+      const saved = localStorage.getItem(draftKey)
+      if (saved) {
+        const draft = JSON.parse(saved) as Record<string, { isSelected: boolean; editingRequired: boolean; comment: string }>
+        withDraft = merged.map((f) => draft[f.fileId] ? { ...f, ...draft[f.fileId] } : f)
+      }
+    } catch { /* corrupt/unavailable localStorage — ignore, fall back to baseline */ }
+
+    setFiles(withDraft)
     setLoading(false)
 
     const sat = galleryData.data.project.selectionSubmittedAt ?? null
     if (sat) { setSubmittedAt(sat); setSubmitted(true) }
-  }, [token, projectId, router])
+  }, [token, projectId, router, draftKey])
 
   useEffect(() => { load() }, [load])
 
-  const saveSelection = (fileId: string, patch: Partial<GalleryFile>) => {
-    const existing = saveQueue.current.get(fileId)
-    if (existing) clearTimeout(existing)
-    const timer = setTimeout(async () => {
-      saveQueue.current.delete(fileId)
-      setFiles((prev) => {
-        const f = prev.find((x) => x.fileId === fileId)
-        if (!f) return prev
-        fetch('/studio/api/client/selections', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId,
-            fileId,
-            isSelected:      patch.isSelected      ?? f.isSelected,
-            editingRequired: patch.editingRequired  ?? f.editingRequired,
-            comment:         patch.comment          ?? f.comment,
-          }),
-        }).catch((e: unknown) => console.error('[save selection]', e))
-        return prev
-      })
-    }, 600)
-    saveQueue.current.set(fileId, timer)
-  }
-
+  // Pure local state — no network call. The whole draft is sent once, on Submit/Resubmit.
   const toggleSelect = (fileId: string) => {
     setFiles((prev) =>
       prev.map((f) => {
         if (f.fileId !== fileId) return f
-        const selecting = !f.isSelected
-        const next = selecting
-          ? { ...f, isSelected: true }
-          : { ...f, isSelected: false, editingRequired: false, comment: '' }
-        saveSelection(fileId, { isSelected: next.isSelected, editingRequired: next.editingRequired, comment: next.comment })
-        return next
+        return f.isSelected
+          ? { ...f, isSelected: false, editingRequired: false, comment: '' }
+          : { ...f, isSelected: true }
       })
     )
   }
 
   const setEditing = (fileId: string, value: boolean) => {
     setFiles((prev) =>
-      prev.map((f) => {
-        if (f.fileId !== fileId) return f
-        const next = { ...f, editingRequired: value, ...(value ? {} : { comment: '' }) }
-        saveSelection(fileId, { editingRequired: next.editingRequired, comment: next.comment })
-        return next
-      })
+      prev.map((f) => f.fileId !== fileId ? f : { ...f, editingRequired: value, ...(value ? {} : { comment: '' }) })
     )
   }
 
   const setComment = (fileId: string, comment: string) => {
     setFiles((prev) => prev.map((f) => f.fileId !== fileId ? f : { ...f, comment }))
-    saveSelection(fileId, { comment })
   }
 
   const toggleFilter = (filter: 'loved' | 'edit') => {
@@ -350,7 +344,15 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
     const res = await fetch('/studio/api/client/selections/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId }),
+      body: JSON.stringify({
+        projectId,
+        selections: files.map((f) => ({
+          fileId: f.fileId,
+          isSelected: f.isSelected,
+          editingRequired: f.editingRequired,
+          comment: f.comment,
+        })),
+      }),
     }).then((r) => r.json())
     setSubmitting(false)
     setShowSubmit(false)
@@ -358,6 +360,10 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
       setSubmitted(true)
       setSubmittedAt(res.data.submittedAt)
       setShowSuccessModal(true)
+      // The submitted draft becomes the new baseline — bar hides again until
+      // the next real change, and the local safety-net draft is no longer needed.
+      setBaseline(files)
+      try { localStorage.removeItem(draftKey) } catch { /* ignore */ }
     } else {
       alert(res.message ?? 'Could not submit selections. Please try again.')
     }
@@ -383,13 +389,11 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
     ? Date.now() - new Date(submittedAt).getTime() < RESUBMIT_WINDOW_MS
     : false
 
+  // Discards only the *unsubmitted* draft changes, reverting to the last-submitted
+  // baseline — never touches the backend, and never destroys anything already submitted.
   const clearAllSelections = () => {
-    setFiles(prev => prev.map(f => {
-      if (!f.isSelected) return f
-      const next = { ...f, isSelected: false, editingRequired: false, comment: '' }
-      saveSelection(f.fileId, { isSelected: false, editingRequired: false, comment: '' })
-      return next
-    }))
+    setFiles(baseline)
+    try { localStorage.removeItem(draftKey) } catch { /* ignore */ }
   }
 
   const openSelectionPreview = (startIdx = 0) => {
@@ -408,6 +412,26 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
   const selectedCount   = files.filter((f) => f.isSelected).length
   const editCount       = files.filter((f) => f.editingRequired).length
   const selectedPhotos  = files.filter((f) => f.isSelected)
+
+  // True only when the current draft actually differs from what was last submitted —
+  // drives whether the floating bar shows at all post-submission.
+  const isDirty = files.some((f) => {
+    const b = baseline.find((x) => x.fileId === f.fileId)
+    return (b?.isSelected ?? false) !== f.isSelected
+      || (b?.editingRequired ?? false) !== f.editingRequired
+      || (b?.comment ?? '') !== f.comment
+  })
+
+  // Persist the in-progress draft locally (no backend call) so it survives an
+  // accidental refresh/tab-close before the client hits Submit.
+  useEffect(() => {
+    if (loading || !isDirty) return
+    try {
+      const draft: Record<string, { isSelected: boolean; editingRequired: boolean; comment: string }> = {}
+      for (const f of files) draft[f.fileId] = { isSelected: f.isSelected, editingRequired: f.editingRequired, comment: f.comment }
+      localStorage.setItem(draftKey, JSON.stringify(draft))
+    } catch { /* storage unavailable/full — non-critical, just skip the safety net */ }
+  }, [files, isDirty, loading, draftKey])
 
   useEffect(() => {
     if (!showSelectionPreview) return
@@ -660,7 +684,35 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                   onClick={() => toggleSelect(f.fileId)}
                 >
                   {f.r2PreviewUrl ? (
-                    <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                    <>
+                      <img
+                        src={imgRetry[f.fileId] ? `${f.r2PreviewUrl}${f.r2PreviewUrl.includes('?') ? '&' : '?'}r=${imgRetry[f.fileId]}` : f.r2PreviewUrl}
+                        alt={f.originalFilename}
+                        className="w-full h-full object-cover"
+                        draggable={false}
+                        onLoad={() => setImgStatus((s) => ({ ...s, [f.fileId]: 'loaded' }))}
+                        onError={() => setImgStatus((s) => ({ ...s, [f.fileId]: 'error' }))}
+                      />
+                      {imgStatus[f.fileId] === undefined && (
+                        <div className="absolute inset-0 bg-card flex items-center justify-center pointer-events-none">
+                          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                      {imgStatus[f.fileId] === 'error' && (
+                        <div className="absolute inset-0 bg-card/95 flex flex-col items-center justify-center gap-1.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); retryImage(f.fileId) }}
+                            title="Retry loading photo"
+                            className="w-8 h-8 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                          </button>
+                          <span className="text-[9px] text-muted">Tap to retry</span>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="w-full h-full bg-card flex items-center justify-center text-muted text-xs p-2 text-center">
                       {f.originalFilename}
@@ -752,8 +804,9 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
         </div>
       )}
 
-      {/* ── Floating selection bar ───────────────────────────── */}
-      {selectedCount > 0 && (
+      {/* ── Floating selection bar — only when the draft actually differs from
+          what was last submitted, so it doesn't linger with nothing new to save ── */}
+      {isDirty && selectedCount > 0 && (
         <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center" onClick={e => e.stopPropagation()}>
           <div className="bg-card/80 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
