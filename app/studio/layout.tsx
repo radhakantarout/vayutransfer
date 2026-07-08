@@ -1,7 +1,5 @@
 import type { Metadata } from 'next'
-import StudioNavbar from '@/components/studio/StudioNavbar'
-import ConditionalFooter from '@/components/studio/ConditionalFooter'
-import ChatWidget from '@/components/studio/ChatWidget'
+import StudioChrome from '@/components/studio/StudioChrome'
 
 export const metadata: Metadata = {
   title: 'VayuStudios — Gallery Delivery for Photographers',
@@ -10,14 +8,5 @@ export const metadata: Metadata = {
 }
 
 export default function StudioLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-bg text-text-primary flex flex-col">
-      <StudioNavbar />
-      <div className="flex-1 flex flex-col">
-        {children}
-      </div>
-      <ConditionalFooter />
-      <ChatWidget />
-    </div>
-  )
+  return <StudioChrome>{children}</StudioChrome>
 }

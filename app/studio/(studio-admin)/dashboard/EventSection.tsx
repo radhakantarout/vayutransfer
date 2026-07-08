@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import EditEventModal from './EditEventModal'
+import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 
 const CHUNK_SIZE = 50 * 1024 * 1024
 
@@ -154,6 +155,16 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
+
+  // Tell the top-level layout to hide the navbar/chat widget while this grid
+  // is fullscreen — covers both the toggle button and the Escape-key close
+  // above, since both just flip local `expanded`. Also resets on unmount so
+  // navigating away mid-expansion never leaves the navbar permanently hidden.
+  const { setExpanded: setNavbarHidden } = useExpandedGrid()
+  useEffect(() => {
+    setNavbarHidden(expanded)
+    return () => { if (expanded) setNavbarHidden(false) }
+  }, [expanded, setNavbarHidden])
 
   // Upload speed tracking
   useEffect(() => {
@@ -545,8 +556,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         </div>
       )}
 
+      {/* z-20, not z-50 — this is a fullscreen *view*, not a modal, and must never
+          paint over the delete-confirm/edit/share modals or global overlays that
+          also target z-50; those need to stay reachable while the grid is expanded. */}
       <div className={expanded
-        ? 'fixed inset-0 z-50 overflow-auto bg-bg'
+        ? 'fixed inset-0 z-20 overflow-auto bg-bg'
         : 'border border-border rounded-2xl overflow-hidden bg-card'
       }>
 
