@@ -365,7 +365,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   }
 
   const downloadOriginalEdit = async (fileId: string) => {
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/download`).then(r => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/download?version=original`).then(r => r.json())
     if (res.success) window.open(res.data.url, '_blank')
   }
 
@@ -1162,31 +1162,28 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                               <p className="text-[11px] text-muted italic">&ldquo;{selection.comment}&rdquo;</p>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                              {isEditedDone ? (
+                              {isEditedDone && (
                                 <span className="text-xs text-success font-semibold">✓ Edited version uploaded</span>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => downloadOriginalEdit(file.fileId)}
-                                    className="text-xs bg-card border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
-                                  >
-                                    ↓ Download Original
-                                  </button>
-                                  <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
-                                    ↑ Upload Edited
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      className="hidden"
-                                      ref={(el) => { if (el) editFileInputRefs.current.set(file.fileId, el) }}
-                                      onChange={(e) => {
-                                        const f = e.target.files?.[0]
-                                        if (f) handleEditUpload(file.fileId, f)
-                                      }}
-                                    />
-                                  </label>
-                                </>
                               )}
+                              <button
+                                onClick={() => downloadOriginalEdit(file.fileId)}
+                                className="text-xs bg-card border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
+                              >
+                                ↓ Download Original
+                              </button>
+                              <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
+                                {isEditedDone ? '↑ Re-upload Edited' : '↑ Upload Edited'}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  ref={(el) => { if (el) editFileInputRefs.current.set(file.fileId, el) }}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0]
+                                    if (f) handleEditUpload(file.fileId, f)
+                                  }}
+                                />
+                              </label>
                             </div>
                             {upState.status === 'uploading' && (
                               <div className="space-y-1">

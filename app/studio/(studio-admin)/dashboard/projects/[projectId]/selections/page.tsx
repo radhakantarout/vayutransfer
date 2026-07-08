@@ -95,7 +95,7 @@ export default function SelectionsPage() {
   }
 
   const downloadOriginal = async (fileId: string) => {
-    const res = await fetch(`/studio/api/admin/projects/${projectId}/files/${fileId}/download`).then((r) => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${projectId}/files/${fileId}/download?version=original`).then((r) => r.json())
     if (res.success) window.open(res.data.url, '_blank')
   }
 
@@ -179,31 +179,28 @@ export default function SelectionsPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
-                      {isEditedDone ? (
+                      {isEditedDone && (
                         <span className="text-xs text-success font-semibold">✓ Edited version uploaded</span>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => downloadOriginal(file.fileId)}
-                            className="text-xs bg-bg border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
-                          >
-                            ↓ Download Original
-                          </button>
-                          <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
-                            ↑ Upload Edited
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              ref={(el) => { if (el) fileInputRefs.current.set(file.fileId, el) }}
-                              onChange={(e) => {
-                                const f = e.target.files?.[0]
-                                if (f) handleEditUpload(file.fileId, f)
-                              }}
-                            />
-                          </label>
-                        </>
                       )}
+                      <button
+                        onClick={() => downloadOriginal(file.fileId)}
+                        className="text-xs bg-bg border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
+                      >
+                        ↓ Download Original
+                      </button>
+                      <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
+                        {isEditedDone ? '↑ Re-upload Edited' : '↑ Upload Edited'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          ref={(el) => { if (el) fileInputRefs.current.set(file.fileId, el) }}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0]
+                            if (f) handleEditUpload(file.fileId, f)
+                          }}
+                        />
+                      </label>
                     </div>
                     {upState.status === 'uploading' && (
                       <div className="space-y-1">
