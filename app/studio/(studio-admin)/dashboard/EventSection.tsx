@@ -334,6 +334,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     await loadFiles(); onUpdated()
   }
 
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
+  const retryFile = async (fileId: string) => {
+    setRetryingIds(prev => new Set(prev).add(fileId))
+    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/retry-watermark`, { method: 'POST' }).catch(() => {})
+    setRetryingIds(prev => { const next = new Set(prev); next.delete(fileId); return next })
+    await loadFiles()
+  }
+
   const uploadFile = async (file: File, itemId: string) => {
     const update = (patch: Partial<UploadItem>) =>
       setUploads(prev => prev.map(u => u.id === itemId ? { ...u, ...patch } : u))
@@ -858,13 +866,25 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                             </div>
                           )}
                           {isFailed && (
-                            <div className="absolute inset-0 bg-red-950/80 flex flex-col items-center justify-center gap-1.5 p-1">
-                              <span className="text-red-400 text-base">⚠</span>
-                              <span className="text-red-400 text-[9px] font-bold uppercase tracking-wide">Failed</span>
-                              <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                                className="text-[9px] text-red-300 border border-red-500/50 px-1.5 py-0.5 rounded hover:bg-red-500/30 transition-colors">
-                                Remove
-                              </button>
+                            <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
+                              {retryingIds.has(f.fileId) ? (
+                                <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <>
+                                  <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
+                                    title="Retry processing"
+                                    className="w-7 h-7 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                  </button>
+                                  <span className="text-[8px] text-muted font-medium">Tap to retry</span>
+                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                    Remove
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                           {isSelected && (

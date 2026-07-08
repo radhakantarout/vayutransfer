@@ -53,7 +53,13 @@ export async function POST(
     const exprValues: Record<string, unknown> = { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' }
     if (hasRange)   { updateExpr += ', selectionMin = :smin, selectionMax = :smax'; exprValues[':smin'] = selectionMin; exprValues[':smax'] = selectionMax }
     if (hasFilter)  { updateExpr += ', sharedFileIds = :sfids'; exprValues[':sfids'] = includedFileIds }
-    else            { updateExpr += ' REMOVE sharedFileIds' }
+
+    // Re-sharing always clears the prior submission lock — the client should see a fresh,
+    // submittable gallery (their previous heart/edit selections still load from the
+    // Selection table and appear pre-checked; only the submit lock resets).
+    const removeAttrs = ['selectionSubmittedAt']
+    if (!hasFilter) removeAttrs.push('sharedFileIds')
+    updateExpr += ` REMOVE ${removeAttrs.join(', ')}`
 
     await studioUpdateItem(TABLES.projects, { studioId, projectId }, updateExpr, exprValues, { '#s': 'status' })
 
