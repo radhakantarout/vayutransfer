@@ -4,6 +4,7 @@ import { verifyGoogleSignupToken } from '@/lib/studio/googleAuth'
 import { signStudioJWT } from '@/lib/studio/auth'
 import { studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { sendOwnerStudioCreatedEmail, sendStudioCredentialsEmail } from '@/lib/aws/ses'
+import { DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioUser } from '@/types/studio'
 
 // GET — the register page calls this on mount to validate the token and
@@ -75,6 +76,9 @@ export async function POST(req: NextRequest) {
       plan: 'STARTER',
       brandingConfig: {},
       storageUsedBytes: 0,
+      billableStorageBytes: 0,
+      storageGrants: [],
+      dataRetentionGraceDays: DEFAULT_RETENTION_GRACE_DAYS,
       projectCount: 0,
       status: 'ACTIVE',
       createdAt: now,

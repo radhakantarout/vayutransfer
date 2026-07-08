@@ -1,4 +1,4 @@
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'
+import { SESClient, SendEmailCommand, SendRawEmailCommand } from '@aws-sdk/client-ses'
 
 const sesClient = new SESClient({
   region: process.env.SES_REGION ?? 'ap-south-1',
@@ -528,6 +528,141 @@ export async function sendStudioDeletedEmail(
       Body: {
         Html: { Data: html, Charset: 'UTF-8' },
         Text: { Data: `Your studio "${studioName}" and all its data have been permanently deleted.${reason ? `\n\nReason: ${reason}` : ''}\n\nContact support@vayutransfer.com if you believe this was a mistake.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+// Attachments aren't supported by SendEmailCommand — needs a raw MIME
+// multipart message instead, built and base64-encoded by hand here.
+export async function sendStudioReceiptEmail(
+  to: string,
+  studioName: string,
+  pdfBuffer: Buffer,
+  packageLabel: string,
+  amountPaise: number
+): Promise<void> {
+  const amountRupees = `₹${(amountPaise / 100).toLocaleString('en-IN')}`
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Payment Receipt</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuStudios</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Payment successful ✓</div>
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 16px;">Thanks, ${studioName}!</h2>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#5A7090;">Package</span><span>${packageLabel}</span></div>
+      <div style="border-top:1px solid #1E2D45;margin:8px 0;padding-top:8px;display:flex;justify-content:space-between;font-weight:700;"><span>Amount paid</span><span style="color:#00C6FF;">${amountRupees}</span></div>
+    </div>
+    <p style="color:#5A7090;font-size:13px;">Your PDF receipt is attached to this email.</p>
+  </div>
+</body>
+</html>`.trim()
+
+  const text = `Thanks, ${studioName}!\n\nPackage: ${packageLabel}\nAmount paid: ${amountRupees}\n\nYour PDF receipt is attached.`
+
+  const boundary = `----vayustudios-${Date.now()}`
+  const pdfBase64 = pdfBuffer.toString('base64').replace(/(.{76})/g, '$1\r\n')
+
+  const rawMessage = [
+    `From: VayuStudios <${FROM_EMAIL}>`,
+    `To: ${to}`,
+    `Subject: Payment receipt — ${packageLabel}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    `Content-Type: multipart/alternative; boundary="alt-${boundary}"`,
+    '',
+    `--alt-${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    '',
+    text,
+    '',
+    `--alt-${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    '',
+    html,
+    '',
+    `--alt-${boundary}--`,
+    '',
+    `--${boundary}`,
+    'Content-Type: application/pdf; name="VayuStudios-Receipt.pdf"',
+    'Content-Transfer-Encoding: base64',
+    'Content-Disposition: attachment; filename="VayuStudios-Receipt.pdf"',
+    '',
+    pdfBase64,
+    '',
+    `--${boundary}--`,
+  ].join('\r\n')
+
+  await sesClient.send(new SendRawEmailCommand({
+    RawMessage: { Data: Buffer.from(rawMessage) },
+  }))
+}
+
+// Sent at day 1 (notice), 50% of grace period (reminder), and 90% (final
+// urgent warning) — reminderNumber drives tone. isFinal shows the exact
+// deletion date instead of a vague "days remaining".
+export async function sendStorageOverageReminderEmail(
+  to: string,
+  studioName: string,
+  overageGB: string,
+  daysRemaining: number,
+  reminderNumber: 1 | 2 | 3
+): Promise<void> {
+  const isFinal = reminderNumber === 3
+  const color = isFinal ? '#F87171' : '#FBBF24'
+  const title = isFinal
+    ? 'Final notice — your oldest photos will be deleted soon'
+    : reminderNumber === 2
+      ? 'Reminder: your storage is still over its limit'
+      : 'Your studio is over its storage limit'
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${title}</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:22px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studio</span></div>
+    <div style="color:#5A7090;font-size:13px;margin-bottom:28px;">Storage limit reached</div>
+
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 16px;color:${color};">${title}</h2>
+
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 20px;">
+      <strong style="color:#E0EAF8;">${studioName}</strong> is currently using about
+      <strong style="color:#E0EAF8;">${overageGB} GB</strong> more storage than your plan includes.
+    </p>
+
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+      <div style="color:#5A7090;font-size:12px;margin-bottom:4px;">${isFinal ? 'Deletion begins in' : 'Time remaining before oldest photos are removed'}</div>
+      <div style="font-size:20px;color:${color};font-weight:800;">${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}</div>
+    </div>
+
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 24px;">
+      Top up your storage now to keep everything safe — we'll only ever remove the oldest
+      projects first, and only the minimum needed to bring you back within your limit.
+    </p>
+
+    <a href="https://vayustudios.com/studio/dashboard"
+      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;">
+      Top up storage →
+    </a>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `${title} — ${studioName}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `${title}\n\n${studioName} is using about ${overageGB} GB more storage than your plan includes.\n\n${daysRemaining} day(s) remaining before your oldest photos are automatically removed.\n\nTop up: https://vayustudios.com/studio/dashboard`, Charset: 'UTF-8' },
       },
     },
   }))

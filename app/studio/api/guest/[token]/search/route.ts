@@ -4,7 +4,7 @@ import { RekognitionClient, SearchFacesByImageCommand } from '@aws-sdk/client-re
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, BatchGetCommand } from '@aws-sdk/lib-dynamodb'
 import { TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedDownloadUrl, getStudioSignedViewUrl } from '@/lib/studio/s3'
+import { getStudioSignedDownloadUrl, resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import type { MediaFile } from '@/types/studio'
 
 const rek = new RekognitionClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -105,16 +105,16 @@ export async function POST(
       .filter(f => f.processingStatus === 'READY')
       .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
 
-    // Generate signed URLs — use S3 view URL as preview fallback when R2 watermark not ready
+    // Generate signed URLs — prefer the edited version for both preview and
+    // download when one exists (never serve the stale original silently)
     const photos = await Promise.all(
       readyFiles.map(async f => {
+        const downloadKey = f.editedS3Key ?? f.s3Key
         const [previewUrl, downloadUrl] = await Promise.all([
-          f.r2PreviewUrl
-            ? Promise.resolve(f.r2PreviewUrl)
-            : getStudioSignedViewUrl(f.s3Key).catch(() => ''),
-          getStudioSignedDownloadUrl(f.s3Key, f.originalFilename).catch(() => ''),
+          resolveMediaPreviewUrl(f).then(u => u ?? ''),
+          getStudioSignedDownloadUrl(downloadKey, f.originalFilename).catch(() => ''),
         ])
-        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl }
+        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl, isEdited: !!f.editedS3Key }
       })
     )
 

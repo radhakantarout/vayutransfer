@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { completeStudioMultipartUpload, abortStudioMultipartUpload } from '@/lib/studio/s3'
-import type { MediaFile, Studio } from '@/types/studio'
-
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
+import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
+import type { MediaFile } from '@/types/studio'
 
 export async function POST(
   req: NextRequest,
@@ -49,11 +47,12 @@ export async function POST(
       { '#s': 'status' }
     )
 
-    // Update studio storage usage
+    // storageUsedBytes = historical "Total Upload Size", never decrements.
+    // billableStorageBytes = live figure billing/quota checks actually use.
     await studioUpdateItem(
       TABLES.studios,
       { studioId },
-      'ADD storageUsedBytes :size SET updatedAt = :now',
+      'ADD storageUsedBytes :size, billableStorageBytes :size SET updatedAt = :now',
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
 
@@ -77,30 +76,14 @@ export async function POST(
       { ':s': 'PROCESSING', ':now': now }
     )
 
-    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
-
-    const lambdaPayload = {
+    invokeStudioWatermarkLambda({
       fileId,
       projectId,
       studioId,
-      s3Bucket: process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
       s3Key: mediaFile.s3Key,
-      r2Bucket: process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews',
-      r2Key: `studios/${studioId}/projects/${projectId}/previews/${fileId}.jpg`,
-      r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
-      r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
-      r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-      studioName: studio?.name ?? 'Studio',
-      logoS3Key: studio?.brandingConfig?.logoS3Key ?? null,
       watermarkEnabled: mediaFile.watermarkEnabled,
       fileType: mediaFile.fileType,
-    }
-
-    lambda.send(new InvokeCommand({
-      FunctionName: process.env.WATERMARK_LAMBDA_ARN,
-      InvocationType: 'Event',
-      Payload: Buffer.from(JSON.stringify(lambdaPayload)),
-    })).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
+    }).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })
   } catch (err) {

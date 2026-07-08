@@ -100,13 +100,15 @@ export async function DELETE(
     // Delete the project itself
     await studioDeleteItem(TABLES.projects, { studioId: auth.studioId, projectId })
 
-    // Decrement studio project count (floor at 0)
+    // Decrement studio project count + billable storage (Total Upload Size stat
+    // intentionally left untouched — it's the historical/lifetime figure)
     const now = new Date().toISOString()
+    const freedBytes = mediafiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
     await studioUpdateItem(
       TABLES.studios,
       { studioId: auth.studioId },
-      'ADD projectCount :neg SET updatedAt = :now',
-      { ':neg': -1, ':now': now }
+      'ADD projectCount :neg, billableStorageBytes :negSize SET updatedAt = :now',
+      { ':neg': -1, ':negSize': -freedBytes, ':now': now }
     )
 
     return NextResponse.json({ success: true, data: { projectId } })

@@ -108,6 +108,14 @@ export async function DELETE(
       'ADD totalFiles :neg SET updatedAt = :now',
       { ':neg': -1, ':now': now }
     )
+    // billableStorageBytes decrement — storageUsedBytes (Total Upload Size)
+    // intentionally left untouched, it's the historical/lifetime figure.
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId: file.studioId },
+      'ADD billableStorageBytes :negSize SET updatedAt = :now',
+      { ':negSize': -file.sizeBytes, ':now': now }
+    )
 
     return NextResponse.json({ success: true })
   } catch (err) {

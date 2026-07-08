@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioScanTable, studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioCredentialsEmail, sendOwnerStudioCreatedEmail } from '@/lib/aws/ses'
+import { DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioUser, StudioPlan } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
@@ -52,6 +53,9 @@ export async function POST(req: NextRequest) {
       plan: plan as StudioPlan,
       brandingConfig: {},
       storageUsedBytes: 0,
+      billableStorageBytes: 0,
+      storageGrants: [],
+      dataRetentionGraceDays: DEFAULT_RETENTION_GRACE_DAYS,
       projectCount: 0,
       status: 'ACTIVE',
       createdAt: now,

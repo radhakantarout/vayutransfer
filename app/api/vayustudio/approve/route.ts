@@ -3,6 +3,7 @@ import { jwtVerify } from 'jose'
 import { randomUUID } from 'crypto'
 import { studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioCredentialsEmail } from '@/lib/aws/ses'
+import { DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioUser } from '@/types/studio'
 
 function getEnquirySecret() {
@@ -66,6 +67,9 @@ export async function GET(req: NextRequest) {
     plan: 'STARTER',
     brandingConfig: {},
     storageUsedBytes: 0,
+    billableStorageBytes: 0,
+    storageGrants: [],
+    dataRetentionGraceDays: DEFAULT_RETENTION_GRACE_DAYS,
     projectCount: 0,
     status: 'ACTIVE',
     createdAt: now,

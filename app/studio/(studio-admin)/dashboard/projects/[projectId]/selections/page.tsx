@@ -26,7 +26,9 @@ export default function SelectionsPage() {
   const [generating, setGenerating] = useState(false)
   const [copied, setCopied]       = useState(false)
   const [uploadStates, setUploadStates] = useState<Map<string, EditUploadState>>(new Map())
+  const [printBlockedMessage, setPrintBlockedMessage] = useState<string | null>(null)
   const fileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  const needsEditingRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     const res = await fetch(`/studio/api/admin/projects/${projectId}/selections`).then((r) => r.json())
@@ -93,17 +95,23 @@ export default function SelectionsPage() {
   }
 
   const downloadOriginal = async (fileId: string) => {
-    const res = await fetch(`/studio/api/admin/projects/${projectId}/files/${fileId}/download`).then((r) => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${projectId}/files/${fileId}/download?version=original`).then((r) => r.json())
     if (res.success) window.open(res.data.url, '_blank')
   }
 
   const generatePrintLink = async () => {
     setGenerating(true)
+    setPrintBlockedMessage(null)
     const res = await fetch(`/studio/api/admin/projects/${projectId}/print-link`, { method: 'POST' }).then((r) => r.json())
     setGenerating(false)
     if (res.success) {
       setPrintUrl(res.data.printUrl)
       setPrintExpiry(res.data.expiresAt)
+    } else if (res.error === 'EDITS_PENDING') {
+      setPrintBlockedMessage(res.message)
+      needsEditingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      setPrintBlockedMessage(res.message ?? 'Could not generate print link. Please try again.')
     }
   }
 
@@ -143,7 +151,7 @@ export default function SelectionsPage() {
 
       {/* Needs Editing section */}
       {needsEditing.length > 0 && (
-        <div className="space-y-4">
+        <div ref={needsEditingRef} className="space-y-4 scroll-mt-6">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-text-primary flex items-center gap-2">
               <span className="text-yellow-400">✏️</span> Needs Editing
@@ -171,31 +179,28 @@ export default function SelectionsPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
-                      {isEditedDone ? (
+                      {isEditedDone && (
                         <span className="text-xs text-success font-semibold">✓ Edited version uploaded</span>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => downloadOriginal(file.fileId)}
-                            className="text-xs bg-bg border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
-                          >
-                            ↓ Download Original
-                          </button>
-                          <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
-                            ↑ Upload Edited
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              ref={(el) => { if (el) fileInputRefs.current.set(file.fileId, el) }}
-                              onChange={(e) => {
-                                const f = e.target.files?.[0]
-                                if (f) handleEditUpload(file.fileId, f)
-                              }}
-                            />
-                          </label>
-                        </>
                       )}
+                      <button
+                        onClick={() => downloadOriginal(file.fileId)}
+                        className="text-xs bg-bg border border-border text-text-primary px-3 py-1.5 rounded-lg hover:border-accent hover:text-accent transition-colors"
+                      >
+                        ↓ Download Original
+                      </button>
+                      <label className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors cursor-pointer">
+                        {isEditedDone ? '↑ Re-upload Edited' : '↑ Upload Edited'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          ref={(el) => { if (el) fileInputRefs.current.set(file.fileId, el) }}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0]
+                            if (f) handleEditUpload(file.fileId, f)
+                          }}
+                        />
+                      </label>
                     </div>
                     {upState.status === 'uploading' && (
                       <div className="space-y-1">
@@ -266,13 +271,20 @@ export default function SelectionsPage() {
             )}
           </div>
         ) : (
-          <button
-            onClick={generatePrintLink}
-            disabled={generating}
-            className="bg-accent text-bg font-bold px-6 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm"
-          >
-            {generating ? 'Generating…' : 'Generate Print Link'}
-          </button>
+          <div className="space-y-3">
+            {printBlockedMessage && (
+              <div className="bg-yellow-400/10 border border-yellow-400/30 rounded-xl p-3 text-sm text-yellow-400">
+                ⚠️ {printBlockedMessage}
+              </div>
+            )}
+            <button
+              onClick={generatePrintLink}
+              disabled={generating}
+              className="bg-accent text-bg font-bold px-6 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm"
+            >
+              {generating ? 'Generating…' : 'Generate Print Link'}
+            </button>
+          </div>
         )}
       </div>
     </div>

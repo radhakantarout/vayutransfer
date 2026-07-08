@@ -23,6 +23,10 @@ const TABLES = {
   jobs:       process.env.DYNAMO_STUDIO_JOBS_TABLE       ?? 'vayustudio-jobs',
   websites:   process.env.DYNAMO_STUDIO_WEBSITES_TABLE   ?? 'vayustudio-websites',
   bookings:   process.env.DYNAMO_STUDIO_BOOKINGS_TABLE   ?? 'vayustudio-bookings',
+  // Billing — deliberately separate tables from VayuTransfer's vayu-transactions,
+  // never shared/imported across the two products.
+  transactions: process.env.DYNAMO_STUDIO_TRANSACTIONS_TABLE ?? 'vayustudio-transactions',
+  usage:        process.env.DYNAMO_STUDIO_USAGE_TABLE        ?? 'vayustudio-usage',
 } as const
 
 export { TABLES }

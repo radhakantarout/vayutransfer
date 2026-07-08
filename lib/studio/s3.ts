@@ -89,7 +89,33 @@ export async function getStudioSignedViewUrl(key: string): Promise<string> {
   )
 }
 
-export async function getStudioSignedDownloadUrl(key: string, filename: string): Promise<string> {
+// r2PreviewUrl is the watermarked preview written by the Lambda pipeline.
+// Uploading an edited version re-invokes that same Lambda against the edited
+// file, overwriting this exact preview in place — so the cached value is
+// trustworthy once processing completes. Only fall back to a raw signed view
+// (unwatermarked!) of the current file when no preview exists yet at all —
+// e.g. dev/test without WATERMARK_LAMBDA_ARN configured.
+export async function resolveMediaPreviewUrl(file: {
+  fileType: string
+  editedS3Key?: string
+  s3Key: string
+  r2PreviewUrl?: string
+}): Promise<string | undefined> {
+  if (file.fileType !== 'IMAGE') return file.r2PreviewUrl
+  if (file.r2PreviewUrl) return file.r2PreviewUrl
+  try { return await getStudioSignedViewUrl(file.editedS3Key ?? file.s3Key) } catch { return undefined }
+}
+
+// Fetches a full object into memory — used for server-side zip assembly
+// (print portal "download all"). Only called for modest, already-selected
+// batches; not intended for arbitrary bulk export.
+export async function getStudioObjectBuffer(key: string): Promise<Buffer> {
+  const res = await studioS3.send(new GetObjectCommand({ Bucket: STUDIO_BUCKET, Key: key }))
+  const bytes = await res.Body!.transformToByteArray()
+  return Buffer.from(bytes)
+}
+
+export async function getStudioSignedDownloadUrl(key: string, filename: string, expiresInSeconds = 3600): Promise<string> {
   return getSignedUrl(
     studioS3,
     new GetObjectCommand({
@@ -97,7 +123,7 @@ export async function getStudioSignedDownloadUrl(key: string, filename: string):
       Key: key,
       ResponseContentDisposition: `attachment; filename="${encodeURIComponent(filename)}"`,
     }),
-    { expiresIn: 3600 }
+    { expiresIn: expiresInSeconds }
   )
 }
 

@@ -29,6 +29,30 @@ export default function PrintPortalPage() {
   const [gallery, setGallery] = useState<PrintGallery | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  const [downloadAllError, setDownloadAllError] = useState<string | null>(null)
+
+  const downloadAll = async () => {
+    setDownloadingAll(true)
+    setDownloadAllError(null)
+    try {
+      const res = await fetch(`/studio/api/print/gallery/${token}/download-all`)
+      if (!res.ok) throw new Error('Download failed')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(gallery?.project.clientName ?? 'photos').replace(/[^a-z0-9]+/gi, '-')}-photos.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setDownloadAllError('Could not download all photos. Please try again or download individually.')
+    } finally {
+      setDownloadingAll(false)
+    }
+  }
 
   useEffect(() => {
     fetch(`/studio/api/print/gallery/${token}`)
@@ -104,7 +128,18 @@ export default function PrintPortalPage() {
                 <div className="text-xs text-muted">Originals</div>
               </div>
             )}
+            <button
+              onClick={downloadAll}
+              disabled={downloadingAll}
+              className="ml-auto bg-accent text-bg text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {downloadingAll && <span className="w-3.5 h-3.5 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />}
+              {downloadingAll ? 'Preparing zip…' : '⬇ Download all'}
+            </button>
           </div>
+          {downloadAllError && (
+            <p className="text-xs text-danger mt-2">{downloadAllError}</p>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedViewUrl } from '@/lib/studio/s3'
+import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
 import type { Selection, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -51,18 +51,12 @@ export async function GET(
       return a.file.displayOrder - b.file.displayOrder
     })
 
-    // Fallback to presigned S3 view URL when R2 preview not yet generated
+    // Regenerate preview when missing, or when an edited version exists
+    // (the cached R2 preview only ever reflects the original upload)
     const enriched = await Promise.all(
       selected.map(async ({ selection, file }) => {
-        if (file.fileType === 'IMAGE' && !file.r2PreviewUrl) {
-          try {
-            const viewUrl = await getStudioSignedViewUrl(file.s3Key)
-            return { selection, file: { ...file, r2PreviewUrl: viewUrl } }
-          } catch {
-            return { selection, file }
-          }
-        }
-        return { selection, file }
+        const previewUrl = await resolveMediaPreviewUrl(file)
+        return { selection, file: { ...file, r2PreviewUrl: previewUrl } }
       })
     )
 

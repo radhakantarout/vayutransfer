@@ -79,7 +79,7 @@ See REQUIREMENTS.md for full spec. Build in this order:
 
 ## Current Build Status
 
-Last updated: 2026-07-03
+Last updated: 2026-07-08
 
 ```
 [x] STEP 1 — Types + Constants
@@ -92,6 +92,7 @@ Last updated: 2026-07-03
 [x] STEP 8 — Config files (.env.example, next.config.js, tailwind.config.js)
 [x] STEP 9 — Google OAuth + ₹50 signup bonus (lib/auth.ts, lib/users.ts, vayu-users table)
 [x] STEP 10 — VayuStudios AI chatbot (AWS Bedrock Claude 3 Haiku, streaming, WhatsApp escalation)
+[x] STEP 11 — VayuStudios usage-based billing (Razorpay top-ups, PDF receipts, storage retention) — built on develop, Razorpay still in TEST MODE, not yet merged to main
 ```
 
 Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/vayutransfer
@@ -115,13 +116,22 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - test.vayutransfer.com deploys develop branch (Vercel preview, public access, same AWS infra)
 - AI chatbot: Phase 1 system prompt approach (no RAG/vector DB). Phase 2 (lightweight RAG with embeddings in S3) if needed later.
 - Chatbot model: Claude 3 Haiku (anthropic.claude-3-haiku-20240307-v1:0). Mumbai has Claude Haiku 4.5 — confirm exact model ID from Bedrock console to upgrade.
+- VayuStudios billing kept in fully separate files/tables from VayuTransfer's wallet (studio-prefixed paths, `vayustudio-transactions`/`vayustudio-usage` tables) — same Razorpay merchant account/keys reused since it's one business, but no shared runtime code
+- VayuStudios free baseline: 20GB storage (standing balance) + 2GB downloads/month (resets monthly), same for every studio regardless of `plan` field (plan stays cosmetic for now)
+- Storage top-ups are time-bound grants ("N GB for M months"), not open-ended — keeps one-time payments profitable against AWS's recurring storage cost. Download top-ups are one-time (downloads don't persist)
+- Storage overage policy: configurable grace period (default 25 days) with 3 reminder emails, then oldest-projects-first auto-delete via daily Vercel cron (`app/studio/api/cron/storage-check`) — never merges/auto-renews, always requires the studio to top up
+- `Studio.billableStorageBytes` is the new live, delete-aware storage metric (used for billing); `storageUsedBytes` stays untouched as the historical "Total Upload Size" dashboard stat
+- Must run `npm run backfill:billable-storage` (dry run) then `-- --apply` once against production before enabling quota enforcement live — seeds `billableStorageBytes` for studios that existed before this feature
 
 ### Next Session Priorities
-1. Razorpay live keys (when account approved)
-2. SNS production access request (submit to AWS — needed for client OTP SMS)
-3. Watermark Lambda — build real implementation (currently placeholder, marks files READY in dev)
-4. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
-5. Test full VayuTransfer upload → download flow on production with real Google account
+1. Verify VayuStudios billing on test.vayustudios.com: trigger a storage + download top-up with Razorpay test cards, confirm PDF receipt email arrives, confirm dashboard quota numbers update
+2. Manually invoke `/studio/api/cron/storage-check` against a test studio pushed over quota — verify reminder emails at the right intervals and correct oldest-first deletion
+3. Run `npm run backfill:billable-storage` (dry run first) against production once test-mode verification above is done, before merging billing feature to main
+4. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
+5. SNS production access request (submit to AWS — needed for client OTP SMS)
+6. Watermark Lambda — build real implementation (currently placeholder, marks files READY in dev)
+7. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
+8. Test full VayuTransfer upload → download flow on production with real Google account
 
 ---
 

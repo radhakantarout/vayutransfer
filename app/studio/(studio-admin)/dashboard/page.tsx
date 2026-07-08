@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { StudioProject } from '@/types/studio'
+import StudioTopupModal from '@/components/studio/StudioTopupModal'
+import { RETENTION_GRACE_DAY_OPTIONS } from '@/constants/studioPricing'
 
 const STATUS_COLOR: Record<string, string> = {
   DRAFT:              'bg-border/60 text-muted',
@@ -44,11 +46,54 @@ function StatCard({
   )
 }
 
+function UsageCard({
+  label, usedBytes, quotaBytes, onTopUp,
+}: { label: string; usedBytes: number; quotaBytes: number; onTopUp: () => void }) {
+  const pct = quotaBytes > 0 ? Math.min(100, (usedBytes / quotaBytes) * 100) : 0
+  const over = usedBytes > quotaBytes
+  return (
+    <div className={`bg-card border rounded-2xl px-5 py-4 space-y-2 ${over ? 'border-danger/30' : 'border-border'}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted">{label}</span>
+        <button onClick={onTopUp} className="text-xs font-semibold text-accent hover:underline">Top up</button>
+      </div>
+      <div className="text-lg font-extrabold text-text-primary">
+        {fmtBytes(usedBytes)} <span className="text-sm font-medium text-muted">/ {fmtBytes(quotaBytes)}</span>
+      </div>
+      <div className="h-1.5 bg-border rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${over ? 'bg-danger' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  )
+}
+
+interface BillingStats {
+  storageUsedBytes: number
+  storageGrantBytes: number
+  storageOverQuota: boolean
+  storageOverageStartedAt: string | null
+  dataRetentionGraceDays: number
+  downloadUsedBytes: number
+  downloadQuotaBytes: number
+}
+
 export default function DashboardPage() {
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [studioName, setStudioName]     = useState('')
   const [storageBytes, setStorageBytes] = useState(0)
+  const [billing, setBilling]           = useState<BillingStats | null>(null)
   const [loading, setLoading]           = useState(true)
+  const [topupKind, setTopupKind]       = useState<'storage' | 'download' | null>(null)
+
+  const loadStats = () => {
+    fetch('/studio/api/admin/stats').then((r) => r.json()).then((sRes) => {
+      if (sRes.success) {
+        setStudioName(sRes.data.studioName)
+        setStorageBytes(sRes.data.storageUsedBytes ?? 0)
+        setBilling(sRes.data.billing ?? null)
+      }
+    })
+  }
 
   useEffect(() => {
     Promise.all([
@@ -59,6 +104,7 @@ export default function DashboardPage() {
       if (sRes.success) {
         setStudioName(sRes.data.studioName)
         setStorageBytes(sRes.data.storageUsedBytes ?? 0)
+        setBilling(sRes.data.billing ?? null)
       }
     }).finally(() => setLoading(false))
   }, [])
@@ -103,9 +149,77 @@ export default function DashboardPage() {
         <StatCard label="Completed"       value={completed}                                                  />
         <StatCard label="Photos Uploaded" value={totalPhotos}                                                />
         <StatCard label="Need Edits"      value={needEdits}  warn={needEdits > 0}                           />
-        <StatCard label="Storage Used"    value={fmtBytes(storageBytes)} sub="across all projects"          />
+        <StatCard label="Total Upload Size" value={fmtBytes(storageBytes)} sub="lifetime, never decreases"  />
         <StatCard label="Clients"         value={clients}                                                    />
       </div>
+
+      {/* Billing — storage quota & downloads this month */}
+      {billing && (
+        <div className="space-y-3">
+          {billing.storageOverQuota && (
+            <div className="bg-danger/10 border border-danger/30 rounded-2xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-sm font-bold text-danger">Storage over limit</p>
+                <p className="text-xs text-muted mt-0.5">
+                  Top up now to avoid your oldest photos being automatically removed
+                  ({billing.dataRetentionGraceDays}-day grace period from when the limit was first crossed).
+                </p>
+              </div>
+              <button onClick={() => setTopupKind('storage')}
+                className="bg-danger text-white text-xs font-bold px-4 py-2 rounded-xl hover:bg-danger/90 transition-colors flex-shrink-0">
+                Top up storage
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <UsageCard
+              label="Storage Quota"
+              usedBytes={billing.storageUsedBytes}
+              quotaBytes={billing.storageGrantBytes}
+              onTopUp={() => setTopupKind('storage')}
+            />
+            <UsageCard
+              label="Downloads This Month"
+              usedBytes={billing.downloadUsedBytes}
+              quotaBytes={billing.downloadQuotaBytes}
+              onTopUp={() => setTopupKind('download')}
+            />
+          </div>
+
+          <div className="bg-card border border-border rounded-2xl px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs font-medium text-text-primary">Data retention grace period</p>
+              <p className="text-[11px] text-muted mt-0.5">How long you get to top up before over-limit photos are auto-removed, oldest first.</p>
+            </div>
+            <select
+              value={billing.dataRetentionGraceDays}
+              onChange={async (e) => {
+                const days = Number(e.target.value)
+                setBilling((b) => b ? { ...b, dataRetentionGraceDays: days } : b)
+                await fetch('/studio/api/admin/retention', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ days }),
+                })
+              }}
+              className="bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
+            >
+              {RETENTION_GRACE_DAY_OPTIONS.map((d) => (
+                <option key={d} value={d}>{d} days</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {topupKind && (
+        <StudioTopupModal
+          kind={topupKind}
+          onClose={() => setTopupKind(null)}
+          onSuccess={() => { setTopupKind(null); loadStats() }}
+        />
+      )}
 
       {/* Recent activity */}
       {recent.length > 0 && (
