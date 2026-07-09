@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
+import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -49,8 +49,8 @@ export async function GET(
     const enriched = await Promise.all(
       files.map(async (f) => {
         if (f.processingStatus !== 'READY') return f
-        const previewUrl = await resolveMediaPreviewUrl(f)
-        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!f.editedS3Key }
+        const previewUrl = await getMediaPreviewUrl(f)
+        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
       })
     )
 

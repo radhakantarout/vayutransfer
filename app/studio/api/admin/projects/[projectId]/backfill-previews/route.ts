@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import type { MediaFile, Studio } from '@/types/studio'
+import { TABLES } from '@/lib/studio/dynamodb'
+import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
+import type { MediaFile } from '@/types/studio'
 
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
-const ddb    = DynamoDBDocumentClient.from(
+const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 )
 
@@ -27,9 +26,6 @@ export async function POST(
 
     const { projectId } = params
     const studioId = auth.studioId!
-
-    // Fetch studio for logo key
-    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
 
     // Query all READY IMAGE files without r2PreviewUrl
     const res = await ddb.send(new QueryCommand({
@@ -56,29 +52,16 @@ export async function POST(
     let queued = 0
     await Promise.all(
       files.map(async (f) => {
-        const payload = {
-          fileId:           f.fileId,
-          projectId,
-          studioId,
-          s3Bucket:         process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
-          s3Key:            f.s3Key,
-          r2Bucket:         process.env.STUDIO_R2_BUCKET ?? 'vayustudio-previews-test',
-          r2Key:            `studios/${studioId}/projects/${projectId}/previews/${f.fileId}.jpg`,
-          r2Endpoint:       process.env.STUDIO_R2_ENDPOINT,
-          r2AccessKeyId:    process.env.R2_ACCESS_KEY_ID,
-          r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-          studioName:       studio?.name ?? 'Studio',
-          logoS3Key:        studio?.brandingConfig?.logoS3Key ?? null,
-          watermarkEnabled: f.watermarkEnabled ?? true,
-          fileType:         f.fileType,
-        }
-
         try {
-          await lambda.send(new InvokeCommand({
-            FunctionName:   process.env.WATERMARK_LAMBDA_ARN,
-            InvocationType: 'Event',  // async — don't wait for result
-            Payload:        Buffer.from(JSON.stringify(payload)),
-          }))
+          await invokeStudioWatermarkLambda({
+            fileId: f.fileId,
+            projectId,
+            studioId,
+            sourceKey: f.r2Key ?? f.s3Key!,
+            sourceBackend: f.r2Key ? 'R2' : 'S3',
+            watermarkEnabled: f.watermarkEnabled ?? true,
+            fileType: f.fileType,
+          })
           queued++
         } catch (err) {
           console.error(`[backfill-previews] failed to invoke for ${f.fileId}:`, err)

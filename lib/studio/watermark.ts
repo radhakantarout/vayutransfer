@@ -8,7 +8,11 @@ interface WatermarkSource {
   fileId: string
   projectId: string
   studioId: string
-  s3Key: string
+  sourceKey: string
+  // Which backend sourceKey actually lives on — S3 uses the Lambda's own IAM
+  // role (no credentials needed in the payload), R2 needs explicit credentials
+  // since it isn't AWS-IAM-integrated.
+  sourceBackend: 'S3' | 'R2'
   watermarkEnabled: boolean
   fileType: string
   // Distinguishes a re-generated preview (e.g. after an edited re-upload)
@@ -28,8 +32,17 @@ export async function invokeStudioWatermarkLambda(source: WatermarkSource): Prom
     fileId: source.fileId,
     projectId: source.projectId,
     studioId: source.studioId,
+    sourceBackend: source.sourceBackend,
+    // S3 source — Lambda reads via its own IAM role.
     s3Bucket: process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
-    s3Key: source.s3Key,
+    // R2 source — separate bucket/credentials from the destination preview
+    // bucket below (originals stay private, previews are public/CDN-cached).
+    sourceR2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
+    sourceR2Endpoint: process.env.STUDIO_R2_ENDPOINT,
+    sourceR2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
+    sourceR2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
+    sourceKey: source.sourceKey,
+    // Destination preview bucket — always R2, unchanged regardless of source backend.
     r2Bucket: process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews',
     r2Key: `studios/${source.studioId}/projects/${source.projectId}/previews/${previewFilename}.jpg`,
     r2Endpoint: process.env.STUDIO_R2_ENDPOINT,

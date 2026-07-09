@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   studioScanTable, studioQueryByPK, studioUpdateItem, studioDeleteItem, TABLES,
 } from '@/lib/studio/dynamodb'
-import { deleteStudioS3Object } from '@/lib/studio/s3'
+import { deleteMediaObjects } from '@/lib/studio/storage'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota } from '@/lib/studio/usage'
@@ -43,7 +43,7 @@ async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<numb
       studioQueryByPK<Selection>(TABLES.selections, 'projectId', project.projectId),
     ])
 
-    await Promise.all(mediafiles.map((f) => deleteStudioS3Object(f.s3Key).catch((e) => console.error('[storage-check] s3 delete', e))))
+    await Promise.all(mediafiles.map((f) => deleteMediaObjects(f)))
     await Promise.all([
       ...mediafiles.map((f) => studioDeleteItem(TABLES.mediafiles, { projectId: project.projectId, fileId: f.fileId })),
       ...selections.map((s) => studioDeleteItem(TABLES.selections, { projectId: project.projectId, fileId: s.fileId })),

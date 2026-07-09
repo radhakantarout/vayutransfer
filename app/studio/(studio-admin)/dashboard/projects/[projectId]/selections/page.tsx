@@ -59,15 +59,15 @@ export default function SelectionsPage() {
       ).then((r) => r.json())
 
       if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
-      const { presignedUrl, editedS3Key } = initRes.data
+      const { presignedUrl, editedR2Key } = initRes.data
 
-      // 2. PUT directly to S3
+      // 2. PUT directly to R2
       const xhr = new XMLHttpRequest()
       await new Promise<void>((resolve, reject) => {
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) setUploadState(fileId, { progress: Math.round((e.loaded / e.total) * 100) })
         }
-        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 PUT ${xhr.status}`)))
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`R2 PUT ${xhr.status}`)))
         xhr.onerror = () => reject(new Error('Network error'))
         xhr.open('PUT', presignedUrl)
         xhr.setRequestHeader('Content-Type', file.type)
@@ -80,14 +80,14 @@ export default function SelectionsPage() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ editedS3Key }),
+          body: JSON.stringify({ editedR2Key }),
         }
       ).then((r) => r.json())
 
       if (!completeRes.success) throw new Error('Failed to confirm upload')
 
       setUploadState(fileId, { status: 'done', progress: 100 })
-      // Refresh list to reflect editedS3Key
+      // Refresh list to reflect editedR2Key
       load()
     } catch (err) {
       setUploadState(fileId, { status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
@@ -124,7 +124,7 @@ export default function SelectionsPage() {
 
   const needsEditing  = items.filter((i) => i.selection.editingRequired)
   const noEditNeeded  = items.filter((i) => !i.selection.editingRequired)
-  const editsDoneCount = needsEditing.filter((i) => !!i.file.editedS3Key || uploadStates.get(i.file.fileId)?.status === 'done').length
+  const editsDoneCount = needsEditing.filter((i) => !!(i.file.editedS3Key || i.file.editedR2Key) || uploadStates.get(i.file.fileId)?.status === 'done').length
 
   if (loading) return (
     <div className="flex justify-center py-20">
@@ -161,7 +161,7 @@ export default function SelectionsPage() {
           <div className="space-y-3">
             {needsEditing.map(({ selection, file }) => {
               const upState = uploadStates.get(file.fileId) ?? { status: 'idle', progress: 0 }
-              const isEditedDone = !!file.editedS3Key || upState.status === 'done'
+              const isEditedDone = !!(file.editedS3Key || file.editedR2Key) || upState.status === 'done'
               return (
                 <div key={file.fileId} className="bg-card border border-border rounded-2xl p-4 flex gap-4">
                   {/* Thumbnail */}

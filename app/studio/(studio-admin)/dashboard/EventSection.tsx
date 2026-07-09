@@ -6,12 +6,70 @@ import QRCode from 'qrcode'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 import EditEventModal from './EditEventModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
+import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 
 const CHUNK_SIZE = 50 * 1024 * 1024
+const MAX_PART_RETRIES = 3
 
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
+}
+
+type PartRecord = { PartNumber: number; ETag: string }
+
+// Retries a transient network blip (common on slow connections) before
+// giving up on this part — most failures resolve within 1-2 retries without
+// the user ever needing to notice or manually resume.
+async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { method: 'PUT', body: chunk })
+      if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
+      return res.headers.get('ETag') ?? ''
+    } catch (err) {
+      lastErr = err
+      if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Part upload failed')
+}
+
+// Resumes a previously interrupted upload if the same file (matched by
+// name+size+lastModified — the only thing stable across a browser refresh)
+// was seen before and the server still has that multipart upload alive.
+// Falls back to starting fresh whenever resume can't be verified server-side.
+async function initOrResumeUpload(
+  projectId: string,
+  file: File,
+  partCount: number
+): Promise<{ fileId: string; uploadId: string; presignedUrls: string[]; completedParts: PartRecord[] }> {
+  const existing = loadUploadResume(projectId, file.name, file.size, file.lastModified)
+  if (existing) {
+    const statusRes = await fetch(
+      `/studio/api/admin/projects/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`
+    ).then((r) => r.json()).catch(() => null)
+    if (statusRes?.success) {
+      return {
+        fileId: existing.fileId,
+        uploadId: existing.uploadId,
+        presignedUrls: statusRes.data.presignedUrls,
+        completedParts: statusRes.data.completedParts,
+      }
+    }
+    clearUploadResume(projectId, file.name, file.size, file.lastModified)
+  }
+
+  const initRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
+  }).then((r) => r.json())
+  if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
+  const { fileId, uploadId, presignedUrls } = initRes.data
+  saveUploadResume({ projectId, fileId, uploadId, filename: file.name, size: file.size, lastModified: file.lastModified })
+  return { fileId, uploadId, presignedUrls, completedParts: [] }
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -336,14 +394,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, mimeType: file.type }) }
       ).then(r => r.json())
       if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
-      const { presignedUrl, editedS3Key } = initRes.data
+      const { presignedUrl, editedR2Key } = initRes.data
 
       const xhr = new XMLHttpRequest()
       await new Promise<void>((resolve, reject) => {
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) setEditUploadState(fileId, { progress: Math.round((e.loaded / e.total) * 100) })
         }
-        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 PUT ${xhr.status}`)))
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`R2 PUT ${xhr.status}`)))
         xhr.onerror = () => reject(new Error('Network error'))
         xhr.open('PUT', presignedUrl)
         xhr.setRequestHeader('Content-Type', file.type)
@@ -352,7 +410,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
       const completeRes = await fetch(
         `/studio/api/admin/projects/${project.projectId}/files/${fileId}/upload-edited-complete`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedS3Key }) }
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedR2Key }) }
       ).then(r => r.json())
       if (!completeRes.success) throw new Error('Failed to confirm upload')
 
@@ -424,28 +482,35 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     update({ status: 'uploading', progress: 0 })
     const partCount = Math.ceil(file.size / CHUNK_SIZE)
     try {
-      const initRes = await fetch(`/studio/api/admin/projects/${project.projectId}/upload-url`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
-      }).then(r => r.json())
-      if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
-      const { fileId, uploadId, presignedUrls } = initRes.data
-      const parts: { PartNumber: number; ETag: string }[] = []
+      // Resumes from a previous attempt if the same file was seen before
+      // and the server still has that upload alive.
+      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(project.projectId, file, partCount)
+      const parts: PartRecord[] = []
       for (let i = 0; i < partCount; i++) {
-        const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-        const res   = await fetch(presignedUrls[i], { method: 'PUT', body: chunk })
-        parts.push({ PartNumber: i + 1, ETag: res.headers.get('ETag') ?? '' })
-        update({ progress: Math.round(((i + 1) / partCount) * 100), uploadedBytes: Math.min((i + 1) * CHUNK_SIZE, file.size) })
+        const partNumber = i + 1
+        const already = completedParts.find(p => p.PartNumber === partNumber)
+        if (already) {
+          parts.push(already)
+        } else {
+          const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+          const etag  = await uploadPartWithRetry(presignedUrls[i], chunk)
+          parts.push({ PartNumber: partNumber, ETag: etag })
+        }
+        update({ progress: Math.round((parts.length / partCount) * 100), uploadedBytes: Math.min(parts.length * CHUNK_SIZE, file.size) })
       }
       const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
       }).then(r => r.json())
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
+      clearUploadResume(project.projectId, file.name, file.size, file.lastModified)
       update({ status: 'done', progress: 100, uploadedBytes: file.size })
       loadFiles(); onUpdated()
     } catch (err) {
-      update({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
+      update({
+        status: 'error',
+        error: (err instanceof Error ? err.message : 'Upload failed') + ' — re-select the same file to resume',
+      })
     }
   }
 
@@ -1143,12 +1208,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     <p className="text-sm font-semibold text-text-primary">
                       ✏️ Needs Editing
                       <span className="text-xs text-muted font-normal ml-2">
-                        ({selItems.filter(i => i.selection.editingRequired && (!!i.file.editedS3Key || editUploadStates.get(i.file.fileId)?.status === 'done')).length}/{selItems.filter(i => i.selection.editingRequired).length} done)
+                        ({selItems.filter(i => i.selection.editingRequired && (!!(i.file.editedS3Key || i.file.editedR2Key) || editUploadStates.get(i.file.fileId)?.status === 'done')).length}/{selItems.filter(i => i.selection.editingRequired).length} done)
                       </span>
                     </p>
                     {selItems.filter(i => i.selection.editingRequired).map(({ selection, file }) => {
                       const upState = editUploadStates.get(file.fileId) ?? { status: 'idle' as const, progress: 0 }
-                      const isEditedDone = !!file.editedS3Key || upState.status === 'done'
+                      const isEditedDone = !!(file.editedS3Key || file.editedR2Key) || upState.status === 'done'
                       return (
                         <div key={file.fileId} className="bg-bg border border-border rounded-xl p-3 flex gap-3">
                           <div className="w-16 h-16 rounded-lg overflow-hidden bg-card border border-border flex-shrink-0">

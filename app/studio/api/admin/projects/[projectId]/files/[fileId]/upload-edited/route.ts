@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioEditedS3Key, getStudioEditedPresignedPutUrl } from '@/lib/studio/s3'
+import { getStudioR2EditedKey, getStudioR2EditedPresignedPutUrl } from '@/lib/studio/r2'
 import type { MediaFile } from '@/types/studio'
 
 export async function POST(
@@ -26,10 +26,12 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    const editedS3Key = getStudioEditedS3Key(file.studioId, projectId, fileId, filename)
-    const presignedUrl = await getStudioEditedPresignedPutUrl(editedS3Key, mimeType)
+    // Edited re-uploads always go to R2 going forward, regardless of which
+    // backend the original file happens to be on.
+    const editedR2Key = getStudioR2EditedKey(file.studioId, projectId, fileId, filename)
+    const presignedUrl = await getStudioR2EditedPresignedPutUrl(editedR2Key, mimeType)
 
-    return NextResponse.json({ success: true, data: { presignedUrl, editedS3Key } })
+    return NextResponse.json({ success: true, data: { presignedUrl, editedR2Key } })
   } catch (err) {
     console.error('[upload-edited POST]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })

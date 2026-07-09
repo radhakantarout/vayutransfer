@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { completeStudioMultipartUpload, abortStudioMultipartUpload } from '@/lib/studio/s3'
+import { completeStudioR2MultipartUpload, abortStudioR2MultipartUpload } from '@/lib/studio/r2'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
 import type { MediaFile } from '@/types/studio'
 
@@ -28,11 +28,15 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // Complete S3 multipart upload
+    // upload-url always creates new records on R2 — this route only ever
+    // completes a freshly-initiated upload, never an old S3 one.
+    if (!mediaFile.r2Key) {
+      return NextResponse.json({ success: false, error: 'INVALID_STATE', message: 'Missing r2Key' }, { status: 500 })
+    }
     try {
-      await completeStudioMultipartUpload(mediaFile.s3Key, uploadId, parts)
+      await completeStudioR2MultipartUpload(mediaFile.r2Key, uploadId, parts)
     } catch (err) {
-      await abortStudioMultipartUpload(mediaFile.s3Key, uploadId).catch(() => {})
+      await abortStudioR2MultipartUpload(mediaFile.r2Key, uploadId).catch(() => {})
       throw err
     }
 
@@ -80,7 +84,8 @@ export async function POST(
       fileId,
       projectId,
       studioId,
-      s3Key: mediaFile.s3Key,
+      sourceKey: mediaFile.r2Key,
+      sourceBackend: 'R2',
       watermarkEnabled: mediaFile.watermarkEnabled,
       fileType: mediaFile.fileType,
     }).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))

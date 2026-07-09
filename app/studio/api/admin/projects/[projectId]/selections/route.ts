@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
+import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { Selection, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -55,7 +55,7 @@ export async function GET(
     // (the cached R2 preview only ever reflects the original upload)
     const enriched = await Promise.all(
       selected.map(async ({ selection, file }) => {
-        const previewUrl = await resolveMediaPreviewUrl(file)
+        const previewUrl = await getMediaPreviewUrl(file)
         return { selection, file: { ...file, r2PreviewUrl: previewUrl } }
       })
     )
