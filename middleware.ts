@@ -5,7 +5,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
 // Shared pages that live outside /studio but must still be reachable on the studio app domain
-const SHARED_PAGES = new Set(['/privacy', '/terms'])
+const SHARED_PAGES = new Set(['/privacy', '/terms', '/robots.txt', '/sitemap.xml'])
 
 export async function middleware(request: NextRequest) {
   // x-studio-subdomain is set by the Cloudflare Worker that proxies *.vayustudios.com
