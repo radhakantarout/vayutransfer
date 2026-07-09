@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, EventType } from '@/types/studio'
+import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 
 const CHUNK_SIZE = 50 * 1024 * 1024 // 50MB
+const MAX_PART_RETRIES = 3
 
 interface UploadItem {
   id: string
@@ -13,6 +15,62 @@ interface UploadItem {
   progress: number
   status: 'queued' | 'uploading' | 'done' | 'error'
   error?: string
+}
+
+type PartRecord = { PartNumber: number; ETag: string }
+
+// Retries a transient network blip (common on slow connections) before
+// giving up on this part — most failures resolve within 1-2 retries without
+// the user ever needing to notice or manually resume.
+async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { method: 'PUT', body: chunk })
+      if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
+      return res.headers.get('ETag') ?? ''
+    } catch (err) {
+      lastErr = err
+      if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Part upload failed')
+}
+
+// Resumes a previously interrupted upload if the same file (matched by
+// name+size+lastModified — the only thing stable across a browser refresh)
+// was seen before and the server still has that multipart upload alive.
+// Falls back to starting fresh whenever resume can't be verified server-side.
+async function initOrResumeUpload(
+  projectId: string,
+  file: File,
+  partCount: number
+): Promise<{ fileId: string; uploadId: string; presignedUrls: string[]; completedParts: PartRecord[] }> {
+  const existing = loadUploadResume(projectId, file.name, file.size, file.lastModified)
+  if (existing) {
+    const statusRes = await fetch(
+      `/studio/api/admin/projects/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`
+    ).then((r) => r.json()).catch(() => null)
+    if (statusRes?.success) {
+      return {
+        fileId: existing.fileId,
+        uploadId: existing.uploadId,
+        presignedUrls: statusRes.data.presignedUrls,
+        completedParts: statusRes.data.completedParts,
+      }
+    }
+    clearUploadResume(projectId, file.name, file.size, file.lastModified)
+  }
+
+  const initRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
+  }).then((r) => r.json())
+  if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
+  const { fileId, uploadId, presignedUrls } = initRes.data
+  saveUploadResume({ projectId, fileId, uploadId, filename: file.name, size: file.size, lastModified: file.lastModified })
+  return { fileId, uploadId, presignedUrls, completedParts: [] }
 }
 
 interface EditForm {
@@ -90,26 +148,26 @@ export default function ProjectDetailPage() {
     const partCount = Math.ceil(file.size / CHUNK_SIZE)
 
     try {
-      // 1. Get presigned URLs
-      const initRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
-      }).then((r) => r.json())
-
-      if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
-      const { fileId, uploadId, presignedUrls } = initRes.data
+      // 1. Get presigned URLs — resumes from a previous attempt if the same
+      // file was seen before and the server still has that upload alive.
+      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(projectId, file, partCount)
       update({ fileId })
 
-      // 2. Upload parts
-      const parts: { PartNumber: number; ETag: string }[] = []
+      // 2. Upload parts — skip any already confirmed by the server, retry
+      // transient failures on the rest before giving up.
+      const parts: PartRecord[] = []
       for (let i = 0; i < partCount; i++) {
-        const start = i * CHUNK_SIZE
-        const chunk = file.slice(start, start + CHUNK_SIZE)
-        const res = await fetch(presignedUrls[i], { method: 'PUT', body: chunk })
-        const etag = res.headers.get('ETag') ?? ''
-        parts.push({ PartNumber: i + 1, ETag: etag })
-        update({ progress: Math.round(((i + 1) / partCount) * 100) })
+        const partNumber = i + 1
+        const already = completedParts.find((p) => p.PartNumber === partNumber)
+        if (already) {
+          parts.push(already)
+        } else {
+          const start = i * CHUNK_SIZE
+          const chunk = file.slice(start, start + CHUNK_SIZE)
+          const etag = await uploadPartWithRetry(presignedUrls[i], chunk)
+          parts.push({ PartNumber: partNumber, ETag: etag })
+        }
+        update({ progress: Math.round((parts.length / partCount) * 100) })
       }
 
       // 3. Complete
@@ -120,10 +178,14 @@ export default function ProjectDetailPage() {
       }).then((r) => r.json())
 
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
+      clearUploadResume(projectId, file.name, file.size, file.lastModified)
       update({ status: 'done', progress: 100 })
       refreshFiles()
     } catch (err) {
-      update({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
+      update({
+        status: 'error',
+        error: (err instanceof Error ? err.message : 'Upload failed') + ' — re-select the same file to resume',
+      })
     }
   }
 

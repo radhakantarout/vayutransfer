@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
+  ListPartsCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -87,6 +88,30 @@ export async function completeStudioR2MultipartUpload(
 
 export async function abortStudioR2MultipartUpload(r2Key: string, uploadId: string): Promise<void> {
   await studioR2.send(new AbortMultipartUploadCommand({ Bucket: STUDIO_R2_ORIGINAL_BUCKET, Key: r2Key, UploadId: uploadId }))
+}
+
+// Server-side source of truth for which parts an in-progress multipart
+// upload actually has, used to resume an interrupted upload safely instead
+// of trusting the client's local state blindly.
+export async function listStudioR2Parts(
+  r2Key: string,
+  uploadId: string
+): Promise<{ PartNumber: number; ETag: string }[]> {
+  const parts: { PartNumber: number; ETag: string }[] = []
+  let partNumberMarker: string | undefined
+  do {
+    const res = await studioR2.send(new ListPartsCommand({
+      Bucket: STUDIO_R2_ORIGINAL_BUCKET,
+      Key: r2Key,
+      UploadId: uploadId,
+      PartNumberMarker: partNumberMarker,
+    }))
+    for (const p of res.Parts ?? []) {
+      if (p.PartNumber != null && p.ETag) parts.push({ PartNumber: p.PartNumber, ETag: p.ETag })
+    }
+    partNumberMarker = res.IsTruncated ? res.NextPartNumberMarker : undefined
+  } while (partNumberMarker)
+  return parts
 }
 
 export async function deleteStudioR2Object(key: string): Promise<void> {
