@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import JSZip from 'jszip'
 import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioObjectBuffer } from '@/lib/studio/s3'
+import { getMediaObjectBuffer } from '@/lib/studio/storage'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 
 // Give zip assembly room to run for larger batches (Vercel default is 10s on Hobby).
@@ -54,8 +54,7 @@ export async function GET(
     const zip = new JSZip()
     const usedNames = new Set<string>()
     for (const f of selectedFiles) {
-      const s3Key = f.editedS3Key ?? f.s3Key
-      const buffer = await getStudioObjectBuffer(s3Key)
+      const buffer = await getMediaObjectBuffer(f)
       const name = uniqueFilename(f.originalFilename, f.fileId, usedNames)
       usedNames.add(name)
       zip.file(name, buffer)

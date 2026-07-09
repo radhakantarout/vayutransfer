@@ -98,7 +98,9 @@ export interface MediaFile {
   fileType: 'IMAGE' | 'VIDEO'
   mimeType: string
   sizeBytes: number
-  s3Key: string
+  // Optional now that new uploads write to R2 instead — a file has exactly
+  // one of s3Key or r2Key set, never neither. See storageBackend below.
+  s3Key?: string
   r2PreviewKey?: string
   r2PreviewUrl?: string
   editedS3Key?: string
@@ -106,6 +108,16 @@ export interface MediaFile {
   displayOrder: number
   uploadedAt: string
   processingStatus: ProcessingStatus
+  // S3 -> Cloudflare R2 originals migration (zero-downtime: absent/"S3" means
+  // read s3Key/editedS3Key from AWS S3 as before; "R2" means read r2Key/
+  // editedR2Key from Cloudflare R2 instead). Only ever set explicitly for the
+  // ORIGINAL file — the current-best-copy resolver in lib/studio/storage.ts
+  // infers the edited copy's backend independently from which edited key is
+  // populated, since an edit can be uploaded on R2 even if the original is
+  // still on S3.
+  storageBackend?: 'S3' | 'R2'
+  r2Key?: string
+  editedR2Key?: string
   // Phase 2 — face indexing
   faceIds?: string[]
   faceCount?: number

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import { initiateStudioMultipartUpload, getStudioPartPresignedUrls, getStudioS3Key } from '@/lib/studio/s3'
+import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2Key } from '@/lib/studio/r2'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function POST(
@@ -37,10 +37,12 @@ export async function POST(
     const studioId = auth.studioId!
     const fileId = randomUUID()
     const fileType = mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE'
-    const s3Key = getStudioS3Key(studioId, projectId, fileId, filename)
+    // New uploads go to R2 — old S3 files (storageBackend absent/'S3') are
+    // untouched and keep being served from S3 forever.
+    const r2Key = getStudioR2Key(studioId, projectId, fileId, filename)
 
-    const uploadId = await initiateStudioMultipartUpload(s3Key, mimeType)
-    const presignedUrls = await getStudioPartPresignedUrls(s3Key, uploadId, partCount)
+    const uploadId = await initiateStudioR2MultipartUpload(r2Key, mimeType)
+    const presignedUrls = await getStudioR2PartPresignedUrls(r2Key, uploadId, partCount)
 
     const now = new Date().toISOString()
     const mediaFile: MediaFile = {
@@ -51,7 +53,8 @@ export async function POST(
       fileType,
       mimeType,
       sizeBytes,
-      s3Key,
+      storageBackend: 'R2',
+      r2Key,
       watermarkEnabled: true,
       displayOrder: Date.now(),
       uploadedAt: now,
@@ -60,9 +63,12 @@ export async function POST(
 
     await studioPutItem(TABLES.mediafiles, mediaFile as unknown as Record<string, unknown>)
 
+    // r2Key deliberately not in the response — client never needs it (only
+    // fileId/uploadId/presignedUrls), and per the golden security rule R2/S3
+    // keys should never leave the server.
     return NextResponse.json({
       success: true,
-      data: { fileId, uploadId, s3Key, presignedUrls },
+      data: { fileId, uploadId, presignedUrls },
     })
   } catch (err) {
     console.error('[upload-url]', err)

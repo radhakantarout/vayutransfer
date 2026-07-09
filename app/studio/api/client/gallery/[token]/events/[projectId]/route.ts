@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioGetItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { resolveMediaPreviewUrl } from '@/lib/studio/s3'
+import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -65,8 +65,8 @@ export async function GET(
     // cached preview from the original upload)
     const enriched = await Promise.all(
       readyFiles.map(async (f) => {
-        const previewUrl = await resolveMediaPreviewUrl(f)
-        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!f.editedS3Key }
+        const previewUrl = await getMediaPreviewUrl(f)
+        return { ...f, r2PreviewUrl: previewUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
       })
     )
 

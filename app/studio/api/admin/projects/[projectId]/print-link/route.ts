@@ -39,7 +39,7 @@ export async function POST(
     const pendingEdits = allSelections.filter((s) => {
       if (!s.isSelected || !s.editingRequired) return false
       const file = fileMap.get(s.fileId)
-      return !file?.editedS3Key
+      return !file?.editedS3Key && !file?.editedR2Key
     })
     if (pendingEdits.length > 0) {
       return NextResponse.json(

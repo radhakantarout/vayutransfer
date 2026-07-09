@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "type-check": "tsc --noEmit",
-    "backfill:billable-storage": "node --env-file=.env.local scripts/backfill-billable-storage.mjs"
+    "backfill:billable-storage": "node --env-file=.env.local scripts/backfill-billable-storage.mjs",
+    "backfill:storage-backend": "node --env-file=.env.local scripts/backfill-storage-backend.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",

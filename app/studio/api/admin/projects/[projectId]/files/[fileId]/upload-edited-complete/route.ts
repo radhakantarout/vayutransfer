@@ -14,8 +14,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { editedS3Key } = await req.json()
-    if (!editedS3Key) {
+    const { editedR2Key } = await req.json()
+    if (!editedR2Key) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
 
@@ -34,8 +34,8 @@ export async function POST(
       await studioUpdateItem(
         TABLES.mediafiles,
         { projectId, fileId },
-        'SET editedS3Key = :key, updatedAt = :now',
-        { ':key': editedS3Key, ':now': now }
+        'SET editedR2Key = :key, updatedAt = :now',
+        { ':key': editedR2Key, ':now': now }
       )
       return NextResponse.json({ success: true, data: { status: 'READY' } })
     }
@@ -47,15 +47,16 @@ export async function POST(
     await studioUpdateItem(
       TABLES.mediafiles,
       { projectId, fileId },
-      'SET editedS3Key = :key, processingStatus = :s, updatedAt = :now',
-      { ':key': editedS3Key, ':s': 'PROCESSING', ':now': now }
+      'SET editedR2Key = :key, processingStatus = :s, updatedAt = :now',
+      { ':key': editedR2Key, ':s': 'PROCESSING', ':now': now }
     )
 
     invokeStudioWatermarkLambda({
       fileId,
       projectId,
       studioId: file.studioId,
-      s3Key: editedS3Key,
+      sourceKey: editedR2Key,
+      sourceBackend: 'R2',
       watermarkEnabled: file.watermarkEnabled,
       fileType: file.fileType,
       previewKeySuffix: `edited-${Date.now()}`,

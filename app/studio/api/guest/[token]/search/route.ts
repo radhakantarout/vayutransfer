@@ -4,7 +4,7 @@ import { RekognitionClient, SearchFacesByImageCommand } from '@aws-sdk/client-re
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, BatchGetCommand } from '@aws-sdk/lib-dynamodb'
 import { TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedDownloadUrl, resolveMediaPreviewUrl } from '@/lib/studio/s3'
+import { getMediaDownloadUrl, getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { MediaFile } from '@/types/studio'
 
 const rek = new RekognitionClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -109,12 +109,11 @@ export async function POST(
     // download when one exists (never serve the stale original silently)
     const photos = await Promise.all(
       readyFiles.map(async f => {
-        const downloadKey = f.editedS3Key ?? f.s3Key
         const [previewUrl, downloadUrl] = await Promise.all([
-          resolveMediaPreviewUrl(f).then(u => u ?? ''),
-          getStudioSignedDownloadUrl(downloadKey, f.originalFilename).catch(() => ''),
+          getMediaPreviewUrl(f).then(u => u ?? ''),
+          getMediaDownloadUrl(f, f.originalFilename).catch(() => ''),
         ])
-        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl, isEdited: !!f.editedS3Key }
+        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
       })
     )
 

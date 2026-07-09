@@ -127,13 +127,20 @@ exports.handler = async (event) => {
 
   const {
     fileId, projectId,
+    // Legacy field names kept for backwards compat with any in-flight/queued
+    // invocations from before sourceKey/sourceBackend existed.
     s3Bucket, s3Key,
+    sourceBackend = 'S3',
+    sourceKey,
+    sourceR2Bucket, sourceR2Endpoint, sourceR2AccessKeyId, sourceR2SecretAccessKey,
     r2Bucket, r2Key, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     watermarkEnabled = true,
     fileType = 'IMAGE',
   } = event
 
-  if (!fileId || !projectId || !s3Key) {
+  const resolvedSourceKey = sourceKey ?? s3Key
+
+  if (!fileId || !projectId || !resolvedSourceKey) {
     console.error('[watermark] missing required fields')
     return { statusCode: 400, body: 'Missing required fields' }
   }
@@ -146,10 +153,23 @@ exports.handler = async (event) => {
   }
 
   try {
-    // ── 1. Download original from S3 (Lambda IAM role) ──────────────────────
-    console.log(`[watermark] download s3://${s3Bucket}/${s3Key}`)
-    const s3Obj  = await s3.send(new GetObjectCommand({ Bucket: s3Bucket, Key: s3Key }))
-    const origBuf = await streamToBuffer(s3Obj.Body)
+    // ── 1. Download original — S3 via the Lambda's own IAM role, or R2 via
+    // explicit credentials passed in the event (R2 isn't AWS-IAM-integrated) ──
+    let origBuf
+    if (sourceBackend === 'R2') {
+      console.log(`[watermark] download r2://${sourceR2Bucket}/${resolvedSourceKey}`)
+      const sourceR2 = new S3Client({
+        region: 'auto',
+        endpoint: sourceR2Endpoint,
+        credentials: { accessKeyId: sourceR2AccessKeyId, secretAccessKey: sourceR2SecretAccessKey },
+      })
+      const r2Obj = await sourceR2.send(new GetObjectCommand({ Bucket: sourceR2Bucket, Key: resolvedSourceKey }))
+      origBuf = await streamToBuffer(r2Obj.Body)
+    } else {
+      console.log(`[watermark] download s3://${s3Bucket}/${resolvedSourceKey}`)
+      const s3Obj = await s3.send(new GetObjectCommand({ Bucket: s3Bucket, Key: resolvedSourceKey }))
+      origBuf = await streamToBuffer(s3Obj.Body)
+    }
     console.log(`[watermark] downloaded ${origBuf.length} bytes`)
 
     // ── 2. Resize ─────────────────────────────────────────────────────────────

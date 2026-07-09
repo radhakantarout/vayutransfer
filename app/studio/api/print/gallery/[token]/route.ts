@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedDownloadUrl, resolveMediaPreviewUrl } from '@/lib/studio/s3'
+import { getMediaDownloadUrl, getMediaPreviewUrl } from '@/lib/studio/storage'
 // getStudioCloudFrontSignedUrl (lib/studio/s3.ts) is kept available but unused
-// here for now — direct S3 presigned URLs avoid the CloudFront distribution's
+// here for now — direct presigned URLs avoid the CloudFront distribution's
 // origin-bucket-per-environment config entirely. Swap back in later if CDN
 // acceleration for print-quality downloads becomes worth the config overhead.
 import { recordDownload } from '@/lib/studio/usage'
@@ -43,21 +43,20 @@ export async function GET(
 
     const expirySeconds = parseInt(process.env.PRINT_LINK_EXPIRY_SECONDS ?? '604800', 10)
 
-    // Generate direct S3 signed download URLs (same mechanism as every other
+    // Generate direct signed download URLs (same mechanism as every other
     // download path in this app) — edited version if available, else original
     const printFiles = await Promise.all(selectedFiles.map(async (f) => {
-      const s3Key    = f.editedS3Key ?? f.s3Key
-      const isEdited = !!f.editedS3Key
+      const isEdited = !!(f.editedS3Key || f.editedR2Key)
       let downloadUrl = ''
       try {
-        downloadUrl = await getStudioSignedDownloadUrl(s3Key, f.originalFilename, expirySeconds)
+        downloadUrl = await getMediaDownloadUrl(f, f.originalFilename, { expiresInSeconds: expirySeconds })
       } catch (err) {
-        console.error(`[print gallery] S3 signing failed for fileId=${f.fileId} s3Key=${s3Key}`, err)
+        console.error(`[print gallery] signing failed for fileId=${f.fileId}`, err)
         downloadUrl = ''
       }
       // The cached R2 preview only ever reflects the original upload — for
       // edited files, regenerate straight from the edited key.
-      const previewUrl = await resolveMediaPreviewUrl(f)
+      const previewUrl = await getMediaPreviewUrl(f)
       return {
         fileId:           f.fileId,
         originalFilename: f.originalFilename,

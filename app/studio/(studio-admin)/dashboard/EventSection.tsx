@@ -336,14 +336,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, mimeType: file.type }) }
       ).then(r => r.json())
       if (!initRes.success) throw new Error(initRes.message ?? 'Upload init failed')
-      const { presignedUrl, editedS3Key } = initRes.data
+      const { presignedUrl, editedR2Key } = initRes.data
 
       const xhr = new XMLHttpRequest()
       await new Promise<void>((resolve, reject) => {
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) setEditUploadState(fileId, { progress: Math.round((e.loaded / e.total) * 100) })
         }
-        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 PUT ${xhr.status}`)))
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`R2 PUT ${xhr.status}`)))
         xhr.onerror = () => reject(new Error('Network error'))
         xhr.open('PUT', presignedUrl)
         xhr.setRequestHeader('Content-Type', file.type)
@@ -352,7 +352,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
       const completeRes = await fetch(
         `/studio/api/admin/projects/${project.projectId}/files/${fileId}/upload-edited-complete`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedS3Key }) }
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedR2Key }) }
       ).then(r => r.json())
       if (!completeRes.success) throw new Error('Failed to confirm upload')
 
@@ -1143,12 +1143,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     <p className="text-sm font-semibold text-text-primary">
                       ✏️ Needs Editing
                       <span className="text-xs text-muted font-normal ml-2">
-                        ({selItems.filter(i => i.selection.editingRequired && (!!i.file.editedS3Key || editUploadStates.get(i.file.fileId)?.status === 'done')).length}/{selItems.filter(i => i.selection.editingRequired).length} done)
+                        ({selItems.filter(i => i.selection.editingRequired && (!!(i.file.editedS3Key || i.file.editedR2Key) || editUploadStates.get(i.file.fileId)?.status === 'done')).length}/{selItems.filter(i => i.selection.editingRequired).length} done)
                       </span>
                     </p>
                     {selItems.filter(i => i.selection.editingRequired).map(({ selection, file }) => {
                       const upState = editUploadStates.get(file.fileId) ?? { status: 'idle' as const, progress: 0 }
-                      const isEditedDone = !!file.editedS3Key || upState.status === 'done'
+                      const isEditedDone = !!(file.editedS3Key || file.editedR2Key) || upState.status === 'done'
                       return (
                         <div key={file.fileId} className="bg-bg border border-border rounded-xl p-3 flex gap-3">
                           <div className="w-16 h-16 rounded-lg overflow-hidden bg-card border border-border flex-shrink-0">

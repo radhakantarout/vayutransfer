@@ -11,9 +11,22 @@ const JOBS_TABLE         = process.env.DYNAMO_STUDIO_JOBS_TABLE     || 'vayustud
 const MEDIAFILES_TABLE   = process.env.DYNAMO_STUDIO_MEDIAFILES_TABLE || 'vayustudio-mediafiles'
 const STUDIOS_TABLE      = process.env.DYNAMO_STUDIO_STUDIOS_TABLE   || 'vayustudio-studios'
 const S3_BUCKET          = process.env.STUDIO_S3_BUCKET || 'vayutransfer-studio-originals'
+// R2 originals — this Lambda processes a batch of files per invocation
+// (queried from DynamoDB itself), each of which may independently be on S3
+// or R2, so credentials live in the Lambda's own env config rather than
+// being passed per-invoke like the single-file watermark Lambda does.
+const R2_BUCKET          = process.env.STUDIO_R2_ORIGINAL_BUCKET
+const R2_ENDPOINT        = process.env.STUDIO_R2_ENDPOINT
+const R2_ACCESS_KEY_ID   = process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID
+const R2_SECRET_ACCESS_KEY = process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY
 
 const rek = new RekognitionClient({ region: REGION })
 const s3  = new S3Client({ region: REGION })
+const r2  = new S3Client({
+  region: 'auto',
+  endpoint: R2_ENDPOINT,
+  credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+})
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -41,8 +54,13 @@ async function updateJob(jobId, patch) {
 // ─── index one file — returns face count detected ───────────────────────────
 
 async function indexFileFaces(projectId, file) {
-  const s3Obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: file.s3Key }))
-  const originalBuffer = await streamToBuffer(s3Obj.Body)
+  // A single project's photos can span both backends mid-migration — each
+  // file is read from wherever it actually lives, keyed off its own record.
+  const useR2 = file.storageBackend === 'R2' && file.r2Key
+  const obj = useR2
+    ? await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.r2Key }))
+    : await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: file.s3Key }))
+  const originalBuffer = await streamToBuffer(obj.Body)
 
   // Resize to 1200px max — well under 5 MB limit, good enough for detection
   const rekBuffer = await sharp(originalBuffer)

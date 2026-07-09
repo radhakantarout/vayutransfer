@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedDownloadUrl } from '@/lib/studio/s3'
+import { getMediaDownloadUrl } from '@/lib/studio/storage'
 import { recordDownload } from '@/lib/studio/usage'
 import type { MediaFile } from '@/types/studio'
 
@@ -27,12 +27,11 @@ export async function GET(
     // force the pristine file even after an edit exists — e.g. the studio
     // admin wants to redo the edit from scratch rather than build on the last one.
     const forceOriginal = req.nextUrl.searchParams.get('version') === 'original'
-    const s3Key    = forceOriginal ? file.s3Key : (file.editedS3Key ?? file.s3Key)
-    const isEdited = !forceOriginal && !!file.editedS3Key
+    const isEdited = !forceOriginal && !!(file.editedS3Key || file.editedR2Key)
     const suffix   = isEdited ? '_edited' : '_original'
     const filename = file.originalFilename.replace(/(\.[^.]+)$/, `${suffix}$1`)
 
-    const url = await getStudioSignedDownloadUrl(s3Key, filename)
+    const url = await getMediaDownloadUrl(file, filename, { original: forceOriginal })
     recordDownload(file.studioId, file.sizeBytes).catch((e) => console.error('[usage record]', e))
     return NextResponse.json({ success: true, data: { url, filename } })
   } catch (err) {

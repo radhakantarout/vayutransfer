@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import type { MediaFile, Studio } from '@/types/studio'
-
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
+import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
+import type { MediaFile } from '@/types/studio'
 
 // Re-invokes watermark processing for a file stuck in FAILED/UPLOADING — the
-// original bytes are already in S3 (upload-complete already ran), so this is
-// a safe retry with no re-upload needed. Mirrors upload-complete's invoke payload.
+// original bytes are already uploaded (upload-complete already ran), so this
+// is a safe retry with no re-upload needed. Mirrors upload-complete's invoke.
 export async function POST(
   req: NextRequest,
   { params }: { params: { projectId: string; fileId: string } }
@@ -46,30 +44,15 @@ export async function POST(
       { ':s': 'PROCESSING', ':now': now }
     )
 
-    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
-
-    const lambdaPayload = {
+    invokeStudioWatermarkLambda({
       fileId,
       projectId,
       studioId,
-      s3Bucket: process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
-      s3Key: mediaFile.s3Key,
-      r2Bucket: process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews',
-      r2Key: `studios/${studioId}/projects/${projectId}/previews/${fileId}.jpg`,
-      r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
-      r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
-      r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-      studioName: studio?.name ?? 'Studio',
-      logoS3Key: studio?.brandingConfig?.logoS3Key ?? null,
+      sourceKey: mediaFile.r2Key ?? mediaFile.s3Key!,
+      sourceBackend: mediaFile.r2Key ? 'R2' : 'S3',
       watermarkEnabled: mediaFile.watermarkEnabled,
       fileType: mediaFile.fileType,
-    }
-
-    lambda.send(new InvokeCommand({
-      FunctionName: process.env.WATERMARK_LAMBDA_ARN,
-      InvocationType: 'Event',
-      Payload: Buffer.from(JSON.stringify(lambdaPayload)),
-    })).catch((err: unknown) => console.error('[retry-watermark invoke]', err))
+    }).catch((err: unknown) => console.error('[retry-watermark invoke]', err))
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })
   } catch (err) {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioSignedDownloadUrl } from '@/lib/studio/s3'
+import { getMediaDownloadUrl } from '@/lib/studio/storage'
 import { recordDownload } from '@/lib/studio/usage'
 import type { MediaFile } from '@/types/studio'
 
@@ -32,7 +32,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    const downloadUrl = await getStudioSignedDownloadUrl(file.editedS3Key ?? file.s3Key, file.originalFilename)
+    const downloadUrl = await getMediaDownloadUrl(file, file.originalFilename)
     recordDownload(file.studioId, file.sizeBytes).catch((e) => console.error('[usage record]', e))
     return NextResponse.redirect(downloadUrl)
   } catch (err) {
