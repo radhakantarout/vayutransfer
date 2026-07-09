@@ -19,6 +19,14 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 const studioR2 = new S3Client({
   region: 'auto',
   endpoint: process.env.STUDIO_R2_ENDPOINT,
+  // AWS SDK v3 defaults to auto-adding CRC32 checksum requirements
+  // (x-amz-checksum-crc32 / x-amz-sdk-checksum-algorithm) to presigned
+  // upload URLs since ~3.729 — R2 doesn't support this the same way S3
+  // does, which silently breaks CompleteMultipartUpload and leaves the
+  // upload stuck as "Ongoing Multipart Upload" forever. Disabling this
+  // (only compute checksums when an API explicitly requires them) is the
+  // standard fix for R2 compatibility.
+  requestChecksumCalculation: 'WHEN_REQUIRED',
   credentials: {
     accessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID ?? '',
     secretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY ?? '',
