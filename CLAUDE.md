@@ -126,14 +126,20 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - Print portal single-file download switched from CloudFront signed URLs to direct S3 presigned URLs (`getStudioSignedDownloadUrl`, same mechanism as every other download path) — CloudFront was throwing in both environments (env var config) and the one distribution's origin only points at the production bucket anyway, breaking test-env files structurally. `getStudioCloudFrontSignedUrl` is left in `lib/studio/s3.ts`, unused but ready if CDN acceleration is worth revisiting later
 - Watermark Lambda (`lambda/vayustudio-watermark/index.js`) uploads previews to R2 with `Cache-Control: public, max-age=31536000, immutable` — any time a preview needs to change for the same fileId (e.g. edited-photo re-watermarking), it MUST get a new r2Key/URL (see `previewKeySuffix` in `lib/studio/watermark.ts`), never reuse the old one — immutable caching means browsers/CDN will never re-fetch it
 - Editing a photo (studio admin "Upload Edited") re-invokes the same watermark Lambda against the edited file so the preview shown everywhere (admin grid, client gallery, print portal) is properly watermarked — never the raw unwatermarked edited original, which would defeat the whole watermark/paywall model
+- VayuStudios originals migrated from S3 to Cloudflare R2 (zero egress fees) via a `storageBackend: 'S3'|'R2'` field on `MediaFile` — old files keep serving from S3 forever, new uploads write R2, every read path branches on the field. Fully live in production as of 2026-07-10 (530/530 files on R2, one dead orphaned record deleted). `lib/studio/storage.ts` is the single dispatch point every route calls — never branch on `storageBackend` directly in a route. VayuTransfer has NOT been migrated yet (still S3-only) — that's Phases 5-6, not started. Full history in memory (`r2_migration_plan` in auto-memory).
+- **Lambda deploys are separate from Vercel app deploys** — merging app code to `main` does NOT update any Lambda's actual deployed code. Each Lambda (`vayustudio-watermark`, `vayustudio-indexfaces`, `vayustudio-zip`) needs its own explicit `aws lambda update-function-code` per environment (test AND production, both, every time its code changes) — learned this the hard way when production watermarks silently got stuck after an R2 app-code merge because only the `-test` Lambda had been redeployed.
+- Print portal "Download all" is now an async job (`vayustudio-zip` Lambda + `StudioJob{jobType:'ZIP_DOWNLOAD'}`), same pattern as face indexing — client POSTs to `download-all` to get a `jobId`, polls `download-all/status/[jobId]` every 2s, shows a "ready to download" banner. Replaces the old synchronous in-request zip (60s `maxDuration`, timeout risk on large batches).
 
 ### Next Session Priorities
-1. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
-2. SNS production access request (submit to AWS — needed for client OTP SMS)
-3. Watermark Lambda enhancements — currently works for original + edited uploads; consider whether the orphaned old preview objects in R2 (left behind after each edit re-watermark) need periodic cleanup
-4. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
-5. Test full VayuTransfer upload → download flow on production with real Google account
-6. Decide whether to build a dedicated CloudFront distribution + key pair for the test bucket (skipped for now — test.vayustudios.com's print single-download was moved to direct S3 instead)
+1. Manually verify the new async zip download feature on test.vayustudios.com in a real browser (only curl-tested against local so far) — then merge to main
+2. Check Vercel env vars for `ZIP_LAMBDA_ARN` — make sure Preview scope points at `vayustudio-zip-test` and Production at `vayustudio-zip` (same Preview/Production mix-up class as the earlier NEXT_PUBLIC_APP_URL bug)
+3. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
+4. SNS production access request (submit to AWS — needed for client OTP SMS)
+5. Watermark Lambda enhancements — currently works for original + edited uploads; consider whether the orphaned old preview objects in R2 (left behind after each edit re-watermark) need periodic cleanup
+6. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
+7. Test full VayuTransfer upload → download flow on production with real Google account
+8. Decide whether to build a dedicated CloudFront distribution + key pair for the test bucket (skipped for now — test.vayustudios.com's print single-download was moved to direct S3 instead)
+9. Phase 5/6 of R2 migration — VayuTransfer's own files are still S3-only, not started yet
 
 ---
 

@@ -24,6 +24,16 @@ import crypto from 'crypto'
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { DynamoDBClient, ScanCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb'
 import { unmarshall, marshall } from '@aws-sdk/util-dynamodb'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+
+// Without an explicit timeout, a stalled connection hangs the SDK call
+// forever with zero CPU usage and zero error — indistinguishable from
+// "still working" until you check process CPU time. Learned this the hard
+// way on the first production run (had to kill -9 a hung process).
+const requestHandler = new NodeHttpHandler({
+  connectionTimeout: 10_000,
+  requestTimeout: 60_000,
+})
 
 const REGION           = process.env.AWS_REGION ?? 'ap-south-1'
 const MEDIAFILES_TABLE = process.env.DYNAMO_STUDIO_MEDIAFILES_TABLE ?? 'vayustudio-mediafiles'
@@ -38,14 +48,15 @@ const FORCE = process.argv.includes('--force')
 const RATE_LIMIT_PER_MIN = 100
 const DELAY_MS = Math.ceil(60000 / RATE_LIMIT_PER_MIN)
 
-const s3 = new S3Client({ region: REGION })
+const s3 = new S3Client({ region: REGION, requestHandler })
 const r2 = new S3Client({
   region: 'auto',
   endpoint: R2_ENDPOINT,
   requestChecksumCalculation: 'WHEN_REQUIRED',
+  requestHandler,
   credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
 })
-const ddb = new DynamoDBClient({ region: REGION })
+const ddb = new DynamoDBClient({ region: REGION, requestHandler })
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
