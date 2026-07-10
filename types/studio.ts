@@ -123,6 +123,9 @@ export interface MediaFile {
   faceCount?: number
   faceIndexed?: boolean
   faceIndexedAt?: string
+  // Set when this file arrived via a Raw File Transfer import rather than a
+  // direct gallery upload — provenance only, doesn't change how it's served.
+  importedFromTransferId?: string
 }
 
 export interface StudioFace {
@@ -155,6 +158,43 @@ export interface StudioJob {
   createdAt: string
   completedAt?: string
   ttl?: number
+}
+
+// ── Raw File Transfer ────────────────────────────────────────────────────────
+// Native VayuStudios feature (not an integration with VayuTransfer) letting a
+// studio owner send a large RAW file to, or request one back from, anyone
+// outside the platform — via presigned R2 links, no watermarking, no separate
+// billing. Scoped per-project; storage/download bytes fold into the studio's
+// existing quota (Studio.billableStorageBytes / StudioUsageMonth).
+
+export type TransferDirection = 'SEND' | 'RECEIVE'
+export type TransferStatus = 'PENDING' | 'UPLOADING' | 'READY' | 'FAILED' | 'EXPIRED'
+
+export interface StudioTransfer {
+  projectId: string        // PK
+  transferId: string       // SK
+  studioId: string
+  direction: TransferDirection
+  // Known at creation for SEND; unknown until the recipient uploads for RECEIVE.
+  filename?: string
+  mimeType?: string
+  sizeBytes?: number
+  r2Key?: string
+  status: TransferStatus
+  shareToken: string
+  shareExpiresAt: string
+  downloadCount: number
+  lastDownloadedAt?: string
+  // RECEIVE only — set once the studio owner explicitly imports the received
+  // file into the project gallery (triggers the normal MediaFile/watermark
+  // pipeline). Once true, deleting the transfer must never touch R2/billing —
+  // the MediaFile record owns that object going forward.
+  importedToGallery: boolean
+  importedFileId?: string
+  note?: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Selection {
