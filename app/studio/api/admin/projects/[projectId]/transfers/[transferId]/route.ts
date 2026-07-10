@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteStudioR2Object } from '@/lib/studio/r2'
-import type { StudioTransfer } from '@/types/studio'
+import type { StudioTransfer, MediaFile } from '@/types/studio'
 
 // Deletes a transfer. If it's already been imported into the gallery, the
 // MediaFile record owns that R2 object going forward — blocks instead of
@@ -24,10 +24,27 @@ export async function DELETE(
     }
 
     if (transfer.importedToGallery) {
-      return NextResponse.json(
-        { success: false, error: 'IMPORTED', message: 'This file is already part of the project gallery — delete it from there instead' },
-        { status: 409 }
-      )
+      // importedToGallery is set once at import time and never re-checked —
+      // if the gallery file was since deleted through the normal photo-delete
+      // flow, this flag is stale and nothing actually depends on this
+      // transfer's R2 object anymore. Verify against the real MediaFile
+      // record rather than trusting the flag blindly.
+      const importedFile = transfer.importedFileId
+        ? await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId: transfer.importedFileId })
+        : null
+
+      if (importedFile) {
+        return NextResponse.json(
+          { success: false, error: 'IMPORTED', message: 'This file is already part of the project gallery — delete it from there instead' },
+          { status: 409 }
+        )
+      }
+
+      // Gallery file is already gone — its delete already removed the R2
+      // object and decremented billing, so this is just cleaning up the
+      // now-orphaned transfer record. Never re-delete R2 or re-decrement.
+      await studioDeleteItem(TABLES.transfers, { projectId, transferId })
+      return NextResponse.json({ success: true })
     }
 
     if (transfer.r2Key) {
