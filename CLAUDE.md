@@ -94,6 +94,7 @@ Last updated: 2026-07-10
 [x] STEP 10 — VayuStudios AI chatbot (AWS Bedrock Claude 3 Haiku, streaming, WhatsApp escalation)
 [x] STEP 11 — VayuStudios usage-based billing (Razorpay top-ups, PDF receipts, storage retention) — MERGED TO MAIN, live in production. Razorpay still in TEST MODE (live key swap still pending, see priorities below)
 [x] STEP 12 — VayuStudios S3→R2 storage migration + async ZIP download (streaming Lambda, hybrid client/server zip strategy, retry-on-network-error) — MERGED TO MAIN, live in production. VayuTransfer's own files are still S3-only (Phases 5-6 not started)
+[x] STEP 13 — VayuStudios Raw File Transfer tab (native send/receive of large RAW files, no VayuTransfer integration) — test-verified end-to-end, on develop, NOT yet merged to main (see priorities below)
 ```
 
 Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/vayutransfer
@@ -132,17 +133,19 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 - Print portal "Download all" is now an async job (`vayustudio-zip` Lambda + `StudioJob{jobType:'ZIP_DOWNLOAD'}`), same pattern as face indexing — client POSTs to `download-all` to get a `jobId`, polls `download-all/status/[jobId]` every 2s, shows a "ready to download" banner. Replaces the old synchronous in-request zip (60s `maxDuration`, timeout risk on large batches).
 - Zip Lambda streams instead of buffering the whole zip in memory (`archiver` + `@aws-sdk/lib-storage`'s multipart `Upload`, piped through a native `PassThrough` since archiver's stream fails an `instanceof Readable` check otherwise) — memory bumped to 3008MB. Each file downloads into a buffer with up to 3 retries before being appended (a single network reset used to crash the whole job with no retry — found on a real 355-file test batch). Total size is bounded by the 900s Lambda limit and largest single file, not by total selection size — built to reliably handle 10GB+ Indian wedding albums.
 - Print portal picks the zip strategy by total selection size: under 1GB zips client-side in the browser (`fetch` + `JSZip`, no server round trip), at/above 1GB uses the Lambda job. Total size (GB/MB) now shown next to photo count.
+- Raw File Transfer (new "Raw Transfers" event tab): studio owner sends a large RAW file to anyone, or requests one back, via presigned R2 links — no login required for the recipient, no watermarking on the transfer itself. This is a **native VayuStudios feature**, not an integration with VayuTransfer's live API — reuses VayuTransfer's chunked-multipart/presigned-link/share-token *patterns* as new parallel code, keeping the two products fully code-separate. No separate wallet — storage/download bytes fold into the studio's existing quota (`Studio.billableStorageBytes`, `StudioUsageMonth`). Importing a received file into the gallery points the new `MediaFile.r2Key` at the transfer's existing object (no copy, no double-billing) and is the only point where watermarking happens. New table `vayustudio-transfers`; `cron/storage-check` now also reclaims/sweeps transfers, not just gallery projects. Full details in memory (`raw_file_transfer_feature`).
 
 ### Next Session Priorities
-1. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
-2. SNS production access request (submit to AWS — needed for client OTP SMS)
-3. Watermark Lambda enhancements — currently works for original + edited uploads; consider whether the orphaned old preview objects in R2 (left behind after each edit re-watermark) need periodic cleanup
-4. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
-5. Test full VayuTransfer upload → download flow on production with real Google account
-6. Decide whether to build a dedicated CloudFront distribution + key pair for the test bucket (skipped for now — test.vayustudios.com's print single-download was moved to direct S3 instead)
-7. Phase 5/6 of R2 migration — VayuTransfer's own files are still S3-only, not started yet
-8. Consider giving `vayustudio-zip` reserved Lambda concurrency so a burst of large downloads can't starve watermark/face-indexing Lambdas (account-wide concurrency is shared) — not urgent at current usage scale, but cheap insurance
-9. Real-world validation of a ~10GB print-portal batch to confirm actual elapsed time before printing a "10GB max download" claim in product docs
+1. Raw File Transfer: manual browser test on test.vayustudios.com (only API/curl-tested so far), then create production `vayustudio-transfers` table + GSI, add `TRANSFER_LINK_EXPIRY_SECONDS`/`DYNAMO_STUDIO_TRANSFERS_TABLE` to Vercel Preview + Production, then merge to main
+2. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
+3. SNS production access request (submit to AWS — needed for client OTP SMS)
+4. Watermark Lambda enhancements — currently works for original + edited uploads; consider whether the orphaned old preview objects in R2 (left behind after each edit re-watermark) need periodic cleanup
+5. Confirm Claude Haiku 4.5 exact model ID from Bedrock console → upgrade chatbot model
+6. Test full VayuTransfer upload → download flow on production with real Google account
+7. Decide whether to build a dedicated CloudFront distribution + key pair for the test bucket (skipped for now — test.vayustudios.com's print single-download was moved to direct S3 instead)
+8. Phase 5/6 of R2 migration — VayuTransfer's own files are still S3-only, not started yet
+9. Consider giving `vayustudio-zip` reserved Lambda concurrency so a burst of large downloads can't starve watermark/face-indexing Lambdas (account-wide concurrency is shared) — not urgent at current usage scale, but cheap insurance
+10. Real-world validation of a ~10GB print-portal batch to confirm actual elapsed time before printing a "10GB max download" claim in product docs
 
 ---
 
