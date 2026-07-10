@@ -3,37 +3,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
-import type { StudioProject, MediaFile, Selection } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
 import EditEventModal from './EditEventModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
-
-const CHUNK_SIZE = 50 * 1024 * 1024
-const MAX_PART_RETRIES = 3
+import { CHUNK_SIZE, uploadFileInChunks, type PartRecord } from '@/lib/studio/clientUpload'
 
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
-}
-
-type PartRecord = { PartNumber: number; ETag: string }
-
-// Retries a transient network blip (common on slow connections) before
-// giving up on this part — most failures resolve within 1-2 retries without
-// the user ever needing to notice or manually resume.
-async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
-  let lastErr: unknown
-  for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
-    try {
-      const res = await fetch(url, { method: 'PUT', body: chunk })
-      if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
-      return res.headers.get('ETag') ?? ''
-    } catch (err) {
-      lastErr = err
-      if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('Part upload failed')
 }
 
 // Resumes a previously interrupted upload if the same file (matched by
@@ -97,7 +75,7 @@ function fmtEta(sec: number): string {
 }
 
 type DeleteMode = 'selected' | 'all' | null
-type ActiveTab  = 'photos' | 'faces' | 'selections'
+type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
 
 interface FaceStatus {
   totalPhotos: number; indexedPhotos: number; pendingPhotos: number
@@ -159,6 +137,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (pathname.endsWith('/faces'))      return 'faces'
     if (pathname.endsWith('/selections')) return 'selections'
+    if (pathname.endsWith('/transfers'))  return 'transfers'
     return 'photos'
   })
 
@@ -185,6 +164,16 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [editUploadStates, setEditUploadStates] = useState<Map<string, EditUploadState>>(new Map())
   const editFileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
   const needsEditingRef   = useRef<HTMLDivElement>(null)
+
+  // ── Raw Transfers tab ──────────────────────────────────────
+  const [transfers, setTransfers]           = useState<StudioTransfer[] | null>(null)
+  const [transfersLoading, setTransfersLoading] = useState(false)
+  const [transfersError, setTransfersError] = useState<string | null>(null)
+  const [transfersBusyId, setTransfersBusyId] = useState<string | null>(null)
+  const [transferCopiedId, setTransferCopiedId] = useState<string | null>(null)
+  const [requestingTransfer, setRequestingTransfer] = useState(false)
+  const [sendTransferProgress, setSendTransferProgress] = useState<{ filename: string; percent: number } | null>(null)
+  const transferFileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Admin photo preview (for floating selection pill) ─────
   const [showAdminPreview, setShowAdminPreview] = useState(false)
@@ -364,6 +353,105 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     setSelItemsLoading(false)
   }, [project.projectId, selItems])
 
+  // ── Raw Transfers tab functions ────────────────────────────
+  const loadTransfers = useCallback(async () => {
+    setTransfersLoading(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`).then(r => r.json())
+    if (res.success) setTransfers(res.data.transfers)
+    setTransfersLoading(false)
+  }, [project.projectId])
+
+  // Poll while any RECEIVE transfer is still awaiting/mid-upload
+  useEffect(() => {
+    if (activeTab !== 'transfers') return
+    const active = (transfers ?? []).some(t => t.status === 'PENDING' || t.status === 'UPLOADING')
+    if (!active) return
+    const timer = setInterval(loadTransfers, 5000)
+    return () => clearInterval(timer)
+  }, [activeTab, transfers, loadTransfers])
+
+  const transferShareUrl = (t: StudioTransfer): string => {
+    const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
+    return `${base}/studio/transfer/${t.direction === 'SEND' ? 'send' : 'receive'}/${t.shareToken}`
+  }
+
+  const copyTransferLink = async (t: StudioTransfer) => {
+    await navigator.clipboard.writeText(transferShareUrl(t))
+    setTransferCopiedId(t.transferId)
+    setTimeout(() => setTransferCopiedId(null), 2000)
+  }
+
+  const requestTransferFile = async () => {
+    setRequestingTransfer(true)
+    setTransfersError(null)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction: 'RECEIVE' }),
+    }).then(r => r.json())
+    setRequestingTransfer(false)
+    if (!res.success) { setTransfersError(res.message ?? 'Could not create request link'); return }
+    await loadTransfers()
+  }
+
+  const sendTransferFile = async (file: File) => {
+    setTransfersError(null)
+    setSendTransferProgress({ filename: file.name, percent: 0 })
+    const partCount = Math.ceil(file.size / CHUNK_SIZE)
+    try {
+      const initRes = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction: 'SEND', filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
+      }).then(r => r.json())
+      if (!initRes.success) throw new Error(initRes.message ?? 'Could not start upload')
+      const { transferId, uploadId, presignedUrls } = initRes.data
+
+      const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, [], (_bytes, partsDone) => {
+        setSendTransferProgress({ filename: file.name, percent: Math.round((partsDone / partCount) * 100) })
+      })
+
+      const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/upload-complete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId, parts }),
+      }).then(r => r.json())
+      if (!completeRes.success) throw new Error(completeRes.message ?? 'Could not finish upload')
+
+      setSendTransferProgress(null)
+      await loadTransfers()
+    } catch (err) {
+      setSendTransferProgress(null)
+      setTransfersError(err instanceof Error ? err.message : 'Upload failed')
+    }
+  }
+
+  const resendTransfer = async (transferId: string) => {
+    setTransfersBusyId(transferId)
+    setTransfersError(null)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/resend`, { method: 'POST' }).then(r => r.json())
+    setTransfersBusyId(null)
+    if (!res.success) { setTransfersError(res.message ?? 'Could not regenerate link'); return }
+    await loadTransfers()
+  }
+
+  const importTransferToGallery = async (transferId: string) => {
+    setTransfersBusyId(transferId)
+    setTransfersError(null)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/import`, { method: 'POST' }).then(r => r.json())
+    setTransfersBusyId(null)
+    if (!res.success) { setTransfersError(res.message ?? 'Could not import to gallery'); return }
+    await loadTransfers()
+    loadFiles(); onUpdated()
+  }
+
+  const removeTransfer = async (transferId: string) => {
+    if (!confirm('Delete this transfer? This cannot be undone.')) return
+    setTransfersBusyId(transferId)
+    setTransfersError(null)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}`, { method: 'DELETE' }).then(r => r.json())
+    setTransfersBusyId(null)
+    if (!res.success) { setTransfersError(res.message ?? 'Could not delete transfer'); return }
+    await loadTransfers()
+  }
+
   const generatePrintLink = async () => {
     setPrintGenerating(true)
     setPrintBlockedMessage(null)
@@ -485,19 +573,9 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       // Resumes from a previous attempt if the same file was seen before
       // and the server still has that upload alive.
       const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(project.projectId, file, partCount)
-      const parts: PartRecord[] = []
-      for (let i = 0; i < partCount; i++) {
-        const partNumber = i + 1
-        const already = completedParts.find(p => p.PartNumber === partNumber)
-        if (already) {
-          parts.push(already)
-        } else {
-          const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-          const etag  = await uploadPartWithRetry(presignedUrls[i], chunk)
-          parts.push({ PartNumber: partNumber, ETag: etag })
-        }
-        update({ progress: Math.round((parts.length / partCount) * 100), uploadedBytes: Math.min(parts.length * CHUNK_SIZE, file.size) })
-      }
+      const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, completedParts, (uploadedBytes, partsDone) => {
+        update({ progress: Math.round((partsDone / partCount) * 100), uploadedBytes })
+      })
       const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
@@ -551,6 +629,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     setActiveTab(tab)
     if (tab === 'faces' && !faceStatus && !faceLoading) loadFaceStatus()
     if (tab === 'selections') loadSelItems()
+    if (tab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
   }
 
   // ── Derived values ────────────────────────────────────────
@@ -783,7 +862,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
         {/* ── Tab navigation ────────────────────────────────────── */}
         <div className="flex items-center gap-0 border-b border-border px-5">
-          {(['photos', 'faces', 'selections'] as ActiveTab[]).map(tab => (
+          {(['photos', 'faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
             <button
               key={tab}
               onClick={() => switchTab(tab)}
@@ -793,7 +872,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   : 'border-transparent text-muted hover:text-text-primary hover:border-border'
               }`}
             >
-              {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : 'Selections'}
+              {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
             </button>
           ))}
         </div>
@@ -1316,6 +1395,124 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   )}
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* ── Raw Transfers tab ─────────────────────────────────── */}
+        {activeTab === 'transfers' && (
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-muted">
+              Send large RAW files to anyone, or request one back — no login required for the other side, no watermarking.
+            </p>
+
+            {transfersError && (
+              <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-3 text-sm text-danger">{transfersError}</div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => transferFileInputRef.current?.click()}
+                disabled={!!sendTransferProgress}
+                className="flex-1 bg-accent text-bg text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                ⬆ Send Raw File
+              </button>
+              <input
+                ref={transferFileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) sendTransferFile(f); e.target.value = '' }}
+              />
+              <button
+                onClick={requestTransferFile}
+                disabled={requestingTransfer}
+                className="flex-1 border border-border text-text-primary text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-border/40 disabled:opacity-50 transition-colors"
+              >
+                {requestingTransfer ? 'Creating…' : '📥 Request File'}
+              </button>
+            </div>
+
+            {sendTransferProgress && (
+              <div className="border border-border rounded-xl px-4 py-3 space-y-2">
+                <div className="text-sm text-text-primary break-all">{sendTransferProgress.filename}</div>
+                <div className="w-full bg-bg border border-border rounded-full h-2 overflow-hidden">
+                  <div className="bg-accent h-full transition-all" style={{ width: `${sendTransferProgress.percent}%` }} />
+                </div>
+                <div className="text-xs text-muted">Uploading… {sendTransferProgress.percent}%</div>
+              </div>
+            )}
+
+            {transfersLoading && transfers === null ? (
+              <div className="flex justify-center py-10">
+                <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : (transfers ?? []).length === 0 && !sendTransferProgress ? (
+              <div className="border border-dashed border-border rounded-2xl p-8 text-center space-y-2">
+                <div className="text-3xl">📁</div>
+                <p className="text-sm text-muted">No transfers yet for this event.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {(transfers ?? []).map(t => (
+                  <div key={t.transferId} className="border border-border rounded-xl p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full border border-border text-muted">
+                            {t.direction === 'SEND' ? '⬆ Sent' : '📥 Requested'}
+                          </span>
+                          <span className={`text-xs font-semibold ${
+                            t.status === 'READY' ? 'text-success' :
+                            t.status === 'UPLOADING' ? 'text-accent' :
+                            t.status === 'FAILED' || t.status === 'EXPIRED' ? 'text-danger' : 'text-muted'
+                          }`}>
+                            {t.status === 'PENDING' ? 'Awaiting upload' :
+                             t.status === 'UPLOADING' ? 'Uploading…' :
+                             t.status === 'READY' ? 'Ready' :
+                             t.status === 'FAILED' ? 'Failed' : 'Expired'}
+                          </span>
+                          {t.importedToGallery && <span className="text-xs font-semibold text-success">✓ In gallery</span>}
+                        </div>
+                        <div className="text-sm text-text-primary font-medium mt-1 truncate">
+                          {t.filename ?? (t.direction === 'RECEIVE' ? 'Waiting for upload…' : '—')}
+                        </div>
+                        <div className="text-xs text-muted mt-0.5">
+                          {t.sizeBytes ? fmtBytes(t.sizeBytes) : '—'} · {fmtDate(t.createdAt)}
+                          {t.direction === 'SEND' && t.downloadCount > 0 && ` · downloaded ${t.downloadCount}×`}
+                        </div>
+                        {t.note && <div className="text-xs text-muted italic mt-1">"{t.note}"</div>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 flex-wrap pt-1">
+                      {(t.status === 'PENDING' || t.status === 'READY') && (
+                        <button onClick={() => copyTransferLink(t)}
+                          className="text-xs border border-border text-muted font-semibold px-3 py-1.5 rounded-lg hover:bg-border/40 transition-colors">
+                          {transferCopiedId === t.transferId ? '✓ Copied!' : '🔗 Copy Link'}
+                        </button>
+                      )}
+                      {t.status !== 'UPLOADING' && (
+                        <button onClick={() => resendTransfer(t.transferId)} disabled={transfersBusyId === t.transferId}
+                          className="text-xs border border-border text-muted font-semibold px-3 py-1.5 rounded-lg hover:bg-border/40 disabled:opacity-50 transition-colors">
+                          ↻ Resend
+                        </button>
+                      )}
+                      {t.direction === 'RECEIVE' && t.status === 'READY' && !t.importedToGallery && (
+                        <button onClick={() => importTransferToGallery(t.transferId)} disabled={transfersBusyId === t.transferId}
+                          className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                          {transfersBusyId === t.transferId ? 'Importing…' : '+ Import to Gallery'}
+                        </button>
+                      )}
+                      {!t.importedToGallery && (
+                        <button onClick={() => removeTransfer(t.transferId)} disabled={transfersBusyId === t.transferId}
+                          className="text-xs border border-danger/30 text-danger font-semibold px-3 py-1.5 rounded-lg hover:bg-danger/10 disabled:opacity-50 transition-colors">
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

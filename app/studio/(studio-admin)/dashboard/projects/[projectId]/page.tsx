@@ -4,9 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, EventType } from '@/types/studio'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
-
-const CHUNK_SIZE = 50 * 1024 * 1024 // 50MB
-const MAX_PART_RETRIES = 3
+import { CHUNK_SIZE, uploadFileInChunks, type PartRecord } from '@/lib/studio/clientUpload'
 
 interface UploadItem {
   id: string
@@ -15,26 +13,6 @@ interface UploadItem {
   progress: number
   status: 'queued' | 'uploading' | 'done' | 'error'
   error?: string
-}
-
-type PartRecord = { PartNumber: number; ETag: string }
-
-// Retries a transient network blip (common on slow connections) before
-// giving up on this part — most failures resolve within 1-2 retries without
-// the user ever needing to notice or manually resume.
-async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
-  let lastErr: unknown
-  for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
-    try {
-      const res = await fetch(url, { method: 'PUT', body: chunk })
-      if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
-      return res.headers.get('ETag') ?? ''
-    } catch (err) {
-      lastErr = err
-      if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('Part upload failed')
 }
 
 // Resumes a previously interrupted upload if the same file (matched by
@@ -155,20 +133,9 @@ export default function ProjectDetailPage() {
 
       // 2. Upload parts — skip any already confirmed by the server, retry
       // transient failures on the rest before giving up.
-      const parts: PartRecord[] = []
-      for (let i = 0; i < partCount; i++) {
-        const partNumber = i + 1
-        const already = completedParts.find((p) => p.PartNumber === partNumber)
-        if (already) {
-          parts.push(already)
-        } else {
-          const start = i * CHUNK_SIZE
-          const chunk = file.slice(start, start + CHUNK_SIZE)
-          const etag = await uploadPartWithRetry(presignedUrls[i], chunk)
-          parts.push({ PartNumber: partNumber, ETag: etag })
-        }
-        update({ progress: Math.round((parts.length / partCount) * 100) })
-      }
+      const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, completedParts, (_bytes, partsDone) => {
+        update({ progress: Math.round((partsDone / partCount) * 100) })
+      })
 
       // 3. Complete
       const completeRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-complete`, {
@@ -368,6 +335,7 @@ export default function ProjectDetailPage() {
             { label: 'All Photos', href: `/studio/dashboard/projects/${projectId}` },
             { label: 'People ✨', href: `/studio/dashboard/projects/${projectId}/faces` },
             { label: 'Selections', href: `/studio/dashboard/projects/${projectId}/selections` },
+            { label: 'Raw Transfers', href: `/studio/dashboard/projects/${projectId}/transfers` },
           ].map(tab => (
             <a key={tab.href} href={tab.href}
               className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors

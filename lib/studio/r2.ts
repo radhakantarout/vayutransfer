@@ -47,6 +47,13 @@ export function getStudioR2EditedKey(studioId: string, projectId: string, fileId
   return `studios/${studioId}/projects/${projectId}/edited/${fileId}/${filename}`
 }
 
+// Raw file transfers get their own namespace, distinct from originals/edited —
+// these are transient (send/receive links, not gallery-facing) until/unless
+// explicitly imported into the gallery via a MediaFile record.
+export function getStudioR2TransferKey(studioId: string, projectId: string, transferId: string, filename: string) {
+  return `studios/${studioId}/projects/${projectId}/transfers/${transferId}/${filename}`
+}
+
 export async function initiateStudioR2MultipartUpload(r2Key: string, contentType: string): Promise<string> {
   const res = await studioR2.send(new CreateMultipartUploadCommand({
     Bucket: STUDIO_R2_ORIGINAL_BUCKET,

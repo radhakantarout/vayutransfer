@@ -3,11 +3,12 @@ import {
   studioScanTable, studioQueryByPK, studioUpdateItem, studioDeleteItem, TABLES,
 } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
+import { deleteStudioR2Object } from '@/lib/studio/r2'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota } from '@/lib/studio/usage'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
-import type { Studio, StudioProject, MediaFile, Selection } from '@/types/studio'
+import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
 
 // Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on every
 // scheduled invocation as long as a project env var literally named
@@ -58,12 +59,80 @@ async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<numb
   return deletedBytes
 }
 
+// Raw File Transfers store large objects outside the mediafiles/selections
+// world the function above knows about — without this, reclaim would keep
+// deleting a studio's oldest gallery projects forever while multi-GB
+// transfer blobs sit untouched. Only ever deletes non-imported transfers
+// (importedToGallery:true means a MediaFile now owns that R2 object).
+async function deleteOldestTransfersUntilUnderQuota(
+  transfers: StudioTransfer[],
+  remaining: number,
+  grant: number
+): Promise<number> {
+  const eligible = transfers
+    .filter((t) => !t.importedToGallery && t.status === 'READY' && t.r2Key && t.sizeBytes)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+  let deletedBytes = 0
+  for (const t of eligible) {
+    if (remaining <= grant) break
+    await deleteStudioR2Object(t.r2Key!).catch((e) => console.error('[storage-check] transfer r2 delete', e))
+    await studioDeleteItem(TABLES.transfers, { projectId: t.projectId, transferId: t.transferId })
+    remaining -= t.sizeBytes!
+    deletedBytes += t.sizeBytes!
+  }
+  return deletedBytes
+}
+
+// Expired, never-imported transfers are billable dead weight even for a
+// studio that's nowhere near its quota — "expired" should mean the link
+// stops working AND storage stops being billed, not just the former.
+// Returns bytes freed per studio so the caller can adjust its in-memory
+// quota check — the DB write happens here, but the studios array was
+// already loaded before this ran, so it doesn't see the decrement itself.
+async function sweepExpiredTransfers(transfers: StudioTransfer[]): Promise<{ freedByStudio: Map<string, number>; count: number }> {
+  const now = new Date()
+  const expired = transfers.filter((t) => !t.importedToGallery && t.status === 'READY' && new Date(t.shareExpiresAt) < now)
+
+  const freedByStudio = new Map<string, number>()
+  for (const t of expired) {
+    if (t.r2Key) await deleteStudioR2Object(t.r2Key).catch((e) => console.error('[storage-check] expired transfer r2 delete', e))
+    await studioDeleteItem(TABLES.transfers, { projectId: t.projectId, transferId: t.transferId })
+    if (t.sizeBytes) {
+      await studioUpdateItem(
+        TABLES.studios, { studioId: t.studioId },
+        'ADD billableStorageBytes :neg SET updatedAt = :now',
+        { ':neg': -t.sizeBytes, ':now': new Date().toISOString() }
+      )
+      freedByStudio.set(t.studioId, (freedByStudio.get(t.studioId) ?? 0) + t.sizeBytes)
+    }
+  }
+  return { freedByStudio, count: expired.length }
+}
+
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
   }
 
   const studios = await studioScanTable<Studio>(TABLES.studios)
+  const allTransfers = await studioScanTable<StudioTransfer>(TABLES.transfers)
+  const transfersByStudio = new Map<string, StudioTransfer[]>()
+  for (const t of allTransfers) {
+    const list = transfersByStudio.get(t.studioId) ?? []
+    list.push(t)
+    transfersByStudio.set(t.studioId, list)
+  }
+
+  // Applied to the in-memory studios array below so quota checks reflect
+  // what was just freed — the DB write already happened inside the sweep,
+  // this only keeps this function's own view of billableStorageBytes honest.
+  const expiredSwept = await sweepExpiredTransfers(allTransfers)
+  for (const studio of studios) {
+    const freed = expiredSwept.freedByStudio.get(studio.studioId)
+    if (freed) studio.billableStorageBytes = Math.max(0, (studio.billableStorageBytes ?? 0) - freed)
+  }
+
   const now = Date.now()
   let checked = 0, reminded = 0, deletedFrom = 0
 
@@ -105,8 +174,20 @@ export async function GET(req: NextRequest) {
     const daysRemaining = Math.max(0, Math.ceil(graceDays - daysElapsed))
 
     if (daysElapsed >= graceDays) {
-      // Grace period over — delete the minimum needed, oldest projects first.
-      const deleted = await deleteOldestProjectsUntilUnderQuota(studio)
+      // Grace period over — delete the minimum needed, oldest projects first,
+      // then oldest non-imported transfers if projects alone weren't enough
+      // (transfers can be large enough on their own to drive the overage).
+      const deletedFromProjects = await deleteOldestProjectsUntilUnderQuota(studio)
+      const grant = activeStorageGrantBytes(studio)
+      let remaining = currentStorageBytes(studio) - deletedFromProjects
+      let deletedFromTransfers = 0
+      if (remaining > grant) {
+        deletedFromTransfers = await deleteOldestTransfersUntilUnderQuota(
+          transfersByStudio.get(studio.studioId) ?? [], remaining, grant
+        )
+        remaining -= deletedFromTransfers
+      }
+      const deleted = deletedFromProjects + deletedFromTransfers
       if (deleted > 0) {
         await studioUpdateItem(
           TABLES.studios, { studioId: studio.studioId },
@@ -135,5 +216,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, expiredTransfersSwept: expiredSwept.count } })
 }
