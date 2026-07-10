@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 
 interface PrintFile {
@@ -24,33 +24,54 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+type ZipJobState =
+  | { phase: 'idle' }
+  | { phase: 'creating'; processed: number; total: number }
+  | { phase: 'ready'; downloadUrl: string; filename: string }
+  | { phase: 'error'; message: string }
+
 export default function PrintPortalPage() {
   const { token } = useParams<{ token: string }>()
   const [gallery, setGallery] = useState<PrintGallery | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
-  const [downloadingAll, setDownloadingAll] = useState(false)
-  const [downloadAllError, setDownloadAllError] = useState<string | null>(null)
+  const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
+  const zipPollGen = useRef(0)
 
   const downloadAll = async () => {
-    setDownloadingAll(true)
-    setDownloadAllError(null)
+    const myGen = ++zipPollGen.current
+    setZipJob({ phase: 'creating', processed: 0, total: 0 })
     try {
-      const res = await fetch(`/studio/api/print/gallery/${token}/download-all`)
-      if (!res.ok) throw new Error('Download failed')
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(gallery?.project.clientName ?? 'photos').replace(/[^a-z0-9]+/gi, '-')}-photos.zip`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch {
-      setDownloadAllError('Could not download all photos. Please try again or download individually.')
-    } finally {
-      setDownloadingAll(false)
+      const initRes = await fetch(`/studio/api/print/gallery/${token}/download-all`, { method: 'POST' }).then((r) => r.json())
+      if (!initRes.success) throw new Error('Could not start zip creation')
+      const { jobId } = initRes.data as { jobId: string }
+
+      // Poll every 2s until READY/FAILED. myGen guards against a stale loop
+      // still running if the user clicks "Download all" again mid-poll.
+      while (zipPollGen.current === myGen) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        const statusRes = await fetch(`/studio/api/print/gallery/${token}/download-all/status/${jobId}`).then((r) => r.json())
+        if (!statusRes.success) throw new Error('Lost track of the zip job')
+        const s = statusRes.data as {
+          status: string; processed: number; total: number
+          downloadUrl: string | null; filename: string | null; errorMessage: string | null
+        }
+
+        if (zipPollGen.current !== myGen) return
+
+        if (s.status === 'READY' && s.downloadUrl && s.filename) {
+          setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.filename })
+          return
+        }
+        if (s.status === 'FAILED') {
+          throw new Error(s.errorMessage ?? 'Zip creation failed')
+        }
+        setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
+      }
+    } catch (err) {
+      if (zipPollGen.current === myGen) {
+        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all photos. Please try again or download individually.' })
+      }
     }
   }
 
@@ -130,15 +151,32 @@ export default function PrintPortalPage() {
             )}
             <button
               onClick={downloadAll}
-              disabled={downloadingAll}
+              disabled={zipJob.phase === 'creating'}
               className="ml-auto bg-accent text-bg text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              {downloadingAll && <span className="w-3.5 h-3.5 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />}
-              {downloadingAll ? 'Preparing zip…' : '⬇ Download all'}
+              {zipJob.phase === 'creating' && <span className="w-3.5 h-3.5 border-2 border-bg/40 border-t-bg rounded-full animate-spin" />}
+              {zipJob.phase === 'creating'
+                ? (zipJob.total > 0 ? `Creating ZIP… ${zipJob.processed}/${zipJob.total}` : 'Starting…')
+                : '⬇ Download all'}
             </button>
           </div>
-          {downloadAllError && (
-            <p className="text-xs text-danger mt-2">{downloadAllError}</p>
+
+          {zipJob.phase === 'ready' && (
+            <div className="mt-3 bg-success/10 border border-success/30 rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm text-text-primary">
+                <span className="font-semibold text-success">✓ Your ZIP is ready.</span> {zipJob.filename}
+              </div>
+              <a
+                href={zipJob.downloadUrl}
+                download={zipJob.filename}
+                className="bg-success text-bg text-sm font-bold px-4 py-2 rounded-xl hover:bg-success/90 transition-colors"
+              >
+                Download Now
+              </a>
+            </div>
+          )}
+          {zipJob.phase === 'error' && (
+            <p className="text-xs text-danger mt-2">{zipJob.message}</p>
           )}
         </div>
       </div>

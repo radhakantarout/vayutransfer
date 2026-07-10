@@ -1,19 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
-import JSZip from 'jszip'
-import { studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
-import { getMediaObjectBuffer } from '@/lib/studio/storage'
-import type { StudioProject, MediaFile, Selection } from '@/types/studio'
+import { randomUUID } from 'crypto'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
+import { studioQueryByIndex, studioQueryByPK, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
+import type { StudioProject, MediaFile, Selection, StudioJob } from '@/types/studio'
 
-// Give zip assembly room to run for larger batches (Vercel default is 10s on Hobby).
-export const maxDuration = 60
+const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
-function uniqueFilename(name: string, fileId: string, used: Set<string>): string {
-  if (!used.has(name)) return name
-  const dot = name.lastIndexOf('.')
-  return dot === -1 ? `${name}-${fileId.slice(0, 8)}` : `${name.slice(0, dot)}-${fileId.slice(0, 8)}${name.slice(dot)}`
+interface ZipSourceFile {
+  fileId: string
+  filename: string
+  backend: 'S3' | 'R2'
+  key: string
 }
 
-export async function GET(
+// Same priority order as resolveCurrent() in lib/studio/storage.ts — inlined
+// here because the Lambda needs plain {backend,key} pairs, not a Buffer.
+function resolveZipSource(f: MediaFile): ZipSourceFile {
+  if (f.editedR2Key) return { fileId: f.fileId, filename: f.originalFilename, backend: 'R2', key: f.editedR2Key }
+  if (f.editedS3Key) return { fileId: f.fileId, filename: f.originalFilename, backend: 'S3', key: f.editedS3Key }
+  if (f.r2Key)       return { fileId: f.fileId, filename: f.originalFilename, backend: 'R2', key: f.r2Key }
+  return { fileId: f.fileId, filename: f.originalFilename, backend: 'S3', key: f.s3Key! }
+}
+
+// Kicks off an async ZIP_DOWNLOAD job (same StudioJob pattern as face
+// indexing) instead of building the zip inline — avoids the old route's
+// timeout risk on large print batches. The vayustudio-zip Lambda does the
+// actual work; the client polls status/[jobId] until READY.
+export async function POST(
   req: NextRequest,
   { params }: { params: { token: string } }
 ) {
@@ -34,7 +47,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
 
-    const { projectId } = project
+    const { projectId, studioId } = project
 
     const allSelections = await studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId)
     const selectedIds = new Set(allSelections.filter((s) => s.isSelected).map((s) => s.fileId))
@@ -51,29 +64,42 @@ export async function GET(
     // Note: bytes for these same selected files are already counted against the
     // studio's download quota when the print gallery itself is loaded — no
     // second recordDownload here, that would double-count the same batch.
-    const zip = new JSZip()
-    const usedNames = new Set<string>()
-    for (const f of selectedFiles) {
-      const buffer = await getMediaObjectBuffer(f)
-      const name = uniqueFilename(f.originalFilename, f.fileId, usedNames)
-      usedNames.add(name)
-      zip.file(name, buffer)
-    }
-
-    // JPEGs are already compressed — skip DEFLATE, just bundle (faster, same size).
-    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
+    const files = selectedFiles.map(resolveZipSource)
     const zipFilename = `${(project.clientName || 'photos').replace(/[^a-z0-9]+/gi, '-')}-photos.zip`
 
-    return new NextResponse(new Blob([Uint8Array.from(zipBuffer)]), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="${zipFilename}"`,
-        'Content-Length': String(zipBuffer.length),
-      },
-    })
+    if (!process.env.ZIP_LAMBDA_ARN) {
+      console.error('[download-all init] ZIP_LAMBDA_ARN not set')
+      return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
+    }
+
+    const jobId = randomUUID()
+    const now = new Date().toISOString()
+    const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60 // 1 day — zip jobs are short-lived
+
+    const job: StudioJob = {
+      jobId, jobType: 'ZIP_DOWNLOAD', status: 'PENDING',
+      projectId, studioId,
+      inputPayload: { fileCount: files.length },
+      createdAt: now, ttl,
+    }
+    await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+
+    lambda.send(new InvokeCommand({
+      FunctionName: process.env.ZIP_LAMBDA_ARN,
+      InvocationType: 'Event',
+      Payload: Buffer.from(JSON.stringify({
+        jobId, studioId, projectId, files, zipFilename,
+        s3Bucket: process.env.STUDIO_S3_BUCKET ?? 'vayutransfer-studio-originals',
+        r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
+        r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
+        r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
+        r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
+      })),
+    })).catch((err: unknown) => console.error('[zip invoke]', err))
+
+    return NextResponse.json({ success: true, data: { jobId } })
   } catch (err) {
-    console.error('[print gallery download-all]', err)
+    console.error('[print gallery download-all init]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
   }
 }
