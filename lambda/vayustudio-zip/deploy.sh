@@ -41,11 +41,14 @@ env = {
 print(json.dumps({'Variables': env}))
 ")
 
+  # 3008MB — Lambda's network throughput scales with memory allocation, and
+  # this is a streaming (not buffering) zip job, so the bottleneck is
+  # bandwidth, not heap size. Multi-GB wedding albums need real throughput.
   aws lambda update-function-configuration \
     --function-name "$FUNCTION_NAME" \
     --runtime nodejs20.x \
     --timeout 900 \
-    --memory-size 1024 \
+    --memory-size 3008 \
     --region "$REGION" \
     --environment "$MERGED" \
     --no-cli-pager

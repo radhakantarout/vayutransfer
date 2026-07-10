@@ -1,22 +1,29 @@
 'use strict'
 
-const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3')
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3')
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
+const { Upload } = require('@aws-sdk/lib-storage')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand } = require('@aws-sdk/lib-dynamodb')
-const JSZip = require('jszip')
+const { PassThrough } = require('stream')
+const archiver = require('archiver')
 
 const REGION     = process.env.AWS_REGION || 'ap-south-1'
 const JOBS_TABLE = process.env.DYNAMO_STUDIO_JOBS_TABLE || 'vayustudio-jobs'
 
+// Safety net: without these, a rejection/throw outside our own try/catch
+// (e.g. deep inside a stream library's internals) surfaces only as an opaque
+// Lambda "NodeJsExit" with no clue what actually broke — happened once
+// during development. Keeping this permanently for future debuggability.
+process.on('unhandledRejection', (reason) => {
+  console.error('[zip] UNHANDLED REJECTION:', reason && reason.stack ? reason.stack : reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[zip] UNCAUGHT EXCEPTION:', err && err.stack ? err.stack : err)
+})
+
 const s3  = new S3Client({ region: REGION })
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
-
-async function streamToBuffer(stream) {
-  const chunks = []
-  for await (const chunk of stream) chunks.push(chunk)
-  return Buffer.concat(chunks)
-}
 
 async function updateJob(jobId, patch) {
   const entries = Object.entries(patch)
@@ -33,6 +40,14 @@ async function updateJob(jobId, patch) {
 }
 
 // ─── Lambda handler ──────────────────────────────────────────────────────────
+// Streams every source file straight into the zip archive, and streams the
+// archive's output straight into a multipart R2 upload — nothing is ever
+// buffered whole in memory. Total transfer size is bounded only by the 900s
+// Lambda execution limit, not by memory. Needed because Indian wedding
+// albums (RAW originals, multiple ceremonies) routinely run into multiple GB
+// per print-portal selection — the old in-memory JSZip approach would OOM
+// well before that.
+//
 // Payload built by app/studio/api/print/gallery/[token]/download-all/route.ts
 // (POST/init): a pre-resolved list of {fileId, filename, backend, key} — the
 // route already knows which backend each file is on (same resolveCurrent
@@ -58,15 +73,56 @@ exports.handler = async (event) => {
   try {
     await updateJob(jobId, { status: 'PROCESSING', updatedAt: new Date().toISOString() })
 
-    const zip = new JSZip()
-    const usedNames = new Set()
-    let processed = 0
+    const zipKey = `studios/${studioId}/zips/${jobId}.zip`
+    // STORE (no compression) — source files are already-compressed JPEGs/RAW;
+    // DEFLATE would just burn CPU time for no meaningful size reduction.
+    const archive = archiver('zip', { store: true })
+    archive.on('warning', (err) => console.warn('[zip] archiver warning:', err.message))
 
+    // archiver is built on the userland "readable-stream" package internally,
+    // which fails @aws-sdk/lib-storage's `instanceof Readable` check against
+    // Node's native stream module if passed directly as Body. Piping through
+    // a native PassThrough first gives Upload a stream it actually recognizes.
+    const passthrough = new PassThrough()
+    archive.pipe(passthrough)
+
+    const upload = new Upload({
+      client: r2,
+      params: { Bucket: r2Bucket, Key: zipKey, Body: passthrough, ContentType: 'application/zip' },
+      queueSize: 4,
+      partSize: 16 * 1024 * 1024, // 16MB parts (R2/S3 multipart minimum is 5MB)
+    })
+    // Start draining the archive stream NOW, concurrently with appending
+    // entries below. Upload.done() is what actually consumes the stream —
+    // calling it only after archive.finalize() resolves deadlocks the two
+    // against each other, since finalize() can't complete until something
+    // drains the backpressured stream, and nothing does until done() runs.
+    const uploadDonePromise = upload.done()
+
+    let processed = 0
+    let lastReportedAt = 0
+    archive.on('entry', () => {
+      processed++
+      // Throttle progress writes to ~1/sec — a large album can be hundreds
+      // of files, and a DynamoDB write per file adds up unnecessarily.
+      const now = Date.now()
+      if (now - lastReportedAt > 1000 || processed === files.length) {
+        lastReportedAt = now
+        updateJob(jobId, { outputPayload: { processed, total: files.length }, updatedAt: new Date().toISOString() })
+          .catch((err) => console.error('[zip] progress update failed:', err.message))
+      }
+    })
+
+    // archiver emits 'error' asynchronously off the main control flow — a
+    // plain throw inside the listener would become an uncaught exception
+    // instead of reaching our try/catch, so route it through a promise instead.
+    const archiveErrorPromise = new Promise((_, reject) => archive.once('error', reject))
+
+    const usedNames = new Set()
     for (const f of files) {
       const client = f.backend === 'R2' ? r2 : s3
       const bucket = f.backend === 'R2' ? r2Bucket : s3Bucket
       const obj = await client.send(new GetObjectCommand({ Bucket: bucket, Key: f.key }))
-      const buffer = await streamToBuffer(obj.Body)
 
       let name = f.filename
       if (usedNames.has(name)) {
@@ -76,23 +132,16 @@ exports.handler = async (event) => {
           : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
       }
       usedNames.add(name)
-      zip.file(name, buffer)
-
-      processed++
-      await updateJob(jobId, {
-        outputPayload: { processed, total: files.length },
-        updatedAt: new Date().toISOString(),
-      })
+      archive.append(obj.Body, { name })
     }
 
-    // JPEGs are already compressed — skip DEFLATE, just bundle (matches the
-    // sync version's behavior: faster, same output size).
-    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
-    const zipKey = `studios/${studioId}/zips/${jobId}.zip`
-
-    await r2.send(new PutObjectCommand({
-      Bucket: r2Bucket, Key: zipKey, Body: zipBuffer, ContentType: 'application/zip',
-    }))
+    await Promise.race([
+      archiveErrorPromise,
+      (async () => {
+        await archive.finalize()
+        await uploadDonePromise
+      })(),
+    ])
 
     const downloadUrl = await getSignedUrl(
       r2,
