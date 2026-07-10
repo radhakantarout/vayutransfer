@@ -25,6 +25,31 @@ process.on('uncaughtException', (err) => {
 const s3  = new S3Client({ region: REGION })
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 
+// A transient network blip (ECONNRESET/"aborted" mid-stream) on one file used
+// to crash the entire job — the GetObjectCommand response's Body stream has
+// no error handler once handed to archiver, so a reset became an uncaught
+// exception that killed the whole Lambda, losing all progress. Downloading
+// each file fully into a buffer (with retries) before appending it means any
+// network error is caught by our own try/catch and simply retried, at the
+// cost of only ever holding ONE file in memory at a time — bounded by the
+// largest single file, not by total selection size, so 10GB+ batches are
+// still safe.
+async function downloadWithRetry(client, bucket, key, maxAttempts = 3) {
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const obj = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+      const chunks = []
+      for await (const chunk of obj.Body) chunks.push(chunk)
+      return Buffer.concat(chunks)
+    } catch (err) {
+      lastErr = err
+      console.warn(`[zip] download attempt ${attempt}/${maxAttempts} failed for ${key}: ${err.message}`)
+    }
+  }
+  throw lastErr
+}
+
 async function updateJob(jobId, patch) {
   const entries = Object.entries(patch)
   const names = Object.fromEntries(entries.map(([k], i) => [`#k${i}`, k]))
@@ -40,13 +65,14 @@ async function updateJob(jobId, patch) {
 }
 
 // ─── Lambda handler ──────────────────────────────────────────────────────────
-// Streams every source file straight into the zip archive, and streams the
-// archive's output straight into a multipart R2 upload — nothing is ever
-// buffered whole in memory. Total transfer size is bounded only by the 900s
-// Lambda execution limit, not by memory. Needed because Indian wedding
-// albums (RAW originals, multiple ceremonies) routinely run into multiple GB
-// per print-portal selection — the old in-memory JSZip approach would OOM
-// well before that.
+// Downloads one source file at a time (with retry — see downloadWithRetry)
+// into the zip archive, and streams the archive's output straight into a
+// multipart R2 upload — the zip as a whole is never buffered in memory, only
+// one file at a time is. Total transfer size is bounded by the 900s Lambda
+// execution limit and the largest single file, not by total selection size.
+// Needed because Indian wedding albums (RAW originals, multiple ceremonies)
+// routinely run into multiple GB per print-portal selection — the original
+// in-memory JSZip approach would OOM well before that.
 //
 // Payload built by app/studio/api/print/gallery/[token]/download-all/route.ts
 // (POST/init): a pre-resolved list of {fileId, filename, backend, key} — the
@@ -122,7 +148,7 @@ exports.handler = async (event) => {
     for (const f of files) {
       const client = f.backend === 'R2' ? r2 : s3
       const bucket = f.backend === 'R2' ? r2Bucket : s3Bucket
-      const obj = await client.send(new GetObjectCommand({ Bucket: bucket, Key: f.key }))
+      const buffer = await downloadWithRetry(client, bucket, f.key)
 
       let name = f.filename
       if (usedNames.has(name)) {
@@ -132,7 +158,7 @@ exports.handler = async (event) => {
           : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
       }
       usedNames.add(name)
-      archive.append(obj.Body, { name })
+      archive.append(buffer, { name })
     }
 
     await Promise.race([

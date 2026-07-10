@@ -24,6 +24,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function formatTotalSize(bytes: number): string {
+  const gb = bytes / 1024 ** 3
+  if (gb >= 1) return `${gb.toFixed(1)} GB`
+  return `${(bytes / 1024 ** 2).toFixed(0)} MB`
+}
+
+// Below this, zipping in the browser (fetch + JSZip, no server round trip) is
+// fast enough and avoids spinning up a Lambda for what's usually a handful of
+// photos. At/above it, the batch is handed to the streaming Lambda job —
+// browser memory and a single-threaded zip loop don't scale to multi-GB
+// wedding albums the way the server-side pipeline does.
+const CLIENT_ZIP_THRESHOLD_BYTES = 1024 * 1024 * 1024 // 1GB
+
 type ZipJobState =
   | { phase: 'idle' }
   | { phase: 'creating'; processed: number; total: number }
@@ -38,35 +51,78 @@ export default function PrintPortalPage() {
   const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
   const zipPollGen = useRef(0)
 
+  const downloadAllClientSide = async (myGen: number) => {
+    if (!gallery) return
+    const zipFilename = `${(gallery.project.clientName || 'photos').replace(/[^a-z0-9]+/gi, '-')}-photos.zip`
+    const { default: JSZip } = await import('jszip')
+    const zip = new JSZip()
+    const usedNames = new Set<string>()
+    let processed = 0
+
+    for (const f of gallery.files) {
+      if (zipPollGen.current !== myGen) return
+      const res = await fetch(f.downloadUrl)
+      if (!res.ok) throw new Error(`Could not fetch ${f.originalFilename}`)
+      const blob = await res.blob()
+
+      let name = f.originalFilename
+      if (usedNames.has(name)) {
+        const dot = name.lastIndexOf('.')
+        name = dot === -1 ? `${name}-${f.fileId.slice(0, 8)}` : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
+      }
+      usedNames.add(name)
+      zip.file(name, blob)
+
+      processed++
+      if (zipPollGen.current === myGen) setZipJob({ phase: 'creating', processed, total: gallery.files.length })
+    }
+
+    // JPEGs are already compressed — skip DEFLATE, just bundle.
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' })
+    if (zipPollGen.current !== myGen) return
+    const url = URL.createObjectURL(zipBlob)
+    setZipJob({ phase: 'ready', downloadUrl: url, filename: zipFilename })
+  }
+
+  const downloadAllServerSide = async (myGen: number) => {
+    const initRes = await fetch(`/studio/api/print/gallery/${token}/download-all`, { method: 'POST' }).then((r) => r.json())
+    if (!initRes.success) throw new Error('Could not start zip creation')
+    const { jobId } = initRes.data as { jobId: string }
+
+    // Poll every 2s until READY/FAILED. myGen guards against a stale loop
+    // still running if the user clicks "Download all" again mid-poll.
+    while (zipPollGen.current === myGen) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      const statusRes = await fetch(`/studio/api/print/gallery/${token}/download-all/status/${jobId}`).then((r) => r.json())
+      if (!statusRes.success) throw new Error('Lost track of the zip job')
+      const s = statusRes.data as {
+        status: string; processed: number; total: number
+        downloadUrl: string | null; filename: string | null; errorMessage: string | null
+      }
+
+      if (zipPollGen.current !== myGen) return
+
+      if (s.status === 'READY' && s.downloadUrl && s.filename) {
+        setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.filename })
+        return
+      }
+      if (s.status === 'FAILED') {
+        throw new Error(s.errorMessage ?? 'Zip creation failed')
+      }
+      setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
+    }
+  }
+
   const downloadAll = async () => {
+    if (!gallery) return
     const myGen = ++zipPollGen.current
     setZipJob({ phase: 'creating', processed: 0, total: 0 })
     try {
-      const initRes = await fetch(`/studio/api/print/gallery/${token}/download-all`, { method: 'POST' }).then((r) => r.json())
-      if (!initRes.success) throw new Error('Could not start zip creation')
-      const { jobId } = initRes.data as { jobId: string }
-
-      // Poll every 2s until READY/FAILED. myGen guards against a stale loop
-      // still running if the user clicks "Download all" again mid-poll.
-      while (zipPollGen.current === myGen) {
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-        const statusRes = await fetch(`/studio/api/print/gallery/${token}/download-all/status/${jobId}`).then((r) => r.json())
-        if (!statusRes.success) throw new Error('Lost track of the zip job')
-        const s = statusRes.data as {
-          status: string; processed: number; total: number
-          downloadUrl: string | null; filename: string | null; errorMessage: string | null
-        }
-
-        if (zipPollGen.current !== myGen) return
-
-        if (s.status === 'READY' && s.downloadUrl && s.filename) {
-          setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.filename })
-          return
-        }
-        if (s.status === 'FAILED') {
-          throw new Error(s.errorMessage ?? 'Zip creation failed')
-        }
-        setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
+      const totalBytes = gallery.files.reduce((sum, f) => sum + f.sizeBytes, 0)
+      if (totalBytes < CLIENT_ZIP_THRESHOLD_BYTES) {
+        await downloadAllClientSide(myGen)
+      } else {
+        await downloadAllServerSide(myGen)
       }
     } catch (err) {
       if (zipPollGen.current === myGen) {
@@ -85,6 +141,15 @@ export default function PrintPortalPage() {
       .catch(() => setError('Could not load print gallery.'))
       .finally(() => setLoading(false))
   }, [token])
+
+  // Client-side zips produce a blob: URL that only exists for this page's
+  // lifetime — release it once superseded or the page unmounts, otherwise
+  // the browser holds the whole zip's memory until a full reload.
+  useEffect(() => {
+    if (zipJob.phase !== 'ready' || !zipJob.downloadUrl.startsWith('blob:')) return
+    const url = zipJob.downloadUrl
+    return () => URL.revokeObjectURL(url)
+  }, [zipJob])
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -105,6 +170,7 @@ export default function PrintPortalPage() {
   const { project, files, expiresAt } = gallery
   const editedCount  = files.filter((f) => f.isEdited).length
   const originalCount = files.length - editedCount
+  const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0)
 
   return (
     <div className="min-h-screen bg-bg">
@@ -136,6 +202,10 @@ export default function PrintPortalPage() {
             <div className="bg-card border border-border rounded-xl px-4 py-2 text-center">
               <div className="text-lg font-bold text-text-primary">{files.length}</div>
               <div className="text-xs text-muted">Total photos</div>
+            </div>
+            <div className="bg-card border border-border rounded-xl px-4 py-2 text-center">
+              <div className="text-lg font-bold text-text-primary">{formatTotalSize(totalBytes)}</div>
+              <div className="text-xs text-muted">Total size</div>
             </div>
             {editedCount > 0 && (
               <div className="bg-card border border-border rounded-xl px-4 py-2 text-center">
