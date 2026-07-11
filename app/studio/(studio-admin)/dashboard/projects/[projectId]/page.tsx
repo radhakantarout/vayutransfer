@@ -4,7 +4,15 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile, EventType } from '@/types/studio'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
-import { CHUNK_SIZE, uploadFileInChunks, type PartRecord } from '@/lib/studio/clientUpload'
+import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
+
+// Selecting hundreds/thousands of files and firing them all at once
+// overwhelms both the browser's connection pool and the backend — this
+// bounds how many upload chains run concurrently, matching EventSection.tsx.
+const MAX_CONCURRENT_UPLOADS = 4
+// A file sits at 'UPLOADING' for the first several seconds of any legitimate
+// upload — only treat it as genuinely stuck once it's been that long.
+const STALE_UPLOAD_MS = 15 * 60 * 1000
 
 interface UploadItem {
   id: string
@@ -26,7 +34,7 @@ async function initOrResumeUpload(
 ): Promise<{ fileId: string; uploadId: string; presignedUrls: string[]; completedParts: PartRecord[] }> {
   const existing = loadUploadResume(projectId, file.name, file.size, file.lastModified)
   if (existing) {
-    const statusRes = await fetch(
+    const statusRes = await fetchWithTimeout(
       `/studio/api/admin/projects/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`
     ).then((r) => r.json()).catch(() => null)
     if (statusRes?.success) {
@@ -40,7 +48,7 @@ async function initOrResumeUpload(
     clearUploadResume(projectId, file.name, file.size, file.lastModified)
   }
 
-  const initRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-url`, {
+  const initRes = await fetchWithTimeout(`/studio/api/admin/projects/${projectId}/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
@@ -138,7 +146,7 @@ export default function ProjectDetailPage() {
       })
 
       // 3. Complete
-      const completeRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-complete`, {
+      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${projectId}/upload-complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
@@ -166,8 +174,10 @@ export default function ProjectDetailPage() {
     }))
     // Pure state update — no side effects inside the updater (StrictMode calls updaters twice in dev)
     setUploads((prev) => [...prev, ...items])
-    // Start uploads outside the updater so they fire exactly once
-    items.forEach((item) => uploadFile(item.file, item.id))
+    // Start uploads outside the updater so they fire exactly once, bounded
+    // to a limited number running concurrently — firing hundreds/thousands
+    // at once overwhelms the browser's connection pool and the backend.
+    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
   }
 
   const openEdit = () => {
@@ -544,22 +554,35 @@ export default function ProjectDetailPage() {
         <div>
           <h3 className="text-sm font-semibold text-text-primary mb-4">{files.length} photos</h3>
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-            {files.map((f) => (
-              <div key={f.fileId} className="relative aspect-square rounded-lg overflow-hidden bg-card border border-border group">
-                {f.r2PreviewUrl ? (
-                  <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-muted text-xs">
-                    {f.processingStatus === 'PROCESSING' ? '⏳' : '📄'}
-                  </div>
-                )}
-                {f.processingStatus !== 'READY' && (
-                  <div className="absolute inset-0 bg-bg/60 flex items-center justify-center text-xs text-muted">
-                    {f.processingStatus}
-                  </div>
-                )}
-              </div>
-            ))}
+            {files.map((f) => {
+              // A file sits at 'UPLOADING' for the first several seconds of
+              // any legitimate upload — only flag it as stuck once it's been
+              // that way a while. Once bytes are in R2, the admin sees the
+              // real photo immediately (r2PreviewUrl now falls back to the
+              // original when no watermark preview exists yet) — the status
+              // badge below is only for genuinely problematic states, not a
+              // blanket "not READY yet" overlay that would otherwise cover a
+              // perfectly viewable image.
+              const isStaleUpload = f.processingStatus === 'UPLOADING'
+                && (Date.now() - new Date(f.uploadedAt).getTime()) > STALE_UPLOAD_MS
+              const isGenuineFailure = f.processingStatus === 'FAILED'
+              return (
+                <div key={f.fileId} className="relative aspect-square rounded-lg overflow-hidden bg-card border border-border group">
+                  {f.r2PreviewUrl ? (
+                    <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-muted text-xs">
+                      {f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING' ? '⏳' : '📄'}
+                    </div>
+                  )}
+                  {(isStaleUpload || isGenuineFailure) && (
+                    <div className="absolute inset-0 bg-bg/60 flex items-center justify-center text-xs text-muted text-center px-1">
+                      {isStaleUpload ? "Upload didn't finish" : 'Watermark failed'}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

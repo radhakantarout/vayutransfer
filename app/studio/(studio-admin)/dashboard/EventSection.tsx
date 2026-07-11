@@ -7,7 +7,18 @@ import type { StudioProject, MediaFile, Selection, StudioTransfer } from '@/type
 import EditEventModal from './EditEventModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
-import { CHUNK_SIZE, uploadFileInChunks, type PartRecord } from '@/lib/studio/clientUpload'
+import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
+
+// At most this many files upload at once — selecting hundreds/thousands of
+// files and firing them all simultaneously overwhelms both the browser's
+// connection pool and the backend (each one does its own multipart-initiate
+// + N part PUTs + complete), which is what let large batches silently stall
+// past a few hundred files with no error ever surfacing.
+const MAX_CONCURRENT_UPLOADS = 4
+// A file record sits at 'UPLOADING' for the first several seconds of any
+// legitimate upload — only treat it as genuinely stuck once it's been that
+// long with no progress, so slow-but-working uploads aren't misclassified.
+const STALE_UPLOAD_MS = 15 * 60 * 1000
 
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
@@ -25,7 +36,7 @@ async function initOrResumeUpload(
 ): Promise<{ fileId: string; uploadId: string; presignedUrls: string[]; completedParts: PartRecord[] }> {
   const existing = loadUploadResume(projectId, file.name, file.size, file.lastModified)
   if (existing) {
-    const statusRes = await fetch(
+    const statusRes = await fetchWithTimeout(
       `/studio/api/admin/projects/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`
     ).then((r) => r.json()).catch(() => null)
     if (statusRes?.success) {
@@ -39,7 +50,7 @@ async function initOrResumeUpload(
     clearUploadResume(projectId, file.name, file.size, file.lastModified)
   }
 
-  const initRes = await fetch(`/studio/api/admin/projects/${projectId}/upload-url`, {
+  const initRes = await fetchWithTimeout(`/studio/api/admin/projects/${projectId}/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
@@ -123,6 +134,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [expanded, setExpanded]         = useState(false)
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
+  const [deleteError, setDeleteError]   = useState<string | null>(null)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [backfilling, setBackfilling]   = useState(false)
   const [backfillMsg, setBackfillMsg]   = useState<string | null>(null)
@@ -551,8 +563,17 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const deleteFiles = async (fileIds: string[]) => {
     if (!fileIds.length) return
     setDeleting(true)
-    await Promise.all(fileIds.map(fid => fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })))
+    setDeleteError(null)
+    const results = await Promise.all(fileIds.map(fid =>
+      fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })
+        .then(async (res) => ({ fid, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
+        .catch(() => ({ fid, ok: false }))
+    ))
+    const failed = results.filter(r => !r.ok)
     setDeleteMode(null); onSelectionChange(new Set()); setDeleting(false)
+    if (failed.length > 0) {
+      setDeleteError(`Could not delete ${failed.length} of ${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} — please try again.`)
+    }
     await loadFiles(); onUpdated()
   }
 
@@ -576,7 +597,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, completedParts, (uploadedBytes, partsDone) => {
         update({ progress: Math.round((partsDone / partCount) * 100), uploadedBytes })
       })
-      const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
+      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
       }).then(r => r.json())
@@ -595,7 +616,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const handleFiles = (selected: FileList | null) => {
     if (!selected) return
     const items: UploadItem[] = Array.from(selected).map(f => ({ id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0 }))
-    setUploads(prev => [...prev, ...items]); items.forEach(item => uploadFile(item.file, item.id))
+    setUploads(prev => [...prev, ...items])
+    // Bounded concurrency — selecting hundreds/thousands of files and firing
+    // them all at once is what caused large batches to silently stall past a
+    // few hundred files (see MAX_CONCURRENT_UPLOADS comment above).
+    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
   }
 
   const generateShareLink = async () => {
@@ -1009,6 +1034,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
             ) : (
               <>
+                {deleteError && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3 bg-red-500/10 text-red-500">
+                    {deleteError}
+                    <button onClick={() => setDeleteError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
+                  </div>
+                )}
                 {viewFilter !== 'all' && (
                   <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
                     ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
@@ -1070,7 +1101,13 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     onMouseDown={handleGridMouseDown}>
                     {displayFiles.map(f => {
                       const isSelected  = selectedIds.has(f.fileId)
-                      const isFailed    = !['PROCESSING', 'READY'].includes(f.processingStatus)
+                      // A file sits at 'UPLOADING' for the first several
+                      // seconds of any legitimate upload — only treat it as
+                      // genuinely stuck once it's been that way a while.
+                      const isStaleUpload = f.processingStatus === 'UPLOADING'
+                        && (Date.now() - new Date(f.uploadedAt).getTime()) > STALE_UPLOAD_MS
+                      const isGenuineFailure = f.processingStatus === 'FAILED'
+                      const isFailed    = isGenuineFailure || isStaleUpload
                       const editComment = editCommentMap.get(f.fileId)
                       return (
                         <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
@@ -1079,7 +1116,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                           {f.r2PreviewUrl
                             ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
                             : <div className="w-full h-full flex items-center justify-center">
-                                {f.processingStatus === 'PROCESSING'
+                                {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
                                   ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
                                   : <span className="text-muted text-lg">📄</span>}
                               </div>}
@@ -1092,7 +1129,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                             <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
                               {retryingIds.has(f.fileId) ? (
                                 <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                              ) : (
+                              ) : isGenuineFailure ? (
                                 <>
                                   <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
                                     title="Retry processing"
@@ -1102,6 +1139,17 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                                     </svg>
                                   </button>
                                   <span className="text-[8px] text-muted font-medium">Tap to retry</span>
+                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                    Remove
+                                  </button>
+                                </>
+                              ) : (
+                                // isStaleUpload — the raw upload itself never finished, so there
+                                // are no bytes in R2 to retry a watermark against. Only real
+                                // recovery is removing this record and re-selecting the file.
+                                <>
+                                  <span className="text-[8px] text-muted font-medium text-center leading-tight">Upload didn't finish</span>
                                   <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
                                     className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
                                     Remove
