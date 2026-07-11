@@ -324,6 +324,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </svg>
             Dashboard
           </button>
+          <Link href="/studio/dashboard/projects" onClick={clearSelection}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              pathname === '/studio/dashboard/projects'
+                ? 'bg-accent/10 text-accent'
+                : 'text-muted hover:text-text-primary hover:bg-border/50'
+            }`}>
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            My Projects
+          </Link>
           <Link href="/studio/dashboard/website" onClick={clearSelection}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               pathname.startsWith('/studio/dashboard/website')
@@ -344,7 +355,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
-            Bookings
+            My Booking
           </Link>
         </nav>
 

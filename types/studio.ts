@@ -90,6 +90,9 @@ export interface StudioProject {
   // event card. Falls back to the first READY photo by displayOrder when
   // unset (or if the chosen file was since deleted).
   coverPhotoFileId?: string
+  // Admin-only favorite flag for the My Projects dashboard — has no effect
+  // on client-facing views.
+  isStarred?: boolean
   createdAt: string
   updatedAt: string
 }

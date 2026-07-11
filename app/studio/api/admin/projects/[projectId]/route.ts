@@ -23,29 +23,45 @@ export async function PATCH(
 
     const { projectId } = params
     const body = await req.json().catch(() => ({}))
-    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId, isStarred } = body
 
-    // Set-cover-photo is a separate, smaller update — doesn't require the
-    // full edit-details fields to also be present.
-    if (coverPhotoFileId !== undefined && clientName === undefined) {
+    // Set-cover-photo and set-starred are separate, smaller updates — don't
+    // require the full edit-details fields to also be present.
+    if ((coverPhotoFileId !== undefined || isStarred !== undefined) && clientName === undefined) {
       const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId, projectId })
       if (!project) {
         return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
       }
-      if (coverPhotoFileId !== null) {
+      if (coverPhotoFileId !== undefined && coverPhotoFileId !== null) {
         const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId: coverPhotoFileId })
         if (!file || file.studioId !== auth.studioId) {
           return NextResponse.json({ success: false, error: 'NOT_FOUND', message: 'Photo not found in this event' }, { status: 404 })
         }
       }
-      await studioUpdateItem(
-        TABLES.projects,
-        { studioId: auth.studioId, projectId },
-        coverPhotoFileId === null
-          ? 'REMOVE coverPhotoFileId SET updatedAt = :now'
-          : 'SET coverPhotoFileId = :cover, updatedAt = :now',
-        coverPhotoFileId === null ? { ':now': new Date().toISOString() } : { ':cover': coverPhotoFileId, ':now': new Date().toISOString() }
-      )
+
+      const now = new Date().toISOString()
+      const updates: string[] = ['updatedAt = :now']
+      const removes: string[] = []
+      const values: Record<string, unknown> = { ':now': now }
+
+      if (coverPhotoFileId !== undefined) {
+        if (coverPhotoFileId === null) {
+          removes.push('coverPhotoFileId')
+        } else {
+          updates.push('coverPhotoFileId = :cover')
+          values[':cover'] = coverPhotoFileId
+        }
+      }
+      if (isStarred !== undefined) {
+        updates.push('isStarred = :starred')
+        values[':starred'] = isStarred
+      }
+
+      const expression = removes.length > 0
+        ? `SET ${updates.join(', ')} REMOVE ${removes.join(', ')}`
+        : `SET ${updates.join(', ')}`
+
+      await studioUpdateItem(TABLES.projects, { studioId: auth.studioId, projectId }, expression, values)
       return NextResponse.json({ success: true, data: { projectId } })
     }
 
