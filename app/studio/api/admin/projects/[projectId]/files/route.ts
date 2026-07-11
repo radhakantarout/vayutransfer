@@ -43,12 +43,18 @@ export async function GET(
       return (a.uploadedAt ?? '').localeCompare(b.uploadedAt ?? '')
     })
 
-    // For READY image files without an R2 preview (dev mode / pre-Lambda), or
-    // with an edited version (whose preview is never cached), generate a
-    // presigned view URL so the admin sees the current photo immediately.
+    // The studio owner is the owner of their own originals — the admin grid
+    // shouldn't gate on the watermark Lambda finishing at all. getMediaPreviewUrl
+    // already falls back to a raw signed view of the current file when no
+    // watermark preview exists yet (or watermarking failed), so as soon as a
+    // file's bytes actually exist in R2/S3 it gets *some* viewable image —
+    // watermarked once the Lambda finishes, the real original before/if it
+    // hasn't. Only skip files still 'UPLOADING': the multipart upload hasn't
+    // been completed yet, so there's no real object behind the key and a
+    // signed URL would just 404.
     const enriched = await Promise.all(
       files.map(async (f) => {
-        if (f.processingStatus !== 'READY') return f
+        if (f.processingStatus === 'UPLOADING') return f
         const previewUrl = await getMediaPreviewUrl(f)
         return { ...f, r2PreviewUrl: previewUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
       })

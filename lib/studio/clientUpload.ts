@@ -8,6 +8,15 @@
 
 export const CHUNK_SIZE = 50 * 1024 * 1024
 export const MAX_PART_RETRIES = 3
+// A 50MB chunk on a slow connection can legitimately take a while — generous
+// on purpose. Without any timeout at all, a request that never gets a
+// response just hangs forever (neither resolves nor rejects), which is what
+// let hundreds of large-batch uploads get stuck with no error ever surfacing.
+export const PART_UPLOAD_TIMEOUT_MS = 120_000
+// The lightweight JSON init/complete calls should always be fast — a much
+// shorter timeout here still gives real headroom without letting a truly
+// wedged request sit unnoticed for two minutes.
+export const UPLOAD_JSON_TIMEOUT_MS = 30_000
 
 export type PartRecord = { PartNumber: number; ETag: string }
 
@@ -18,7 +27,7 @@ export async function uploadPartWithRetry(url: string, chunk: Blob): Promise<str
   let lastErr: unknown
   for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
     try {
-      const res = await fetch(url, { method: 'PUT', body: chunk })
+      const res = await fetch(url, { method: 'PUT', body: chunk, signal: AbortSignal.timeout(PART_UPLOAD_TIMEOUT_MS) })
       if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
       return res.headers.get('ETag') ?? ''
     } catch (err) {
@@ -27,6 +36,32 @@ export async function uploadPartWithRetry(url: string, chunk: Blob): Promise<str
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('Part upload failed')
+}
+
+// Wraps fetch with a timeout for the small JSON init/complete/status calls —
+// callers just pass their usual fetch args, this only adds the abort signal.
+export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = UPLOAD_JSON_TIMEOUT_MS): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+}
+
+// Runs `worker` over `items` with at most `limit` running concurrently —
+// selecting 1000 files and firing 1000 simultaneous upload chains at once
+// overwhelms both the browser's connection pool and the backend (each chain
+// does its own multipart-initiate + N part PUTs + complete). This keeps a
+// bounded number active at a time; the rest simply wait their turn.
+export async function runWithConcurrencyLimit<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0
+  const runNext = async (): Promise<void> => {
+    const i = nextIndex++
+    if (i >= items.length) return
+    await worker(items[i], i)
+    await runNext()
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runNext()))
 }
 
 // Uploads every remaining chunk of `file` in order, skipping any part number
