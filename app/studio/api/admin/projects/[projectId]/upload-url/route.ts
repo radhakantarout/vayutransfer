@@ -55,7 +55,12 @@ export async function POST(
       sizeBytes,
       storageBackend: 'R2',
       r2Key,
-      watermarkEnabled: true,
+      // Clean by default — the studio admin explicitly applies watermark
+      // (single photo or bulk) when they want it, rather than every upload
+      // being auto-protected. The watermark Lambda already fully respects
+      // this flag (still resizes to 1200px either way, just skips the
+      // overlay when false), so this needs no new image pipeline.
+      watermarkEnabled: false,
       displayOrder: Date.now(),
       uploadedAt: now,
       processingStatus: 'UPLOADING',

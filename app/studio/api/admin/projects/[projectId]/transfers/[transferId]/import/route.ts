@@ -52,7 +52,9 @@ export async function POST(
       sizeBytes: transfer.sizeBytes,
       storageBackend: 'R2',
       r2Key: transfer.r2Key,
-      watermarkEnabled: true,
+      // Clean by default, same as any other upload — the admin applies
+      // watermark explicitly when they want it, not automatically on import.
+      watermarkEnabled: false,
       displayOrder: Date.now(),
       uploadedAt: now,
       processingStatus: process.env.WATERMARK_LAMBDA_ARN ? 'PROCESSING' : 'READY',
@@ -75,7 +77,7 @@ export async function POST(
         studioId,
         sourceKey: transfer.r2Key,
         sourceBackend: 'R2',
-        watermarkEnabled: true,
+        watermarkEnabled: mediaFile.watermarkEnabled,
         fileType,
       }).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
     }
