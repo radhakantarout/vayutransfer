@@ -9,7 +9,8 @@ import {
 } from '@/lib/studio/dynamodb'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 
-// PATCH /studio/api/admin/projects/[projectId] — edit project details
+// PATCH /studio/api/admin/projects/[projectId] — edit project details, or
+// (as a standalone lightweight update) set the event's cover photo
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { projectId: string } }
@@ -22,7 +23,31 @@ export async function PATCH(
 
     const { projectId } = params
     const body = await req.json().catch(() => ({}))
-    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId } = body
+
+    // Set-cover-photo is a separate, smaller update — doesn't require the
+    // full edit-details fields to also be present.
+    if (coverPhotoFileId !== undefined && clientName === undefined) {
+      const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId, projectId })
+      if (!project) {
+        return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+      }
+      if (coverPhotoFileId !== null) {
+        const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId: coverPhotoFileId })
+        if (!file || file.studioId !== auth.studioId) {
+          return NextResponse.json({ success: false, error: 'NOT_FOUND', message: 'Photo not found in this event' }, { status: 404 })
+        }
+      }
+      await studioUpdateItem(
+        TABLES.projects,
+        { studioId: auth.studioId, projectId },
+        coverPhotoFileId === null
+          ? 'REMOVE coverPhotoFileId SET updatedAt = :now'
+          : 'SET coverPhotoFileId = :cover, updatedAt = :now',
+        coverPhotoFileId === null ? { ':now': new Date().toISOString() } : { ':cover': coverPhotoFileId, ':now': new Date().toISOString() }
+      )
+      return NextResponse.json({ success: true, data: { projectId } })
+    }
 
     if (!clientName || !eventDate || !eventType) {
       return NextResponse.json(

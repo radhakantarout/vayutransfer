@@ -5,7 +5,7 @@ import { deleteMediaObjects } from '@/lib/studio/storage'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
 import type { MediaFile } from '@/types/studio'
 
-// PATCH — toggle watermark or update display order
+// PATCH — toggle watermark, update display order, or rename
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { projectId: string; fileId: string } }
@@ -17,7 +17,7 @@ export async function PATCH(
     }
 
     const { projectId, fileId } = params
-    const { watermarkEnabled, displayOrder } = await req.json()
+    const { watermarkEnabled, displayOrder, originalFilename } = await req.json()
     const now = new Date().toISOString()
 
     const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
@@ -27,6 +27,11 @@ export async function PATCH(
 
     const updates: string[] = ['updatedAt = :now']
     const values: Record<string, unknown> = { ':now': now }
+
+    if (typeof originalFilename === 'string' && originalFilename.trim().length > 0) {
+      updates.push('originalFilename = :fn')
+      values[':fn'] = originalFilename.trim()
+    }
 
     if (watermarkEnabled !== undefined) {
       updates.push('watermarkEnabled = :wm')

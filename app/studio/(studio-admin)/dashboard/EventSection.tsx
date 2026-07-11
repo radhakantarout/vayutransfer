@@ -8,6 +8,7 @@ import EditEventModal from './EditEventModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
+import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -135,6 +136,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [deleteError, setDeleteError]   = useState<string | null>(null)
+  const [renamingFile, setRenamingFile] = useState<MediaFile | null>(null)
+  const [renameValue, setRenameValue]   = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
+  const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [backfilling, setBackfilling]   = useState(false)
   const [backfillMsg, setBackfillMsg]   = useState<string | null>(null)
@@ -187,9 +193,18 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [sendTransferProgress, setSendTransferProgress] = useState<{ filename: string; percent: number } | null>(null)
   const transferFileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Admin photo preview (for floating selection pill) ─────
+  // ── Admin photo preview (lightbox) ─────────────────────────
+  // 'selected' = the floating-pill "Preview" flow (only currently-selected
+  // photos, existing behavior). 'all' = opened via a single tile's "Open"
+  // menu action — browses every visible photo in the grid, not just a
+  // selection.
   const [showAdminPreview, setShowAdminPreview] = useState(false)
+  const [previewMode, setPreviewMode]           = useState<'selected' | 'all'>('selected')
   const [adminPreviewIdx, setAdminPreviewIdx]   = useState(0)
+  const [showPhotoInfo, setShowPhotoInfo]       = useState(false)
+  // No backend field for image dimensions — read it client-side once the
+  // full-size image actually loads in the lightbox, free, no new API call.
+  const [previewImgDims, setPreviewImgDims]     = useState<{ width: number; height: number } | null>(null)
   const adminTouchStartX = useRef<number>(0)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -292,19 +307,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Keyboard navigation for admin photo preview
-  useEffect(() => {
-    if (!showAdminPreview) return
-    const selPhotos = files.filter(f => selectedIds.has(f.fileId))
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(selPhotos.length - 1, i + 1))
-      if (e.key === 'Escape')     setShowAdminPreview(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [showAdminPreview, files, selectedIds])
 
   const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || (e.target as Element).closest('[data-fileid]')) return
@@ -527,6 +529,58 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     if (res.success) window.open(res.data.url, '_blank')
   }
 
+  // Current/best version (edited if one exists) — the general per-photo
+  // "Download" action, distinct from downloadOriginalEdit's forced-original.
+  const downloadPhoto = async (fileId: string) => {
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/download`).then(r => r.json())
+    if (res.success) window.open(res.data.url, '_blank')
+  }
+
+  const toggleWatermark = async (fileId: string, watermarkEnabled: boolean) => {
+    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ watermarkEnabled }),
+    }).catch(() => {})
+    await loadFiles()
+  }
+
+  const copyFilename = async (filename: string) => {
+    await navigator.clipboard.writeText(filename)
+  }
+
+  const saveRename = async () => {
+    if (!renamingFile || !renameValue.trim()) return
+    setRenameSaving(true)
+    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${renamingFile.fileId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originalFilename: renameValue.trim() }),
+    }).catch(() => {})
+    setRenameSaving(false)
+    setRenamingFile(null)
+    await loadFiles()
+  }
+
+  const setCoverPhoto = async (fileId: string) => {
+    setSettingCoverId(fileId)
+    await fetch(`/studio/api/admin/projects/${project.projectId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coverPhotoFileId: fileId }),
+    }).catch(() => {})
+    setSettingCoverId(null)
+    onUpdated()
+  }
+
+  const bulkApplyWatermark = async (watermarkEnabled: boolean) => {
+    if (selectedIds.size === 0) return
+    setBulkWatermarking(true)
+    await fetch(`/studio/api/admin/projects/${project.projectId}/watermark`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileIds: Array.from(selectedIds), watermarkEnabled }),
+    }).catch(() => {})
+    setBulkWatermarking(false)
+    setTimeout(loadFiles, 3000)
+  }
+
   // ── Client selections filter (header buttons) ─────────────
   const loadSelections = async () => {
     if (clientSelections !== null) return
@@ -679,6 +733,8 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     : 0
 
   const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
+  const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : displayFiles
+  const currentPreviewPhoto = previewPhotos[adminPreviewIdx] as MediaFile | undefined
 
   // Face index derived
   const isIndexing = !!faceStatus?.activeJob
@@ -686,10 +742,55 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const hasPartial = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) > 0
   const neverRun   = !isIndexing && (faceStatus?.indexedPhotos ?? 0) === 0
 
+  // Keyboard navigation for the admin photo preview lightbox — placed here
+  // (not with the other effects near the top) because it needs previewPhotos,
+  // which is derived from displayFiles and can't be computed before that.
+  useEffect(() => {
+    if (!showAdminPreview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
+      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(previewPhotos.length - 1, i + 1))
+      if (e.key === 'Escape')     { setShowAdminPreview(false); setShowPhotoInfo(false) }
+      if (e.key === 'i' || e.key === 'I') setShowPhotoInfo(v => !v)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAdminPreview, previewPhotos.length])
+
+  // Clear stale dimensions immediately when switching photos — otherwise the
+  // previous photo's size would flash briefly before the new image loads.
+  useEffect(() => { setPreviewImgDims(null) }, [currentPreviewPhoto?.fileId])
+
   return (
     <>
       {editOpen && (
         <EditEventModal project={project} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onUpdated() }} />
+      )}
+
+      {/* ── Rename modal ────────────────────────────────────── */}
+      {renamingFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="text-base font-bold text-text-primary">Rename photo</h3>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveRename() }}
+              className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setRenamingFile(null)} disabled={renameSaving}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted hover:text-text-primary hover:bg-border/40 transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={saveRename} disabled={renameSaving || !renameValue.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-accent text-bg text-sm font-bold hover:bg-accent/90 transition-colors disabled:opacity-60">
+                {renameSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Delete confirmation modal ───────────────────────── */}
@@ -729,52 +830,155 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         </div>
       )}
 
-      {/* ── Admin photo preview modal ───────────────────────── */}
-      {showAdminPreview && selectedPhotosForPreview.length > 0 && (
-        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => setShowAdminPreview(false)}>
+      {/* ── Admin photo preview modal (lightbox) ──────────────── */}
+      {showAdminPreview && previewPhotos.length > 0 && (
+        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <span className="text-white/70 text-sm font-semibold">{adminPreviewIdx + 1} / {selectedPhotosForPreview.length}</span>
-            <span className="text-white font-bold text-base">Selected Photos</span>
-            <button onClick={() => setShowAdminPreview(false)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-white/50 text-xs font-semibold flex-shrink-0">{adminPreviewIdx + 1} / {previewPhotos.length}</span>
+              <span className="text-white font-semibold text-sm truncate">{currentPreviewPhoto?.originalFilename}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {currentPreviewPhoto && (
+                <button onClick={() => downloadPhoto(currentPreviewPhoto.fileId)} title="Download"
+                  className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                </button>
+              )}
+              <button onClick={() => setShowPhotoInfo(v => !v)} title="Info (i)"
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${showPhotoInfo ? 'bg-accent text-bg' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+              </button>
+              {currentPreviewPhoto && (
+                <PhotoActionsMenu
+                  align="right"
+                  trigger={
+                    <span className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white cursor-pointer">
+                      <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
+                      </svg>
+                    </span>
+                  }
+                  actions={[
+                    {
+                      label: currentPreviewPhoto.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ),
+                      onClick: () => toggleWatermark(currentPreviewPhoto.fileId, !currentPreviewPhoto.watermarkEnabled),
+                    },
+                    {
+                      label: 'Copy filename',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                        </svg>
+                      ),
+                      onClick: () => copyFilename(currentPreviewPhoto.originalFilename),
+                    },
+                    {
+                      label: 'Rename',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                        </svg>
+                      ),
+                      onClick: () => { setRenamingFile(currentPreviewPhoto); setRenameValue(currentPreviewPhoto.originalFilename) },
+                    },
+                    {
+                      label: project.coverPhotoFileId === currentPreviewPhoto.fileId ? '✓ Cover Photo' : 'Set as Cover',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                        </svg>
+                      ),
+                      onClick: () => setCoverPhoto(currentPreviewPhoto.fileId),
+                    },
+                    {
+                      label: 'Delete',
+                      danger: true,
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                      ),
+                      onClick: () => { setShowAdminPreview(false); deleteFiles([currentPreviewPhoto.fileId]) },
+                    },
+                  ]}
+                />
+              )}
+              <button onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
-          {/* Main photo + arrows */}
-          <div className="flex-1 flex items-center justify-center overflow-hidden relative"
-            onTouchStart={e => { adminTouchStartX.current = e.touches[0].clientX }}
-            onTouchEnd={e => {
-              const diff = adminTouchStartX.current - e.changedTouches[0].clientX
-              if (Math.abs(diff) < 50) return
-              if (diff > 0) setAdminPreviewIdx(i => Math.min(selectedPhotosForPreview.length - 1, i + 1))
-              else setAdminPreviewIdx(i => Math.max(0, i - 1))
-            }}
-            onClick={e => e.stopPropagation()}>
-            <img key={selectedPhotosForPreview[adminPreviewIdx]?.fileId}
-              src={selectedPhotosForPreview[adminPreviewIdx]?.r2PreviewUrl ?? ''}
-              alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
-            {adminPreviewIdx > 0 && (
-              <button onClick={() => setAdminPreviewIdx(i => i - 1)}
-                className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-            )}
-            {adminPreviewIdx < selectedPhotosForPreview.length - 1 && (
-              <button onClick={() => setAdminPreviewIdx(i => i + 1)}
-                className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
+          {/* Body: main photo + optional info panel */}
+          <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative"
+              onTouchStart={e => { adminTouchStartX.current = e.touches[0].clientX }}
+              onTouchEnd={e => {
+                const diff = adminTouchStartX.current - e.changedTouches[0].clientX
+                if (Math.abs(diff) < 50) return
+                if (diff > 0) setAdminPreviewIdx(i => Math.min(previewPhotos.length - 1, i + 1))
+                else setAdminPreviewIdx(i => Math.max(0, i - 1))
+              }}
+              onClick={e => e.stopPropagation()}>
+              <img key={currentPreviewPhoto?.fileId}
+                src={currentPreviewPhoto?.r2PreviewUrl ?? ''}
+                onLoad={e => setPreviewImgDims({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+                alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
+              {adminPreviewIdx > 0 && (
+                <button onClick={() => setAdminPreviewIdx(i => i - 1)}
+                  className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
+                </button>
+              )}
+              {adminPreviewIdx < previewPhotos.length - 1 && (
+                <button onClick={() => setAdminPreviewIdx(i => i + 1)}
+                  className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {showPhotoInfo && currentPreviewPhoto && (
+              <div className="w-72 flex-shrink-0 bg-card border-l border-border overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-bold text-text-primary">Photo info</h3>
+                <div className="space-y-3">
+                  {[
+                    ['Filename', currentPreviewPhoto.originalFilename],
+                    ['Size', fmtBytes(currentPreviewPhoto.sizeBytes)],
+                    ['Type', currentPreviewPhoto.mimeType],
+                    ...(previewImgDims ? [['Dimensions', `${previewImgDims.width} × ${previewImgDims.height}`]] : []),
+                    ['Uploaded', fmtDate(currentPreviewPhoto.uploadedAt)],
+                    ['Watermark', currentPreviewPhoto.watermarkEnabled ? 'Applied' : 'Not applied'],
+                    ...(currentPreviewPhoto.editedS3Key || currentPreviewPhoto.editedR2Key ? [['Edited', 'Yes']] : []),
+                    ...(currentPreviewPhoto.faceIndexed ? [['Faces detected', String(currentPreviewPhoto.faceCount ?? 0)]] : []),
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <div className="text-[10px] uppercase tracking-wide text-muted font-semibold">{label}</div>
+                      <div className="text-xs text-text-primary break-words mt-0.5">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
           {/* Thumbnail strip */}
           <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
-            {selectedPhotosForPreview.map((photo, idx) => (
+            {previewPhotos.map((photo, idx) => (
               <button key={photo.fileId} onClick={() => setAdminPreviewIdx(idx)}
                 className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${
                   idx === adminPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'}`}>
@@ -782,7 +986,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               </button>
             ))}
           </div>
-          {selectedPhotosForPreview.length > 1 && (
+          {previewPhotos.length > 1 && !showPhotoInfo && (
             <div className="absolute bottom-[90px] inset-x-0 flex justify-center pointer-events-none">
               <span className="text-white/30 text-xs">← swipe to browse →</span>
             </div>
@@ -1099,7 +1303,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   <div ref={gridRef} className="relative select-none"
                     style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
                     onMouseDown={handleGridMouseDown}>
-                    {displayFiles.map(f => {
+                    {displayFiles.map((f, idx) => {
                       const isSelected  = selectedIds.has(f.fileId)
                       // A file sits at 'UPLOADING' for the first several
                       // seconds of any legitimate upload — only treat it as
@@ -1111,8 +1315,80 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       const editComment = editCommentMap.get(f.fileId)
                       return (
                         <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
-                          className={`relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
+                          className={`group relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
                             ${isSelected ? 'border-accent ring-2 ring-accent/40 scale-[0.95]' : 'border-border hover:border-border/60'}`}>
+                          {!isFailed && (
+                            <div className="absolute top-1 right-1 z-[1] opacity-70 group-hover:opacity-100 transition-opacity">
+                              <PhotoActionsMenu
+                                align="right"
+                                trigger={
+                                  <span className="w-6 h-6 flex items-center justify-center rounded-md bg-black/50 hover:bg-black/70 text-white cursor-pointer">
+                                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                      <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
+                                    </svg>
+                                  </span>
+                                }
+                                actions={[
+                                  {
+                                    label: 'Open', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5v6m0-6h6m-6 0l6.75 6.75M19.5 4.5v6m0-6h-6m6 0l-6.75 6.75M4.5 19.5v-6m0 6h6m-6 0l6.75-6.75M19.5 19.5v-6m0 6h-6m6 0l-6.75-6.75" />
+                                      </svg>
+                                    ),
+                                    onClick: () => { setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) },
+                                  },
+                                  {
+                                    label: 'Download', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                      </svg>
+                                    ),
+                                    onClick: () => downloadPhoto(f.fileId),
+                                  },
+                                  {
+                                    label: 'Copy filename', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                                      </svg>
+                                    ),
+                                    onClick: () => copyFilename(f.originalFilename),
+                                  },
+                                  {
+                                    label: f.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      </svg>
+                                    ),
+                                    onClick: () => toggleWatermark(f.fileId, !f.watermarkEnabled),
+                                  },
+                                  {
+                                    label: 'Rename', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                                      </svg>
+                                    ),
+                                    onClick: () => { setRenamingFile(f); setRenameValue(f.originalFilename) },
+                                  },
+                                  {
+                                    label: project.coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                                      </svg>
+                                    ),
+                                    onClick: () => setCoverPhoto(f.fileId),
+                                  },
+                                  {
+                                    label: 'Delete', danger: true, icon: (
+                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                      </svg>
+                                    ),
+                                    onClick: () => deleteFiles([f.fileId]),
+                                  },
+                                ]}
+                              />
+                            </div>
+                          )}
                           {f.r2PreviewUrl
                             ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
                             : <div className="w-full h-full flex items-center justify-center">
@@ -1585,13 +1861,31 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               <span className="flex-1 text-sm font-bold text-text-primary">{selectedCount} selected</span>
 
               {/* 👁 Preview */}
-              <button onClick={() => { setAdminPreviewIdx(0); setShowAdminPreview(true) }}
+              <button onClick={() => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) }}
                 className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </button>
+
+              {/* 🄫 Watermark (bulk) */}
+              <PhotoActionsMenu
+                align="right"
+                trigger={
+                  <span className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer ${bulkWatermarking ? 'text-accent' : 'text-muted hover:text-text-primary hover:bg-border/60'}`} aria-label="Watermark options">
+                    {bulkWatermarking
+                      ? <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      : <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>}
+                  </span>
+                }
+                actions={[
+                  { label: 'Apply Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, onClick: () => bulkApplyWatermark(true) },
+                  { label: 'Remove Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>, onClick: () => bulkApplyWatermark(false) },
+                ]}
+              />
 
               {/* Divider */}
               <div className="w-px h-6 bg-border/60 flex-shrink-0" />

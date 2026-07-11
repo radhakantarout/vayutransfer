@@ -86,6 +86,10 @@ export interface StudioProject {
   selectionSubmittedAt?: string
   selectionLockedBy?: string
   sharedFileIds?: string[]
+  // Admin-chosen cover photo for this event — shown on the client gallery's
+  // event card. Falls back to the first READY photo by displayOrder when
+  // unset (or if the chosen file was since deleted).
+  coverPhotoFileId?: string
   createdAt: string
   updatedAt: string
 }

@@ -66,8 +66,13 @@ export async function GET(
           .filter(f => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
           .sort((a, b) => a.displayOrder - b.displayOrder)
 
-        // Cover = first ready photo
-        const coverUrl: string | null = readyFiles[0] ? (await getMediaPreviewUrl(readyFiles[0])) ?? null : null
+        // Cover = admin's explicit choice if set and still READY, else first
+        // ready photo by displayOrder.
+        const chosenCover = project.coverPhotoFileId
+          ? readyFiles.find(f => f.fileId === project.coverPhotoFileId)
+          : undefined
+        const coverFile = chosenCover ?? readyFiles[0]
+        const coverUrl: string | null = coverFile ? (await getMediaPreviewUrl(coverFile)) ?? null : null
 
         const lovedCount = selections.filter(s => s.isSelected).length
         const editCount  = selections.filter(s => s.editingRequired).length
