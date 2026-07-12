@@ -289,6 +289,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [shareSuccess, setShareSuccess]         = useState<string | null>(null)
   const [sharing, setSharing]                   = useState(false)
   const sidebarWrapRef                          = useRef<HTMLDivElement>(null)
+  const zoomTrackRef                            = useRef<HTMLDivElement>(null)
+
+  // Drag the zoom bar's dot up/down the track to set zoom directly, instead
+  // of only being able to step it one column at a time via +/-. Handles
+  // both mouse and touch since the bar is visible on mobile too.
+  const handleZoomTrackDrag = (e: React.MouseEvent | React.TouchEvent) => {
+    const track = zoomTrackRef.current
+    if (!track) return
+    const getClientY = (ev: MouseEvent | TouchEvent) => 'touches' in ev ? ev.touches[0].clientY : ev.clientY
+    const updateFromY = (clientY: number) => {
+      const rect = track.getBoundingClientRect()
+      const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
+      setZoomLevel(Math.round(2 + ratio * 8))
+    }
+    updateFromY('touches' in e ? e.touches[0].clientY : e.clientY)
+    const onMove = (ev: MouseEvent | TouchEvent) => { updateFromY(getClientY(ev)); ev.preventDefault() }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove as EventListener)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchmove', onMove as EventListener)
+      window.removeEventListener('touchend', onUp)
+    }
+    window.addEventListener('mousemove', onMove as EventListener)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('touchmove', onMove as EventListener, { passive: false })
+    window.addEventListener('touchend', onUp)
+    e.preventDefault()
+  }
 
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
@@ -763,9 +791,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className="w-6 h-6 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-sm font-bold leading-none">
                 +
               </button>
-              <div className="relative w-1 h-9 flex-shrink-0 bg-border/50 rounded-full">
+              <div ref={zoomTrackRef} onMouseDown={handleZoomTrackDrag} onTouchStart={handleZoomTrackDrag}
+                className="relative w-1.5 h-28 flex-shrink-0 bg-border/50 rounded-full cursor-pointer touch-none">
                 <span
-                  className="absolute left-1/2 w-2.5 h-2.5 rounded-full bg-accent shadow-sm"
+                  className="absolute left-1/2 w-3.5 h-3.5 rounded-full bg-accent shadow-sm cursor-grab active:cursor-grabbing"
                   style={{ top: `${((zoomLevel - 2) / 8) * 100}%`, transform: 'translate(-50%, -50%)' }}
                 />
               </div>
