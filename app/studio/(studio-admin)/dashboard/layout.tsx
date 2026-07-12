@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile } from '@/types/studio'
@@ -144,11 +144,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [shareError, setShareError]             = useState<string | null>(null)
   const [shareSuccess, setShareSuccess]         = useState<string | null>(null)
   const [sharing, setSharing]                   = useState(false)
+  const sidebarWrapRef                          = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_KEY)
     if (saved === 'false') setSidebarOpen(false)
   }, [])
+
+  // Auto-close sidebar when clicking anywhere outside it (or its toggle tab)
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (sidebarWrapRef.current && !sidebarWrapRef.current.contains(e.target as Node)) {
+        setSidebarOpen(false)
+        localStorage.setItem(SIDEBAR_KEY, 'false')
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [sidebarOpen])
 
   // Sync sidebar selection to URL — runs on every navigation so "recent activity" links auto-select
   useEffect(() => {
@@ -303,6 +317,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex flex-1 overflow-hidden">
 
+      <div ref={sidebarWrapRef} className="flex flex-shrink-0">
+
       {/* ── Sidebar ──────────────────────────────────────────── */}
       <aside className={`bg-card border-r border-border flex-shrink-0 flex flex-col overflow-hidden transition-all duration-200 ease-in-out ${sidebarOpen ? 'w-56' : 'w-0'}`}>
 
@@ -404,12 +420,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* ── Sidebar toggle tab ───────────────────────────────── */}
       <div className="relative flex-shrink-0">
         <button onClick={toggleSidebar} title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="absolute top-4 -left-px z-10 flex items-center justify-center w-4 h-8 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
-          <svg className={`w-3 h-3 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
+          className="absolute top-4 -left-px z-10 flex items-center gap-1 px-1.5 h-7 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
+          <svg className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
+          <span className="text-[9px] font-bold tracking-wide">{sidebarOpen ? 'CLOSE' : 'OPEN'}</span>
         </button>
+      </div>
+
       </div>
 
       {/* ── Main content ─────────────────────────────────────── */}
