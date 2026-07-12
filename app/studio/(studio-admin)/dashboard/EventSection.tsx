@@ -591,14 +591,33 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     if (current === 'STARRED') return 'Mark Favorite'
     return 'Mark Starred'
   }
-  const cycleCurationStatus = async (fileId: string, current?: CurationStatus) => {
-    const next = nextCurationStatus(current)
-    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ curationStatus: next ?? null }),
-    }).catch(() => {})
-    await loadFiles()
+  // Optimistic — a full loadFiles() reload re-fetches every photo's signed
+  // preview URL (slow on large galleries) for a change that has no
+  // server-computed visual side effect. Update locally, save in the
+  // background, and only revert if the save actually fails.
+  const saveCurationStatus = async (fileId: string, current: CurationStatus | undefined, next: CurationStatus | undefined) => {
+    setFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, curationStatus: next } : f))
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ curationStatus: next ?? null }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.message ?? 'Failed to save')
+    } catch {
+      setFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, curationStatus: current } : f))
+    }
   }
+  // Advances through all 3 stages — used by the "⋯" menu (labelled per-stage)
+  // and the list view's dedicated move icon, where the progression is explicit.
+  const cycleCurationStatus = (fileId: string, current?: CurationStatus) =>
+    saveCurationStatus(fileId, current, nextCurationStatus(current))
+  // A simple two-state star/unstar toggle — the grid tile's star icon only
+  // shows filled-vs-outline (2 visual states), so cycling it through all 3
+  // stages meant un-starring from Favorite/Final needed 2-3 clicks with no
+  // visible feedback in between, which read as broken. Any non-empty status
+  // clears in one click; clicking again from empty sets Starred.
+  const toggleStarred = (fileId: string, current?: CurationStatus) =>
+    saveCurationStatus(fileId, current, current ? undefined : 'STARRED')
 
   // Shared per-photo action set — used by both the grid tile's "⋯" menu and
   // the list view's "⋯" menu, so the two views never drift apart.
@@ -1483,11 +1502,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                           {/* Frame's top strip — real space above the photo, not overlaid on it */}
                           {!isFailed && (
                             <div data-no-drag="true" onClick={e => e.stopPropagation()}
-                              className="flex items-center justify-between px-1.5 h-6 bg-border/25">
-                              <button onClick={() => cycleCurationStatus(f.fileId, f.curationStatus)}
-                                title={curationMenuLabel(f.curationStatus)}
-                                className={`flex items-center justify-center transition-colors ${f.curationStatus ? 'text-yellow-400' : 'text-black hover:text-black/70'}`}>
-                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={f.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
+                              className="flex items-center justify-between px-1 h-7 bg-border/25">
+                              <button onClick={() => toggleStarred(f.fileId, f.curationStatus)}
+                                title={f.curationStatus ? 'Unstar' : 'Star'}
+                                className={`flex items-center justify-center p-1 -m-1 rounded-md transition-colors ${f.curationStatus ? 'text-yellow-400' : 'text-black hover:text-black/70'}`}>
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill={f.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                                 </svg>
                               </button>
