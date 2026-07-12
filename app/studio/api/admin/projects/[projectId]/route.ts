@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import {
   studioGetItem,
-  studioDeleteItem,
   studioUpdateItem,
-  studioQueryByPK,
   TABLES,
 } from '@/lib/studio/dynamodb'
-import type { StudioProject, MediaFile, Selection } from '@/types/studio'
+import { deleteProjectCascade } from '@/lib/studio/projectDelete'
+import type { StudioProject, MediaFile } from '@/types/studio'
 
 // PATCH /studio/api/admin/projects/[projectId] — edit project details, or
 // (as a standalone lightweight update) set the event's cover photo
@@ -23,11 +22,12 @@ export async function PATCH(
 
     const { projectId } = params
     const body = await req.json().catch(() => ({}))
-    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId, isStarred } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId, isStarred, scheduledDeleteAt } = body
 
-    // Set-cover-photo and set-starred are separate, smaller updates — don't
-    // require the full edit-details fields to also be present.
-    if ((coverPhotoFileId !== undefined || isStarred !== undefined) && clientName === undefined) {
+    // Set-cover-photo, set-starred, and set-scheduled-delete are separate,
+    // smaller updates — don't require the full edit-details fields to also
+    // be present.
+    if ((coverPhotoFileId !== undefined || isStarred !== undefined || scheduledDeleteAt !== undefined) && clientName === undefined) {
       const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId, projectId })
       if (!project) {
         return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -55,6 +55,14 @@ export async function PATCH(
       if (isStarred !== undefined) {
         updates.push('isStarred = :starred')
         values[':starred'] = isStarred
+      }
+      if (scheduledDeleteAt !== undefined) {
+        if (scheduledDeleteAt === null) {
+          removes.push('scheduledDeleteAt')
+        } else {
+          updates.push('scheduledDeleteAt = :sched')
+          values[':sched'] = scheduledDeleteAt
+        }
       }
 
       const expression = removes.length > 0
@@ -122,35 +130,7 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // Fetch all child records
-    const [mediafiles, selections] = await Promise.all([
-      studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId),
-      studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId),
-    ])
-
-    // Delete all child records in parallel
-    await Promise.all([
-      ...mediafiles.map((f) =>
-        studioDeleteItem(TABLES.mediafiles, { projectId, fileId: f.fileId })
-      ),
-      ...selections.map((s) =>
-        studioDeleteItem(TABLES.selections, { projectId, fileId: s.fileId })
-      ),
-    ])
-
-    // Delete the project itself
-    await studioDeleteItem(TABLES.projects, { studioId: auth.studioId, projectId })
-
-    // Decrement studio project count + billable storage (Total Upload Size stat
-    // intentionally left untouched — it's the historical/lifetime figure)
-    const now = new Date().toISOString()
-    const freedBytes = mediafiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
-    await studioUpdateItem(
-      TABLES.studios,
-      { studioId: auth.studioId },
-      'ADD projectCount :neg, billableStorageBytes :negSize SET updatedAt = :now',
-      { ':neg': -1, ':negSize': -freedBytes, ':now': now }
-    )
+    await deleteProjectCascade(auth.studioId!, projectId)
 
     return NextResponse.json({ success: true, data: { projectId } })
   } catch (err) {

@@ -93,9 +93,15 @@ export interface StudioProject {
   // Admin-only favorite flag for the My Projects dashboard — has no effect
   // on client-facing views.
   isStarred?: boolean
+  // Set when the admin schedules this project for deletion (delete-now bypasses
+  // this entirely). Past-due projects are swept by the daily scheduled-deletes
+  // cron. Cancel by clearing this field.
+  scheduledDeleteAt?: string
   createdAt: string
   updatedAt: string
 }
+
+export type CurationStatus = 'STARRED' | 'FAVORITE' | 'FINAL'
 
 export interface MediaFile {
   projectId: string
@@ -133,6 +139,11 @@ export interface MediaFile {
   // Set when this file arrived via a Raw File Transfer import rather than a
   // direct gallery upload — provenance only, doesn't change how it's served.
   importedFromTransferId?: string
+  // Admin-only photo curation pipeline — the photographer's own culling
+  // workflow (e.g. picking best shots to send for print), entirely separate
+  // from the client's own loved/selected state (Selection.isSelected).
+  // Ordered: STARRED -> FAVORITE -> FINAL. Never shown to clients.
+  curationStatus?: CurationStatus
 }
 
 export interface StudioFace {

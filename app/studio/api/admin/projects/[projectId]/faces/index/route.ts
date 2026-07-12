@@ -18,6 +18,8 @@ export async function POST(
 
     const { projectId } = params
     const studioId = auth.studioId!
+    const body = await req.json().catch(() => ({}))
+    const fileIds: string[] | undefined = Array.isArray(body?.fileIds) && body.fileIds.length > 0 ? body.fileIds : undefined
 
     const [studio, project] = await Promise.all([
       studioGetItem<Studio>(TABLES.studios, { studioId }),
@@ -57,7 +59,7 @@ export async function POST(
     const job: StudioJob = {
       jobId, jobType: 'INDEX_FACES', status: 'PENDING',
       projectId, studioId,
-      inputPayload: { triggeredBy: auth.userId },
+      inputPayload: { triggeredBy: auth.userId, ...(fileIds ? { fileIds } : {}) },
       createdAt: now, ttl,
     }
     await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
@@ -67,7 +69,7 @@ export async function POST(
       lambda.send(new InvokeCommand({
         FunctionName: process.env.INDEXFACES_LAMBDA_ARN,
         InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify({ projectId, studioId, jobId })),
+        Payload: Buffer.from(JSON.stringify({ projectId, studioId, jobId, ...(fileIds ? { fileIds } : {}) })),
       })).catch((err: unknown) => console.error('[indexfaces invoke]', err))
     } else {
       console.warn('[indexfaces] INDEXFACES_LAMBDA_ARN not set — job created but Lambda not invoked')

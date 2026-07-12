@@ -3,12 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
-import type { StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
-import EditEventModal from './EditEventModal'
+import type { StudioProject, MediaFile, Selection, StudioTransfer, CurationStatus } from '@/types/studio'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
-import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
+import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/PhotoActionsMenu'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -86,6 +85,30 @@ function fmtEta(sec: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+type SortMode = 'DEFAULT' | 'NAME_ASC' | 'NAME_DESC' | 'DATE_OLD' | 'DATE_NEW' | 'SIZE_LARGE' | 'SIZE_SMALL'
+const SORT_LABEL: Record<SortMode, string> = {
+  DEFAULT:     'Default order',
+  NAME_ASC:    'Name (A–Z)',
+  NAME_DESC:   'Name (Z–A)',
+  DATE_OLD:    'Oldest first',
+  DATE_NEW:    'Newest first',
+  SIZE_LARGE:  'Size (largest first)',
+  SIZE_SMALL:  'Size (smallest first)',
+}
+function sortFiles(files: MediaFile[], mode: SortMode): MediaFile[] {
+  if (mode === 'DEFAULT') return files
+  const arr = [...files]
+  switch (mode) {
+    case 'NAME_ASC':   arr.sort((a, b) => a.originalFilename.localeCompare(b.originalFilename)); break
+    case 'NAME_DESC':  arr.sort((a, b) => b.originalFilename.localeCompare(a.originalFilename)); break
+    case 'DATE_OLD':   arr.sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)); break
+    case 'DATE_NEW':   arr.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)); break
+    case 'SIZE_LARGE':  arr.sort((a, b) => b.sizeBytes - a.sizeBytes); break
+    case 'SIZE_SMALL':  arr.sort((a, b) => a.sizeBytes - b.sizeBytes); break
+  }
+  return arr
+}
+
 type DeleteMode = 'selected' | 'all' | null
 type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
 
@@ -120,7 +143,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [files, setFiles]           = useState<MediaFile[]>([])
   const [loading, setLoading]       = useState(true)
   const [uploads, setUploads]       = useState<UploadItem[]>([])
-  const [editOpen, setEditOpen]     = useState(false)
   const [shareUrl, setShareUrl]     = useState<string | null>(null)
   const [sharing, setSharing]       = useState(false)
   const [copied, setCopied]         = useState(false)
@@ -132,6 +154,8 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
   const [zoomLevel, setZoomLevel]       = useState(6)
+  const [viewMode, setViewMode]         = useState<'grid' | 'list'>('grid')
+  const [sortMode, setSortMode]         = useState<SortMode>('DEFAULT')
   const [expanded, setExpanded]         = useState(false)
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
@@ -142,8 +166,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
-  const [backfilling, setBackfilling]   = useState(false)
-  const [backfillMsg, setBackfillMsg]   = useState<string | null>(null)
 
   // Client selection filter (used for heart/edit icons in header when received)
   type ClientSel = { selection: Selection; file: MediaFile }
@@ -548,6 +570,96 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     await navigator.clipboard.writeText(filename)
   }
 
+  // Admin-only curation pipeline: undefined -> STARRED -> FAVORITE -> FINAL -> undefined.
+  // Shared by the grid tile menu, the lightbox menu, and the list view's move
+  // icon so all three stay in sync rather than offering divergent affordances.
+  const CURATION_ORDER: (CurationStatus | undefined)[] = [undefined, 'STARRED', 'FAVORITE', 'FINAL']
+  const nextCurationStatus = (current?: CurationStatus): CurationStatus | undefined =>
+    CURATION_ORDER[(CURATION_ORDER.indexOf(current) + 1) % CURATION_ORDER.length]
+  const curationMenuLabel = (current?: CurationStatus): string => {
+    if (current === 'FINAL') return 'Clear curation status'
+    if (current === 'FAVORITE') return 'Mark Final'
+    if (current === 'STARRED') return 'Mark Favorite'
+    return 'Mark Starred'
+  }
+  const cycleCurationStatus = async (fileId: string, current?: CurationStatus) => {
+    const next = nextCurationStatus(current)
+    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ curationStatus: next ?? null }),
+    }).catch(() => {})
+    await loadFiles()
+  }
+
+  // Shared per-photo action set — used by both the grid tile's "⋯" menu and
+  // the list view's "⋯" menu, so the two views never drift apart.
+  const buildPhotoMenuActions = (f: MediaFile, idx: number): PhotoMenuAction[] => [
+    {
+      label: 'Open', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5v6m0-6h6m-6 0l6.75 6.75M19.5 4.5v6m0-6h-6m6 0l-6.75 6.75M4.5 19.5v-6m0 6h6m-6 0l6.75-6.75M19.5 19.5v-6m0 6h-6m6 0l-6.75-6.75" />
+        </svg>
+      ),
+      onClick: () => { setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) },
+    },
+    {
+      label: 'Download', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+      ),
+      onClick: () => downloadPhoto(f.fileId),
+    },
+    {
+      label: 'Copy filename', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+        </svg>
+      ),
+      onClick: () => copyFilename(f.originalFilename),
+    },
+    {
+      label: f.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      onClick: () => toggleWatermark(f.fileId, !f.watermarkEnabled),
+    },
+    {
+      label: 'Rename', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+        </svg>
+      ),
+      onClick: () => { setRenamingFile(f); setRenameValue(f.originalFilename) },
+    },
+    {
+      label: project.coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+        </svg>
+      ),
+      onClick: () => setCoverPhoto(f.fileId),
+    },
+    {
+      label: curationMenuLabel(f.curationStatus), icon: (
+        <svg fill={f.curationStatus ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+        </svg>
+      ),
+      onClick: () => cycleCurationStatus(f.fileId, f.curationStatus),
+    },
+    {
+      label: 'Delete', danger: true, icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+        </svg>
+      ),
+      onClick: () => deleteFiles([f.fileId]),
+    },
+  ]
+
   const saveRename = async () => {
     if (!renamingFile || !renameValue.trim()) return
     setRenameSaving(true)
@@ -593,19 +705,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const toggleFilter = async (filter: 'loved' | 'edit') => {
     if (viewFilter === filter) { setViewFilter('all'); return }
     await loadSelections(); setViewFilter(filter)
-  }
-
-  const generatePreviews = async () => {
-    setBackfilling(true); setBackfillMsg(null)
-    try {
-      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/backfill-previews`, { method: 'POST' }).then(r => r.json())
-      if (res.success) {
-        const { queued } = res.data
-        setBackfillMsg(queued === 0 ? '✓ All previews up to date' : `✓ Generating ${queued} previews…`)
-        if (queued > 0) setTimeout(loadFiles, 8000)
-      } else setBackfillMsg('Failed to queue previews')
-    } catch { setBackfillMsg('Network error') }
-    setBackfilling(false); setTimeout(() => setBackfillMsg(null), 5000)
   }
 
   const togglePhoto = (fileId: string) => {
@@ -732,8 +831,10 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
     : 0
 
+  const sortedDisplayFiles = sortFiles(displayFiles, sortMode)
+
   const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
-  const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : displayFiles
+  const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : sortedDisplayFiles
   const currentPreviewPhoto = previewPhotos[adminPreviewIdx] as MediaFile | undefined
 
   // Face index derived
@@ -763,10 +864,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
   return (
     <>
-      {editOpen && (
-        <EditEventModal project={project} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onUpdated() }} />
-      )}
-
       {/* ── Rename modal ────────────────────────────────────── */}
       {renamingFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -902,6 +999,15 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       onClick: () => setCoverPhoto(currentPreviewPhoto.fileId),
                     },
                     {
+                      label: curationMenuLabel(currentPreviewPhoto.curationStatus),
+                      icon: (
+                        <svg fill={currentPreviewPhoto.curationStatus ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                        </svg>
+                      ),
+                      onClick: () => cycleCurationStatus(currentPreviewPhoto.fileId, currentPreviewPhoto.curationStatus),
+                    },
+                    {
                       label: 'Delete',
                       danger: true,
                       icon: (
@@ -1003,22 +1109,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       }>
 
         {/* ── Event header ──────────────────────────────────────── */}
-        <div className={`px-5 py-4 flex items-start justify-between gap-4 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-base">{EVENT_ICON[project.eventType] ?? '📷'}</span>
-              <h2 className="text-lg font-bold text-text-primary">{project.eventType.replace(/_/g, ' ')}</h2>
-              <span className="text-sm text-muted font-medium">{project.clientName}</span>
-              <span className={`text-xs font-bold uppercase tracking-wide ${STATUS_COLOR[project.status]}`}>
-                {project.status.replace(/_/g, ' ')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 text-xs text-muted flex-wrap">
-              <span>{fmtDate(project.eventDate)}</span>
-              {project.eventLocation && <><span>·</span><span>{project.eventLocation}</span></>}
-              {project.clientPhone   && <><span>·</span><span>{project.clientPhone}</span></>}
-              {project.clientEmail   && <><span>·</span><span>{project.clientEmail}</span></>}
-            </div>
+        <div className={`px-5 py-3 flex items-center justify-between gap-4 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-base flex-shrink-0">{EVENT_ICON[project.eventType] ?? '📷'}</span>
+            <h2 className="text-base font-bold text-text-primary truncate">{project.eventType.replace(/_/g, ' ')}</h2>
+            <span className="text-xs text-muted flex-shrink-0">{fmtDate(project.eventDate)}</span>
+            <span className={`text-[10px] font-bold uppercase tracking-wide flex-shrink-0 ${STATUS_COLOR[project.status]}`}>
+              {project.status.replace(/_/g, ' ')}
+            </span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
@@ -1041,11 +1139,48 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                 </button>
               </>
             )}
-            {project.totalFiles > 0 && project.status !== 'COMPLETED' && !showShareSetup && (
-              <button onClick={() => setShowShareSetup(true)}
-                className="bg-accent text-bg text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors">
-                Share
-              </button>
+            {activeTab === 'photos' && (
+              <>
+                <button onClick={() => setViewMode('grid')} title="Grid view"
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
+                    viewMode === 'grid' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </button>
+                <button onClick={() => setViewMode('list')} title="List view"
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
+                    viewMode === 'list' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                  </svg>
+                </button>
+                <PhotoActionsMenu
+                  align="right"
+                  trigger={
+                    <span title="Sort photos"
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg border cursor-pointer transition-colors ${
+                        sortMode !== 'DEFAULT' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
+                      }`}>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                      </svg>
+                    </span>
+                  }
+                  actions={(Object.keys(SORT_LABEL) as SortMode[]).map(mode => ({
+                    label: (sortMode === mode ? '✓ ' : '') + SORT_LABEL[mode],
+                    icon: (
+                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                      </svg>
+                    ),
+                    onClick: () => setSortMode(mode),
+                  }))}
+                />
+              </>
             )}
             <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
@@ -1057,21 +1192,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            <button onClick={generatePreviews} disabled={backfilling} title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors">
-              {backfilling
-                ? <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-                : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM9 3.75h6.75a3 3 0 013 3v10.5a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6.75a3 3 0 013-3H9z" />
-                  </svg>}
-            </button>
-            {backfillMsg && <span className="text-[10px] text-muted font-medium">{backfillMsg}</span>}
-            <button onClick={() => setEditOpen(true)} title="Edit event"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
             </button>
             {/* Expand / collapse fullscreen */}
@@ -1260,50 +1380,112 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   <span className="text-xs font-semibold text-muted">
                     {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
                   </span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {(() => {
-                      const allSel = displayFiles.length > 0 && displayFiles.every(f => selectedIds.has(f.fileId))
-                      return (
-                        <button
-                          onClick={() => allSel ? onSelectionChange(new Set()) : onSelectionChange(new Set(displayFiles.map(f => f.fileId)))}
-                          className={`text-xs border px-2 py-1 rounded-lg transition-colors ${allSel ? 'text-accent border-accent/40 bg-accent/10 hover:bg-accent/20' : 'text-muted hover:text-text-primary border-border hover:bg-border/40'}`}>
-                          {allSel ? 'Deselect All' : 'Select All'}
-                        </button>
-                      )
-                    })()}
-                    <button onClick={() => setDeleteMode('all')}
-                      className="text-xs text-red-500/60 hover:text-red-500 border border-border px-2 py-1 rounded-lg hover:border-red-500/30 hover:bg-red-500/5 transition-colors">
-                      Delete All
-                    </button>
-                    {/* Zoom */}
-                    <div className="flex items-center gap-1 ml-1">
-                      <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="Zoom out"
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
-                        </svg>
-                      </button>
-                      <input type="range" min={2} max={10} value={12 - zoomLevel} onChange={e => setZoomLevel(12 - Number(e.target.value))} className="w-20 h-1 cursor-pointer accent-accent" />
-                      <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
                 </div>
 
-                {selectedCount === 0 && viewFilter === 'all' && (
+                {selectedCount === 0 && viewFilter === 'all' && viewMode === 'grid' && (
                   <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
                 )}
 
-                {/* Grid */}
+                {/* Grid / List + floating zoom bar */}
                 <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
+                  <div className="flex items-start gap-3">
+
+                    {/* Floating zoom bar — small, blends with the card background; grid mode only */}
+                    {viewMode === 'grid' && (
+                      <div className="hidden sm:flex sticky top-2 self-start flex-shrink-0 z-[2] flex-col items-center gap-1 bg-card border border-border/60 rounded-full py-1.5 px-1">
+                        <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Fewer columns (zoom in)"
+                          className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-xs font-bold leading-none">
+                          +
+                        </button>
+                        <div className="relative w-1 h-9 flex-shrink-0 bg-border/50 rounded-full">
+                          <span
+                            className="absolute left-1/2 w-2.5 h-2.5 rounded-full bg-accent shadow-sm"
+                            style={{ top: `${((zoomLevel - 2) / 8) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                          />
+                        </div>
+                        <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="More columns (zoom out)"
+                          className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-xs font-bold leading-none">
+                          −
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                    {viewMode === 'list' ? (
+                      <div className="space-y-1">
+                        {sortedDisplayFiles.map((f, idx) => {
+                          const isSelected = selectedIds.has(f.fileId)
+                          return (
+                            <div key={f.fileId} onClick={() => togglePhoto(f.fileId)}
+                              onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
+                              <div className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors
+                                ${isSelected ? 'bg-accent border-accent text-bg' : 'border-muted'}`}>
+                                {isSelected && (
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                              <div className="w-11 h-11 rounded-lg overflow-hidden bg-border/40 flex-shrink-0">
+                                {f.r2PreviewUrl
+                                  ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                                  : <div className="w-full h-full flex items-center justify-center text-muted text-sm">📄</div>}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm text-text-primary truncate">{f.originalFilename}</div>
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  {/* Original file size — the thumbnail is the watermarked preview, so this
+                                      is the only place the admin sees the real original's size. */}
+                                  <span className="text-[10px] text-muted font-medium">{fmtBytes(f.sizeBytes)}</span>
+                                  {f.curationStatus && (
+                                    <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent/15 text-accent">{f.curationStatus}</span>
+                                  )}
+                                  {(f.editedS3Key || f.editedR2Key) && <span className="text-[9px] text-muted">Edited</span>}
+                                  {f.watermarkEnabled && <span className="text-[9px] text-muted">Watermarked</span>}
+                                </div>
+                              </div>
+                              <button onClick={e => { e.stopPropagation(); downloadPhoto(f.fileId) }} title="Download"
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </button>
+                              <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }} title="Delete"
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                </svg>
+                              </button>
+                              <button onClick={e => { e.stopPropagation(); cycleCurationStatus(f.fileId, f.curationStatus) }} title={curationMenuLabel(f.curationStatus)}
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-6 6m6-6l6 6" />
+                                </svg>
+                              </button>
+                              <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
+                                <PhotoActionsMenu
+                                  align="right"
+                                  trigger={
+                                    <span className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-text-primary hover:bg-border/50 cursor-pointer">
+                                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
+                                      </svg>
+                                    </span>
+                                  }
+                                  actions={buildPhotoMenuActions(f, idx)}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
                   <div ref={gridRef} className="relative select-none"
                     style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
                     onMouseDown={handleGridMouseDown}>
-                    {displayFiles.map((f, idx) => {
+                    {sortedDisplayFiles.map((f, idx) => {
                       const isSelected  = selectedIds.has(f.fileId)
                       // A file sits at 'UPLOADING' for the first several
                       // seconds of any legitimate upload — only treat it as
@@ -1315,77 +1497,21 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       const editComment = editCommentMap.get(f.fileId)
                       return (
                         <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
+                          onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
                           className={`group relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
                             ${isSelected ? 'border-accent ring-2 ring-accent/40 scale-[0.95]' : 'border-border hover:border-border/60'}`}>
                           {!isFailed && (
-                            <div className="absolute top-1 right-1 z-[1] opacity-70 group-hover:opacity-100 transition-opacity">
+                            <div className="absolute top-1 right-1 z-[1]">
                               <PhotoActionsMenu
                                 align="right"
                                 trigger={
-                                  <span className="w-6 h-6 flex items-center justify-center rounded-md bg-black/50 hover:bg-black/70 text-white cursor-pointer">
+                                  <span className="w-6 h-6 flex items-center justify-center rounded-md bg-black/50 backdrop-blur-sm hover:bg-black/70 text-white cursor-pointer">
                                     <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
                                       <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
                                     </svg>
                                   </span>
                                 }
-                                actions={[
-                                  {
-                                    label: 'Open', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5v6m0-6h6m-6 0l6.75 6.75M19.5 4.5v6m0-6h-6m6 0l-6.75 6.75M4.5 19.5v-6m0 6h6m-6 0l6.75-6.75M19.5 19.5v-6m0 6h-6m6 0l-6.75-6.75" />
-                                      </svg>
-                                    ),
-                                    onClick: () => { setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) },
-                                  },
-                                  {
-                                    label: 'Download', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                      </svg>
-                                    ),
-                                    onClick: () => downloadPhoto(f.fileId),
-                                  },
-                                  {
-                                    label: 'Copy filename', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-                                      </svg>
-                                    ),
-                                    onClick: () => copyFilename(f.originalFilename),
-                                  },
-                                  {
-                                    label: f.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                      </svg>
-                                    ),
-                                    onClick: () => toggleWatermark(f.fileId, !f.watermarkEnabled),
-                                  },
-                                  {
-                                    label: 'Rename', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                                      </svg>
-                                    ),
-                                    onClick: () => { setRenamingFile(f); setRenameValue(f.originalFilename) },
-                                  },
-                                  {
-                                    label: project.coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-                                      </svg>
-                                    ),
-                                    onClick: () => setCoverPhoto(f.fileId),
-                                  },
-                                  {
-                                    label: 'Delete', danger: true, icon: (
-                                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                      </svg>
-                                    ),
-                                    onClick: () => deleteFiles([f.fileId]),
-                                  },
-                                ]}
+                                actions={buildPhotoMenuActions(f, idx)}
                               />
                             </div>
                           )}
@@ -1453,6 +1579,9 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       <div className="absolute pointer-events-none border border-accent/70 bg-accent/10 rounded z-10"
                         style={{ left: dragRect.left, top: dragRect.top, width: dragRect.width, height: dragRect.height }} />
                     )}
+                  </div>
+                    )}
+                    </div>
                   </div>
                 </div>
               </>

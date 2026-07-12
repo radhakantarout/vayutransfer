@@ -7,6 +7,11 @@ import type { StudioProject, MediaFile } from '@/types/studio'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
 import EventSection from './EventSection'
+import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
+import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
+import QuickShareModal from '@/components/studio/QuickShareModal'
+import AISortingModal from '@/components/studio/AISortingModal'
+import EditClientModal from '@/components/studio/EditClientModal'
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -27,8 +32,95 @@ function CheckIcon() {
   )
 }
 
+// Collapsed-sidebar icon-only rail button — shows a hover tooltip/flyout with
+// the full label (and optionally richer content via `flyout`).
+function RailItem({
+  icon, label, active, onClick, href, flyout,
+}: {
+  icon: React.ReactNode
+  label: string
+  active?: boolean
+  onClick?: () => void
+  href?: string
+  flyout?: React.ReactNode
+}) {
+  const className = `group/rail relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
+    active ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+  }`
+  const tooltip = !flyout && (
+    <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 rounded-lg bg-text-primary text-bg text-xs font-semibold whitespace-nowrap opacity-0 invisible group-hover/rail:opacity-100 group-hover/rail:visible transition-all duration-150 z-30 shadow-lg pointer-events-none">
+      {label}
+    </span>
+  )
+  const content = (
+    <>
+      {icon}
+      {tooltip}
+      {flyout}
+    </>
+  )
+  if (href) {
+    return <Link href={href} onClick={onClick} className={className} title={label}>{content}</Link>
+  }
+  if (onClick) {
+    return <button onClick={onClick} className={className} title={label}>{content}</button>
+  }
+  // Hover-only trigger (e.g. a flyout with its own nested buttons/links) —
+  // must not be a <button> itself, or the nested interactive elements would
+  // produce invalid nested-button HTML.
+  return <div className={className} title={label}>{content}</div>
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  )
+}
+function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+    </svg>
+  )
+}
+function AIIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+    </svg>
+  )
+}
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" />
+    </svg>
+  )
+}
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  )
+}
+function DotsIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+    </svg>
+  )
+}
+
+function daysUntil(iso: string): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+}
+
 function ClientBranch({
   clientName, projects, selectedIds, onToggle, onAddEvent, onEditEvent,
+  onDeleteEvents, onQuickShare, onAISort, onEditClient, onCancelSchedule,
 }: {
   clientName: string
   projects: StudioProject[]
@@ -36,6 +128,11 @@ function ClientBranch({
   onToggle: (id: string) => void
   onAddEvent: (name: string) => void
   onEditEvent: (p: StudioProject) => void
+  onDeleteEvents: (projects: StudioProject[]) => void
+  onQuickShare: (projects: StudioProject[]) => void
+  onAISort: (projects: StudioProject[]) => void
+  onEditClient: (projects: StudioProject[]) => void
+  onCancelSchedule: (p: StudioProject) => void
 }) {
   const anySelected = projects.some(p => selectedIds.includes(p.projectId))
   const [open, setOpen] = useState(anySelected)
@@ -61,6 +158,20 @@ function ClientBranch({
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
         </button>
+        <PhotoActionsMenu
+          align="right"
+          trigger={
+            <button title="Client options" className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
+              <DotsIcon />
+            </button>
+          }
+          actions={[
+            { label: 'Edit client info',      icon: <EditIcon />,  onClick: () => onEditClient(projects) },
+            { label: `Quick Share (all ${projects.length})`, icon: <ShareIcon />, onClick: () => onQuickShare(projects) },
+            { label: `AI Sorting (all ${projects.length})`,  icon: <AIIcon />,    onClick: () => onAISort(projects) },
+            { label: `Delete all ${projects.length} events`, icon: <TrashIcon />, onClick: () => onDeleteEvents(projects), danger: true },
+          ]}
+        />
       </div>
 
       {/* Event rows */}
@@ -92,6 +203,15 @@ function ClientBranch({
                   <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
                 </div>
 
+                {/* Scheduled-delete badge */}
+                {p.scheduledDeleteAt && (
+                  <span title={`Deletes automatically in ${daysUntil(p.scheduledDeleteAt)} day(s)`}
+                    className="flex items-center gap-0.5 text-[9px] font-semibold text-yellow-500 bg-yellow-500/10 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
+                    <span className="w-2.5 h-2.5"><ClockIcon /></span>
+                    {daysUntil(p.scheduledDeleteAt)}d
+                  </span>
+                )}
+
                 {/* File count badge */}
                 {p.totalFiles > 0 && (
                   <span className="text-[9px] text-muted bg-border/60 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
@@ -99,16 +219,26 @@ function ClientBranch({
                   </span>
                 )}
 
-                {/* Edit icon — on hover */}
-                <button
-                  onClick={e => { e.stopPropagation(); onEditEvent(p) }}
-                  title="Edit event"
-                  className="opacity-0 group-hover/event:opacity-100 w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0"
-                >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </button>
+                {/* "⋯" menu — on hover */}
+                <div className="opacity-0 group-hover/event:opacity-100 flex-shrink-0" onClick={e => e.stopPropagation()}>
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <button title="Event options" className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all">
+                        <DotsIcon />
+                      </button>
+                    }
+                    actions={[
+                      { label: 'Edit project',    icon: <EditIcon />,  onClick: () => onEditEvent(p) },
+                      { label: 'Quick Share',     icon: <ShareIcon />, onClick: () => onQuickShare([p]) },
+                      { label: 'AI Sorting / Search', icon: <AIIcon />, onClick: () => onAISort([p]) },
+                      ...(p.scheduledDeleteAt
+                        ? [{ label: 'Cancel scheduled deletion', icon: <ClockIcon />, onClick: () => onCancelSchedule(p) }]
+                        : []),
+                      { label: 'Delete', icon: <TrashIcon />, onClick: () => onDeleteEvents([p]), danger: true },
+                    ]}
+                  />
+                </div>
               </div>
             )
           })}
@@ -131,6 +261,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [selectedIds, setSelectedIds]   = useState<string[]>([])
   const [modalClient, setModalClient]   = useState<string | null>(null)
   const [editProject, setEditProject]   = useState<StudioProject | null>(null)
+  // Project "⋯" menu modals — each holds the target project(s): length 1 for
+  // a single event, or all of a client's projects for the client-level menu.
+  const [deleteModalProjects, setDeleteModalProjects]         = useState<StudioProject[] | null>(null)
+  const [shareModalProjects, setShareModalProjects]           = useState<StudioProject[] | null>(null)
+  const [aiModalProjects, setAiModalProjects]                 = useState<StudioProject[] | null>(null)
+  const [editClientModalProjects, setEditClientModalProjects] = useState<StudioProject[] | null>(null)
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
@@ -193,6 +329,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   useEffect(() => { fetchProjects() }, [pathname])
+
+  const handleCancelSchedule = async (p: StudioProject) => {
+    await fetch(`/studio/api/admin/projects/${p.projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduledDeleteAt: null }),
+    })
+    fetchProjects()
+  }
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev =>
@@ -320,8 +465,114 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div ref={sidebarWrapRef} className="flex flex-shrink-0">
 
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className={`bg-card border-r border-border flex-shrink-0 flex flex-col overflow-hidden transition-all duration-200 ease-in-out ${sidebarOpen ? 'w-56' : 'w-0'}`}>
+      <aside className={`bg-card border-r border-border flex-shrink-0 flex flex-col transition-all duration-200 ease-in-out ${sidebarOpen ? 'w-56 overflow-hidden' : 'w-12 overflow-visible'}`}>
 
+        {!sidebarOpen && (
+          /* ── Collapsed icon rail ─────────────────────────────── */
+          <div className="flex flex-col items-center gap-1 pt-3 px-1.5">
+            <RailItem
+              label="Dashboard"
+              active={pathname === '/studio/dashboard' && selectedIds.length === 0}
+              onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
+              icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              }
+            />
+            <RailItem
+              label="My Projects"
+              href="/studio/dashboard/projects"
+              onClick={clearSelection}
+              active={pathname === '/studio/dashboard/projects'}
+              icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                </svg>
+              }
+            />
+            <RailItem
+              label="My Website"
+              href="/studio/dashboard/website"
+              onClick={clearSelection}
+              active={pathname.startsWith('/studio/dashboard/website')}
+              icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+                </svg>
+              }
+            />
+            <RailItem
+              label="My Booking"
+              href="/studio/dashboard/bookings"
+              onClick={clearSelection}
+              active={pathname.startsWith('/studio/dashboard/bookings')}
+              icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+              }
+            />
+
+            <div className="w-6 h-px bg-border my-1.5" />
+
+            <RailItem
+              label={`Projects (${projects.length})`}
+              icon={
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                </svg>
+              }
+              flyout={
+                <div className="absolute left-full top-0 ml-2 w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-border bg-card shadow-2xl opacity-0 invisible group-hover/rail:opacity-100 group-hover/rail:visible transition-all duration-150 z-30 p-2">
+                  <div className="flex items-center justify-between px-2 py-1.5">
+                    <span className="text-[11px] font-bold text-muted uppercase tracking-widest">Projects</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-muted">{projects.length}</span>
+                      <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
+                        className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                        </svg>
+                      </Link>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {clientGroups.length === 0 ? (
+                      <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
+                    ) : (
+                      clientGroups.map(([clientName, clientProjects]) => (
+                        <div key={clientName}>
+                          <div className="px-2 py-1 text-xs font-semibold text-text-primary truncate">{clientName}</div>
+                          {clientProjects.map(p => (
+                            <button
+                              key={p.projectId}
+                              onClick={() => toggleSelect(p.projectId)}
+                              className={`w-full text-left px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors ${
+                                selectedIds.includes(p.projectId)
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-muted hover:text-text-primary hover:bg-border/50'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
+                              <span className="truncate flex-1">{fmtDate(p.eventDate)} · {p.eventType.replace(/_/g, ' ')}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              }
+            />
+          </div>
+        )}
+
+        {sidebarOpen && (
+        <>
         {/* Dashboard nav */}
         <nav className="px-2 pt-3 pb-2 space-y-0.5 border-b border-border">
           <button
@@ -408,24 +659,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     onToggle={toggleSelect}
                     onAddEvent={setModalClient}
                     onEditEvent={setEditProject}
+                    onDeleteEvents={setDeleteModalProjects}
+                    onQuickShare={setShareModalProjects}
+                    onAISort={setAiModalProjects}
+                    onEditClient={setEditClientModalProjects}
+                    onCancelSchedule={handleCancelSchedule}
                   />
                 ))
               )}
             </div>
           )}
         </div>
+        </>
+        )}
 
       </aside>
 
       {/* ── Sidebar toggle tab ───────────────────────────────── */}
       <div className="relative flex-shrink-0">
         <button onClick={toggleSidebar} title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="absolute top-4 -left-px z-10 flex items-center gap-1 px-1.5 h-7 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
+          className="absolute top-4 -left-px z-10 flex flex-col items-center gap-1 px-1 py-2 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
           <svg className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
-          <span className="text-[9px] font-bold tracking-wide">{sidebarOpen ? 'CLOSE' : 'OPEN'}</span>
+          <span className="flex flex-col items-center leading-[1.1]">
+            {(sidebarOpen ? 'CLOSE' : 'OPEN').split('').map((ch, i) => (
+              <span key={i} className="text-[8px] font-bold tracking-wide">{ch}</span>
+            ))}
+          </span>
         </button>
       </div>
 
@@ -434,7 +696,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* ── Main content ─────────────────────────────────────── */}
       {selectedIds.length > 0 ? (
         <main className="flex-1 overflow-auto bg-bg">
-          <div className={`mx-auto px-6 py-6 space-y-6 transition-all duration-200 ${sidebarOpen ? 'max-w-5xl' : 'max-w-7xl'}`}>
+          <div className="px-6 py-6 space-y-6">
             {/* Selection bar */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -495,6 +757,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           project={editProject}
           onClose={() => setEditProject(null)}
           onSaved={() => { setEditProject(null); fetchProjects() }}
+        />
+      )}
+
+      {deleteModalProjects && (
+        <DeleteProjectModal
+          projects={deleteModalProjects}
+          onClose={() => setDeleteModalProjects(null)}
+          onDeleted={() => { setDeleteModalProjects(null); fetchProjects() }}
+        />
+      )}
+
+      {shareModalProjects && (
+        <QuickShareModal
+          projects={shareModalProjects}
+          onClose={() => setShareModalProjects(null)}
+        />
+      )}
+
+      {aiModalProjects && (
+        <AISortingModal
+          projects={aiModalProjects}
+          onClose={() => setAiModalProjects(null)}
+        />
+      )}
+
+      {editClientModalProjects && (
+        <EditClientModal
+          projects={editClientModalProjects}
+          onClose={() => setEditClientModalProjects(null)}
+          onSaved={() => { setEditClientModalProjects(null); fetchProjects() }}
         />
       )}
 

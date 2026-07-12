@@ -3,7 +3,9 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
-import type { MediaFile } from '@/types/studio'
+import type { MediaFile, CurationStatus } from '@/types/studio'
+
+const CURATION_STATUSES: CurationStatus[] = ['STARRED', 'FAVORITE', 'FINAL']
 
 // PATCH — toggle watermark, update display order, or rename
 export async function PATCH(
@@ -17,7 +19,7 @@ export async function PATCH(
     }
 
     const { projectId, fileId } = params
-    const { watermarkEnabled, displayOrder, originalFilename } = await req.json()
+    const { watermarkEnabled, displayOrder, originalFilename, curationStatus } = await req.json()
     const now = new Date().toISOString()
 
     const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
@@ -26,11 +28,23 @@ export async function PATCH(
     }
 
     const updates: string[] = ['updatedAt = :now']
+    const removes: string[] = []
     const values: Record<string, unknown> = { ':now': now }
 
     if (typeof originalFilename === 'string' && originalFilename.trim().length > 0) {
       updates.push('originalFilename = :fn')
       values[':fn'] = originalFilename.trim()
+    }
+
+    if (curationStatus !== undefined) {
+      if (curationStatus === null) {
+        removes.push('curationStatus')
+      } else if (CURATION_STATUSES.includes(curationStatus)) {
+        updates.push('curationStatus = :curation')
+        values[':curation'] = curationStatus
+      } else {
+        return NextResponse.json({ success: false, error: 'INVALID_INPUT', message: 'Invalid curationStatus' }, { status: 400 })
+      }
     }
 
     if (watermarkEnabled !== undefined) {
@@ -58,10 +72,14 @@ export async function PATCH(
       values[':order'] = displayOrder
     }
 
+    const expression = removes.length > 0
+      ? `SET ${updates.join(', ')} REMOVE ${removes.join(', ')}`
+      : `SET ${updates.join(', ')}`
+
     await studioUpdateItem(
       TABLES.mediafiles,
       { projectId, fileId },
-      `SET ${updates.join(', ')}`,
+      expression,
       values
     )
 

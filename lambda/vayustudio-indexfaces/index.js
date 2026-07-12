@@ -87,8 +87,8 @@ async function indexFileFaces(projectId, file) {
 // ─── Lambda handler ──────────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
-  const { projectId, studioId, jobId } = event
-  console.log(`[indexfaces] START projectId=${projectId} jobId=${jobId}`)
+  const { projectId, studioId, jobId, fileIds } = event
+  console.log(`[indexfaces] START projectId=${projectId} jobId=${jobId}${fileIds ? ` scoped=${fileIds.length}` : ''}`)
 
   await updateJob(jobId, { status: 'PROCESSING', updatedAt: new Date().toISOString() })
 
@@ -120,7 +120,11 @@ exports.handler = async (event) => {
       },
     }))
 
-    const files = filesRes.Items || []
+    let files = filesRes.Items || []
+    if (Array.isArray(fileIds) && fileIds.length > 0) {
+      const wanted = new Set(fileIds)
+      files = files.filter((f) => wanted.has(f.fileId))
+    }
     console.log(`[indexfaces] ${files.length} images to index`)
 
     let indexed = 0
