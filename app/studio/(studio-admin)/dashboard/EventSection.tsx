@@ -134,9 +134,17 @@ interface Props {
   hidePill?: boolean
   triggerShare?: boolean
   onShareTriggered?: () => void
+  // Grid zoom + grid/list view mode — controlled from layout so both stay in
+  // sync across every event section open at once (multi-select view). The
+  // floating zoom bar itself is rendered once, by layout.tsx, not per-event
+  // (rendering it here per-instance would stack duplicate fixed-position
+  // widgets on top of each other when multiple events are open).
+  zoomLevel: number
+  viewMode: 'grid' | 'list'
+  onViewModeChange: (mode: 'grid' | 'list') => void
 }
 
-export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered }: Props) {
+export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered, zoomLevel, viewMode, onViewModeChange: setViewMode }: Props) {
   const pathname = usePathname()
 
   // ── Photo grid ────────────────────────────────────────────
@@ -153,8 +161,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [uploadOpen, setUploadOpen]       = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
-  const [zoomLevel, setZoomLevel]       = useState(6)
-  const [viewMode, setViewMode]         = useState<'grid' | 'list'>('grid')
   const [sortMode, setSortMode]         = useState<SortMode>('DEFAULT')
   const [expanded, setExpanded]         = useState(false)
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
@@ -327,11 +333,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [selectedIds, onSelectionChange])
 
+  // Only bail out of drag-select for actual interactive controls (the "⋯"
+  // menu trigger, marked data-no-drag) — not the whole tile, which used to
+  // exclude virtually all pixels given the grid's 5px gap left almost no
+  // genuinely empty space to start a drag from.
   const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || (e.target as Element).closest('[data-fileid]')) return
+    if (e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return
     const gr = gridRef.current!.getBoundingClientRect()
     dragState.current = { active: true, startX: e.clientX - gr.left, startY: e.clientY - gr.top, moved: false }
     e.preventDefault()
@@ -1141,22 +1150,19 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
             )}
             {activeTab === 'photos' && (
               <>
-                <button onClick={() => setViewMode('grid')} title="Grid view"
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
-                    viewMode === 'grid' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
-                  }`}>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-                  </svg>
-                </button>
-                <button onClick={() => setViewMode('list')} title="List view"
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
-                    viewMode === 'list' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
-                  }`}>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
-                  </svg>
+                <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+                  {viewMode === 'grid' ? (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                  )}
                 </button>
                 <PhotoActionsMenu
                   align="right"
@@ -1375,40 +1381,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   </div>
                 )}
 
-                {/* Grid toolbar */}
-                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-muted">
-                    {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
-                  </span>
-                </div>
-
                 {selectedCount === 0 && viewFilter === 'all' && viewMode === 'grid' && (
-                  <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
+                  <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag to select multiple</p>
                 )}
 
                 {/* Grid / List + floating zoom bar */}
                 <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
                   <div className="flex items-start gap-3">
 
-                    {/* Floating zoom bar — small, blends with the card background; grid mode only */}
-                    {viewMode === 'grid' && (
-                      <div className="hidden sm:flex sticky top-2 self-start flex-shrink-0 z-[2] flex-col items-center gap-1 bg-card border border-border/60 rounded-full py-1.5 px-1">
-                        <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Fewer columns (zoom in)"
-                          className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-xs font-bold leading-none">
-                          +
-                        </button>
-                        <div className="relative w-1 h-9 flex-shrink-0 bg-border/50 rounded-full">
-                          <span
-                            className="absolute left-1/2 w-2.5 h-2.5 rounded-full bg-accent shadow-sm"
-                            style={{ top: `${((zoomLevel - 2) / 8) * 100}%`, transform: 'translate(-50%, -50%)' }}
-                          />
-                        </div>
-                        <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="More columns (zoom out)"
-                          className="w-5 h-5 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-xs font-bold leading-none">
-                          −
-                        </button>
-                      </div>
-                    )}
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
@@ -1498,80 +1478,93 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       return (
                         <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
                           onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
-                          className={`group relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
-                            ${isSelected ? 'border-accent ring-2 ring-accent/40 scale-[0.95]' : 'border-border hover:border-border/60'}`}>
+                          className={`group rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100 shadow-sm hover:shadow-md
+                            ${isSelected ? 'border-accent ring-2 ring-accent/40' : 'border-border hover:border-border/80'}`}>
+                          {/* Frame's top strip — real space above the photo, not overlaid on it */}
                           {!isFailed && (
-                            <div className="absolute top-1 right-1 z-[1]">
+                            <div data-no-drag="true" onClick={e => e.stopPropagation()}
+                              className="flex items-center justify-between px-1.5 h-6 bg-border/25">
+                              <button onClick={() => cycleCurationStatus(f.fileId, f.curationStatus)}
+                                title={curationMenuLabel(f.curationStatus)}
+                                className={`flex items-center justify-center transition-colors ${f.curationStatus ? 'text-yellow-400' : 'text-black hover:text-black/70'}`}>
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={f.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                                </svg>
+                              </button>
                               <PhotoActionsMenu
                                 align="right"
                                 trigger={
-                                  <span className="w-6 h-6 flex items-center justify-center rounded-md bg-black/50 backdrop-blur-sm hover:bg-black/70 text-white cursor-pointer">
-                                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                                      <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
-                                    </svg>
+                                  <span className="text-black hover:text-black/70 cursor-pointer text-xs leading-none tracking-widest">
+                                    •••
                                   </span>
                                 }
                                 actions={buildPhotoMenuActions(f, idx)}
                               />
                             </div>
                           )}
-                          {f.r2PreviewUrl
-                            ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
-                            : <div className="w-full h-full flex items-center justify-center">
-                                {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
-                                  ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
-                                  : <span className="text-muted text-lg">📄</span>}
-                              </div>}
-                          {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
-                            <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
-                              <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                            </div>
-                          )}
-                          {isFailed && (
-                            <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
-                              {retryingIds.has(f.fileId) ? (
-                                <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                              ) : isGenuineFailure ? (
-                                <>
-                                  <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
-                                    title="Retry processing"
-                                    className="w-7 h-7 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors">
-                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                    </svg>
-                                  </button>
-                                  <span className="text-[8px] text-muted font-medium">Tap to retry</span>
-                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
-                                    Remove
-                                  </button>
-                                </>
-                              ) : (
-                                // isStaleUpload — the raw upload itself never finished, so there
-                                // are no bytes in R2 to retry a watermark against. Only real
-                                // recovery is removing this record and re-selecting the file.
-                                <>
-                                  <span className="text-[8px] text-muted font-medium text-center leading-tight">Upload didn't finish</span>
-                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
-                                    Remove
-                                  </button>
-                                </>
+
+                          {/* Photo, inset with a thin frame on the sides/bottom */}
+                          <div className="p-1 pt-0">
+                            <div className="relative aspect-square rounded overflow-hidden bg-bg">
+                              {f.r2PreviewUrl
+                                ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                                : <div className="w-full h-full flex items-center justify-center">
+                                    {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
+                                      ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
+                                      : <span className="text-muted text-lg">📄</span>}
+                                  </div>}
+                              {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
+                                <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
+                                  <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                </div>
+                              )}
+                              {isFailed && (
+                                <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
+                                  {retryingIds.has(f.fileId) ? (
+                                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  ) : isGenuineFailure ? (
+                                    <>
+                                      <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
+                                        title="Retry processing"
+                                        className="w-7 h-7 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors">
+                                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      </button>
+                                      <span className="text-[8px] text-muted font-medium">Tap to retry</span>
+                                      <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                        className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                        Remove
+                                      </button>
+                                    </>
+                                  ) : (
+                                    // isStaleUpload — the raw upload itself never finished, so there
+                                    // are no bytes in R2 to retry a watermark against. Only real
+                                    // recovery is removing this record and re-selecting the file.
+                                    <>
+                                      <span className="text-[8px] text-muted font-medium text-center leading-tight">Upload didn't finish</span>
+                                      <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                        className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                        Remove
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                              {isSelected && (
+                                <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
+                                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              )}
+                              {editComment && (
+                                <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
+                                  {editComment}
+                                </div>
                               )}
                             </div>
-                          )}
-                          {isSelected && (
-                            <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
-                              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                          )}
-                          {editComment && (
-                            <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
-                              {editComment}
-                            </div>
-                          )}
+                          </div>
                         </div>
                       )
                     })}

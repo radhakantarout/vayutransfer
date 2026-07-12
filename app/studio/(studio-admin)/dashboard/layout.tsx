@@ -12,6 +12,7 @@ import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
 import AISortingModal from '@/components/studio/AISortingModal'
 import EditClientModal from '@/components/studio/EditClientModal'
+import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -219,8 +220,8 @@ function ClientBranch({
                   </span>
                 )}
 
-                {/* "⋯" menu — on hover */}
-                <div className="opacity-0 group-hover/event:opacity-100 flex-shrink-0" onClick={e => e.stopPropagation()}>
+                {/* "⋯" menu — always visible, used frequently */}
+                <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
                   <PhotoActionsMenu
                     align="right"
                     trigger={
@@ -253,6 +254,7 @@ const SIDEBAR_KEY = 'studio_sidebar_open'
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname  = usePathname()
   const router    = useRouter()
+  const { setNavCollapsed } = useExpandedGrid()
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
@@ -267,6 +269,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [shareModalProjects, setShareModalProjects]           = useState<StudioProject[] | null>(null)
   const [aiModalProjects, setAiModalProjects]                 = useState<StudioProject[] | null>(null)
   const [editClientModalProjects, setEditClientModalProjects] = useState<StudioProject[] | null>(null)
+  // Shared grid zoom + view mode — one of each applied to every EventSection
+  // open at once (multi-select view), so zooming/switching one affects all
+  // of them together. The floating zoom bar itself renders once here, not
+  // per-event, to avoid stacking duplicate fixed-position widgets.
+  const [zoomLevel, setZoomLevel] = useState(6)
+  const [gridViewMode, setGridViewMode] = useState<'grid' | 'list'>('grid')
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
@@ -309,6 +317,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setSelectedIds([])
     }
   }, [pathname])
+
+  // Auto-hide the top navbar to give an open gallery more room, and re-hide
+  // it any time the actual selection changes (a fresh "select event" action)
+  // — the admin can still peek at it via the SHOW tab (rendered by
+  // StudioChrome) without that overriding this effect, since it only fires
+  // when selectedIds itself changes, not on every render.
+  useEffect(() => {
+    setNavCollapsed(selectedIds.length > 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds.join(',')])
 
   const toggleSidebar = () => {
     setSidebarOpen(v => { localStorage.setItem(SIDEBAR_KEY, String(!v)); return !v })
@@ -684,7 +702,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
           <span className="flex flex-col items-center leading-[1.1]">
-            {(sidebarOpen ? 'CLOSE' : 'OPEN').split('').map((ch, i) => (
+            {(sidebarOpen ? 'HIDE' : 'OPEN').split('').map((ch, i) => (
               <span key={i} className="text-[8px] font-bold tracking-wide">{ch}</span>
             ))}
           </span>
@@ -696,7 +714,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* ── Main content ─────────────────────────────────────── */}
       {selectedIds.length > 0 ? (
         <main className="flex-1 overflow-auto bg-bg">
-          <div className="px-6 py-6 space-y-6">
+          <div className="px-6 pt-2 pb-6 space-y-6">
             {/* Selection bar */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -730,9 +748,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 hidePill={true}
                 triggerShare={shareTargetProjectId === p.projectId}
                 onShareTriggered={() => setShareTargetProjectId(null)}
+                zoomLevel={zoomLevel}
+                viewMode={gridViewMode}
+                onViewModeChange={setGridViewMode}
               />
             ))}
           </div>
+
+          {/* Shared floating zoom bar — one control for every open event's
+              grid, rendered once here so it never stacks per-event. */}
+          {gridViewMode === 'grid' && (
+            <div className="fixed right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 bg-card border border-border/60 rounded-full py-1.5 px-1 shadow-lg">
+              <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Fewer columns (zoom in)"
+                className="w-6 h-6 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-sm font-bold leading-none">
+                +
+              </button>
+              <div className="relative w-1 h-9 flex-shrink-0 bg-border/50 rounded-full">
+                <span
+                  className="absolute left-1/2 w-2.5 h-2.5 rounded-full bg-accent shadow-sm"
+                  style={{ top: `${((zoomLevel - 2) / 8) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                />
+              </div>
+              <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="More columns (zoom out)"
+                className="w-6 h-6 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-sm font-bold leading-none">
+                −
+              </button>
+            </div>
+          )}
         </main>
       ) : (
         <main className="flex-1 overflow-auto bg-bg">{children}</main>
