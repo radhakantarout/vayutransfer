@@ -240,6 +240,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
+  // A genuine drag can start and end on the same tile (e.g. a diagonal
+  // gesture that curls back), which would otherwise also fire that tile's
+  // own click and toggle it — on top of whatever the rubber-band selected.
+  // Set the instant a real drag completes, consumed by the next tile click.
+  const suppressNextTileClickRef = useRef(false)
   const speedRef = useRef<{ bytes: number; time: number }>({ bytes: 0, time: 0 })
 
   // ── Files ─────────────────────────────────────────────────
@@ -315,6 +320,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       const { startX, startY, moved } = dragState.current
       dragState.current.active = false; dragState.current.moved = false; setDragRect(null)
       if (!moved || !gridRef.current) return
+      suppressNextTileClickRef.current = true
       const gr = gridRef.current.getBoundingClientRect()
       const ex = e.clientX - gr.left; const ey = e.clientY - gr.top
       const selL = Math.min(startX, ex) + gr.left; const selT = Math.min(startY, ey) + gr.top
@@ -344,6 +350,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     const gr = gridRef.current!.getBoundingClientRect()
     dragState.current = { active: true, startX: e.clientX - gr.left, startY: e.clientY - gr.top, moved: false }
     e.preventDefault()
+  }
+
+  const handleTileClick = (fileId: string) => {
+    if (suppressNextTileClickRef.current) { suppressNextTileClickRef.current = false; return }
+    togglePhoto(fileId)
   }
 
   // ── Face Index functions ───────────────────────────────────
@@ -1400,10 +1411,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   </div>
                 )}
 
-                {selectedCount === 0 && viewFilter === 'all' && viewMode === 'grid' && (
-                  <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag to select multiple</p>
-                )}
-
                 {/* Grid / List + floating zoom bar */}
                 <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
                   <div className="flex items-start gap-3">
@@ -1412,7 +1419,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                     {viewMode === 'list' ? (
-                      <div className="space-y-1">
+                      <div className="space-y-1 pt-[14px] pl-[14px] pr-[14px]">
                         {sortedDisplayFiles.map((f, idx) => {
                           const isSelected = selectedIds.has(f.fileId)
                           return (
@@ -1481,8 +1488,8 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                         })}
                       </div>
                     ) : (
-                  <div ref={gridRef} className="relative select-none"
-                    style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
+                  <div ref={gridRef} className="relative select-none pt-[14px] pl-[14px] pr-[14px]"
+                    style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '14px' }}
                     onMouseDown={handleGridMouseDown}>
                     {sortedDisplayFiles.map((f, idx) => {
                       const isSelected  = selectedIds.has(f.fileId)
@@ -1495,9 +1502,9 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                       const isFailed    = isGenuineFailure || isStaleUpload
                       const editComment = editCommentMap.get(f.fileId)
                       return (
-                        <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
+                        <div key={f.fileId} data-fileid={f.fileId} onClick={() => handleTileClick(f.fileId)}
                           onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
-                          className={`group rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100 shadow-sm hover:shadow-md
+                          className={`group rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-150 shadow-md hover:shadow-xl hover:-translate-y-0.5
                             ${isSelected ? 'border-accent ring-2 ring-accent/40' : 'border-border hover:border-border/80'}`}>
                           {/* Frame's top strip — real space above the photo, not overlaid on it */}
                           {!isFailed && (
@@ -1570,13 +1577,17 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                                   )}
                                 </div>
                               )}
-                              {isSelected && (
-                                <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
+                              {/* Always-visible checkbox (not just on hover/selected) — a reliable,
+                                  drag-free way to build a multi-selection: just click each photo
+                                  you want, one at a time. No need to hunt for empty space to drag. */}
+                              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center shadow transition-colors
+                                ${isSelected ? 'bg-accent' : 'bg-black/35 border border-white/70'}`}>
+                                {isSelected && (
                                   <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                   </svg>
-                                </div>
-                              )}
+                                )}
+                              </div>
                               {editComment && (
                                 <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
                                   {editComment}
