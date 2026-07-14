@@ -26,7 +26,7 @@ export async function GET(
     }
 
     const transfers = await studioQueryByPK<StudioTransfer>(TABLES.transfers, 'projectId', projectId)
-    transfers.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    transfers.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 
     return NextResponse.json({ success: true, data: { transfers } })
   } catch (err) {

@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
     }
 
     const projects = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studioId)
-    projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    // Defensive — a malformed/incomplete project record missing updatedAt
+    // would otherwise throw here and take down the whole studio's list.
+    projects.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
 
     return NextResponse.json({ success: true, data: projects })
   } catch (err) {

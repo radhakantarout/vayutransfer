@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     }
 
     const projects = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studioId)
-    projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    projects.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
 
     const withCovers = await Promise.all(
       projects.map(async (project) => {

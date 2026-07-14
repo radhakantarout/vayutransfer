@@ -90,7 +90,7 @@ export async function GET(
     )
 
     // Sort events by eventDate ascending
-    events.sort((a, b) => a.project.eventDate.localeCompare(b.project.eventDate))
+    events.sort((a, b) => (a.project.eventDate ?? '').localeCompare(b.project.eventDate ?? ''))
 
     const totalLoved     = events.reduce((s, e) => s + e.lovedCount, 0)
     const totalEdit      = events.reduce((s, e) => s + e.editCount, 0)

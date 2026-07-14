@@ -12,6 +12,6 @@ export async function GET(req: NextRequest) {
 
   const bookings = await getBookingsByStudio(studioId)
   // Sort newest first
-  bookings.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  bookings.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
   return NextResponse.json({ success: true, data: bookings })
 }

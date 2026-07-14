@@ -30,7 +30,7 @@ function isAuthorized(req: NextRequest): boolean {
 // + project record + billableStorageBytes decrement).
 async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<number> {
   const projects = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studio.studioId)
-  projects.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  projects.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
 
   const grant = activeStorageGrantBytes(studio)
   let remaining = currentStorageBytes(studio)
@@ -71,7 +71,7 @@ async function deleteOldestTransfersUntilUnderQuota(
 ): Promise<number> {
   const eligible = transfers
     .filter((t) => !t.importedToGallery && t.status === 'READY' && t.r2Key && t.sizeBytes)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
 
   let deletedBytes = 0
   for (const t of eligible) {
