@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { TABLES } from '@/lib/studio/dynamodb'
-import type { StudioJob } from '@/types/studio'
+import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import type { StudioJob, StudioProject } from '@/types/studio'
 
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -19,20 +19,20 @@ export async function GET(req: NextRequest) {
 
     const studioId = auth.studioId!
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const projectId = req.nextUrl.searchParams.get('projectId') ?? ''
 
-    // Query READY jobs for this studio's projects
-    // We scan jobs by studioId using a filter (no studioId GSI, acceptable at this scale)
-    // In practice, a studio has <20 projects so this is fast
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
+    if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+    // Query READY jobs for this project (ownership verified above)
     const res = await ddb.send(new QueryCommand({
       TableName: TABLES.jobs,
       IndexName: 'projectId-status-index',
-      // We'd need studioId GSI for proper filtering — approximate by checking all READY jobs
-      // for the projectId passed as query param
       KeyConditionExpression: 'projectId = :pid AND #s = :s',
       FilterExpression: 'completedAt > :since',
       ExpressionAttributeNames: { '#s': 'status' },
       ExpressionAttributeValues: {
-        ':pid': req.nextUrl.searchParams.get('projectId') ?? '',
+        ':pid': projectId,
         ':s': 'READY',
         ':since': since,
       },

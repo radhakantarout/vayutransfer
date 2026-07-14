@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
-import type { MediaFile } from '@/types/studio'
+import type { MediaFile, StudioProject } from '@/types/studio'
 
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -26,6 +26,9 @@ export async function POST(
 
     const { projectId } = params
     const studioId = auth.studioId!
+
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
+    if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
     // Query all READY IMAGE files without r2PreviewUrl
     const res = await ddb.send(new QueryCommand({
