@@ -158,7 +158,7 @@ export default function GuestPage() {
     </div>
   )
 
-  const eventLabel = project ? project.eventType.replace(/_/g, ' ') : ''
+  const eventLabel = project ? (project.eventType ?? '').replace(/_/g, ' ') : ''
   const eventDate  = project
     ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
     : ''

@@ -199,7 +199,7 @@ function ClientBranch({
                 {/* Event info */}
                 <div className="min-w-0 flex-1">
                   <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
-                    {p.eventType.replace(/_/g, ' ')}
+                    {(p.eventType ?? '').replace(/_/g, ' ')}
                   </div>
                   <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
                 </div>
@@ -604,7 +604,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                               }`}
                             >
                               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
-                              <span className="truncate flex-1">{fmtDate(p.eventDate)} · {p.eventType.replace(/_/g, ' ')}</span>
+                              <span className="truncate flex-1">{fmtDate(p.eventDate)} · {(p.eventType ?? '').replace(/_/g, ' ')}</span>
                             </button>
                           ))}
                         </div>

@@ -41,7 +41,7 @@ export default function QuickShareModal({ projects, onClose }: Props) {
   const shareOne = async (project: StudioProject): Promise<string | null> => {
     const includedFileIds = await resolveProjectScopeFileIds(project, scope)
     if (includedFileIds && includedFileIds.length === 0) {
-      throw new Error(`No photos match "${PHOTO_SCOPE_LABEL[scope]}" for ${project.eventType.replace(/_/g, ' ')}`)
+      throw new Error(`No photos match "${PHOTO_SCOPE_LABEL[scope]}" for ${(project.eventType ?? '').replace(/_/g, ' ')}`)
     }
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
       method: 'POST',

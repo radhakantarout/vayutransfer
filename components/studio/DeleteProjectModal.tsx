@@ -25,7 +25,7 @@ export default function DeleteProjectModal({ projects, onClose, onDeleted }: Pro
   const isSingle = projects.length === 1
   const clientName = projects[0].clientName
   const label = isSingle
-    ? `${clientName} — ${projects[0].eventType.replace(/_/g, ' ')}`
+    ? `${clientName} — ${(projects[0].eventType ?? '').replace(/_/g, ' ')}`
     : `${clientName} (${projects.length} events)`
   const runsOn = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
 

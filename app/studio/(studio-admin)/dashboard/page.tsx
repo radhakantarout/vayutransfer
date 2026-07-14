@@ -118,7 +118,7 @@ export default function DashboardPage() {
   const clients     = new Set(projects.map((p) => p.clientName)).size
 
   const recent = [...projects]
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 4)
 
   if (loading) {
@@ -234,7 +234,7 @@ export default function DashboardPage() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-text-primary truncate">{p.clientName}</div>
-                  <div className="text-xs text-muted">{p.eventType.replace(/_/g, ' ')} · {fmtDate(p.eventDate)}</div>
+                  <div className="text-xs text-muted">{(p.eventType ?? '').replace(/_/g, ' ')} · {fmtDate(p.eventDate)}</div>
                 </div>
                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${STATUS_COLOR[p.status] ?? 'bg-border text-muted'}`}>
                   {STATUS_LABEL[p.status] ?? p.status}

@@ -34,7 +34,7 @@ export default function AISortingModal({ projects, onClose }: Props) {
   const indexOne = async (project: StudioProject) => {
     const fileIds = await resolveProjectScopeFileIds(project, scope)
     if (fileIds && fileIds.length === 0) {
-      throw new Error(`No photos match "${PHOTO_SCOPE_LABEL[scope]}" for ${project.eventType.replace(/_/g, ' ')}`)
+      throw new Error(`No photos match "${PHOTO_SCOPE_LABEL[scope]}" for ${(project.eventType ?? '').replace(/_/g, ' ')}`)
     }
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, {
       method: 'POST',
