@@ -42,13 +42,16 @@ export async function POST(
 
     const now = new Date().toISOString()
 
-    // Increment project totalFiles
+    // Increment project totalFiles. Guarded with attribute_exists — UpdateItem
+    // upserts by default, so without this a project deleted mid-upload would
+    // silently resurrect a bare-bones ghost project record.
     await studioUpdateItem(
       TABLES.projects,
       { studioId, projectId },
       'ADD totalFiles :one SET updatedAt = :now, #s = :active',
       { ':one': 1, ':now': now, ':active': 'ACTIVE' },
-      { '#s': 'status' }
+      { '#s': 'status' },
+      'attribute_exists(studioId)'
     )
 
     // storageUsedBytes = historical "Total Upload Size", never decrements.

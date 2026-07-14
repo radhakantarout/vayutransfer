@@ -62,12 +62,16 @@ export async function POST(
     }
     await studioPutItem(TABLES.mediafiles, mediaFile as unknown as Record<string, unknown>)
 
+    // Guarded with attribute_exists — UpdateItem upserts by default, so without
+    // this a project deleted before the import completes would silently
+    // resurrect a bare-bones ghost project record.
     await studioUpdateItem(
       TABLES.projects,
       { studioId, projectId },
       'ADD totalFiles :one SET updatedAt = :now, #s = :active',
       { ':one': 1, ':now': now, ':active': 'ACTIVE' },
-      { '#s': 'status' }
+      { '#s': 'status' },
+      'attribute_exists(studioId)'
     )
 
     if (process.env.WATERMARK_LAMBDA_ARN) {

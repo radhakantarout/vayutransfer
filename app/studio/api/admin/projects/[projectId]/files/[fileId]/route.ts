@@ -118,12 +118,18 @@ export async function DELETE(
     ])
 
     const now = new Date().toISOString()
+    // Best-effort — the file is already gone at this point, so a project
+    // deleted out from under us (e.g. a concurrent project delete) shouldn't
+    // fail this request. Guarded with attribute_exists so it can't resurrect
+    // a ghost project record either way.
     await studioUpdateItem(
       TABLES.projects,
       { studioId: file.studioId, projectId },
       'ADD totalFiles :neg SET updatedAt = :now',
-      { ':neg': -1, ':now': now }
-    )
+      { ':neg': -1, ':now': now },
+      undefined,
+      'attribute_exists(studioId)'
+    ).catch(() => {})
     // billableStorageBytes decrement — storageUsedBytes (Total Upload Size)
     // intentionally left untouched, it's the historical/lifetime figure.
     await studioUpdateItem(

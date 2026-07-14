@@ -60,12 +60,17 @@ export async function GET(
       })
     )
 
-    // Auto-heal: keep project.totalFiles in sync with the actual file count
+    // Auto-heal: keep project.totalFiles in sync with the actual file count.
+    // Guarded with attribute_exists — UpdateItem upserts by default, so without
+    // this a deleted/stale projectId (e.g. leftover mediafiles, a stale tab)
+    // would silently resurrect a bare-bones ghost project record.
     studioUpdateItem(
       TABLES.projects,
       { studioId: auth.studioId!, projectId },
       'SET totalFiles = :tf',
-      { ':tf': files.length }
+      { ':tf': files.length },
+      undefined,
+      'attribute_exists(studioId)'
     ).catch(() => {})
 
     return NextResponse.json({ success: true, data: enriched })

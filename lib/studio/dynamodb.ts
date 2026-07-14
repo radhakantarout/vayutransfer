@@ -59,7 +59,8 @@ export async function studioUpdateItem(
   key: Record<string, unknown>,
   updateExpression: string,
   expressionValues: Record<string, unknown>,
-  expressionNames?: Record<string, string>
+  expressionNames?: Record<string, string>,
+  conditionExpression?: string
 ): Promise<void> {
   await client.send(new UpdateItemCommand({
     TableName: table,
@@ -67,6 +68,7 @@ export async function studioUpdateItem(
     UpdateExpression: updateExpression,
     ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
     ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
+    ...(conditionExpression ? { ConditionExpression: conditionExpression } : {}),
   }))
 }
 
