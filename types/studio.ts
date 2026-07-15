@@ -46,6 +46,12 @@ export interface Studio {
   // delete. This is the number billing/quota enforcement actually uses.
   billableStorageBytes: number
   storageGrants: StorageGrant[]
+  // Total AI-search (face-indexing) credits ever granted — free baseline +
+  // every top-up, cumulative, never decrements. "Used" is computed live by
+  // summing indexed-photo counts across the studio's projects, not stored
+  // here. Undefined on studios created before this field existed — treat as
+  // just the free baseline (see FREE_AI_SEARCH_CREDITS).
+  aiSearchCreditsTotal?: number
   dataRetentionGraceDays: number
   storageOverageStartedAt?: string
   storageReminderCount?: number
@@ -308,7 +314,7 @@ export interface Booking {
 
 // ── Billing ───────────────────────────────────────────────────────────────────
 
-export type StudioTxnType = 'storage_topup' | 'download_topup'
+export type StudioTxnType = 'storage_topup' | 'download_topup' | 'ai_search_topup'
 export type StudioTxnStatus = 'pending' | 'success' | 'failed'
 
 export interface StudioTransaction {
@@ -319,6 +325,7 @@ export interface StudioTransaction {
   amountPaise: number
   gbPurchased: number
   months?: number            // set for storage_topup only
+  creditsPurchased?: number  // set for ai_search_topup only
   razorpayOrderId?: string
   razorpayPaymentId?: string
   status: StudioTxnStatus

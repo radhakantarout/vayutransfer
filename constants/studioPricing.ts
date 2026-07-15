@@ -44,6 +44,26 @@ export const DOWNLOAD_TOPUP_PACKAGES: DownloadTopupPackage[] = [
   { id: 'download_100', label: '100 GB', gb: 100, pricePaise: 160000 },
 ]
 
+// AI face-indexing is a real per-photo AWS Rekognition cost (~₹0.08-0.10/photo
+// incl. compute) — this is a genuine metered cost, not a cosmetic quota.
+// Free baseline is small since indexing costs money per photo, unlike
+// storage/downloads which are much cheaper per-unit.
+export const FREE_AI_SEARCH_CREDITS = 200
+
+export interface AiSearchTopupPackage {
+  id: string
+  label: string
+  credits: number
+  pricePaise: number
+  popular?: boolean
+}
+
+export const AI_SEARCH_TOPUP_PACKAGES: AiSearchTopupPackage[] = [
+  { id: 'ai_search_500',  label: '500 photos',   credits: 500,  pricePaise: 30000 },
+  { id: 'ai_search_1000', label: '1,000 photos', credits: 1000, pricePaise: 50000, popular: true },
+  { id: 'ai_search_5000', label: '5,000 photos', credits: 5000, pricePaise: 200000 },
+]
+
 export const DEFAULT_RETENTION_GRACE_DAYS = 25
 export const RETENTION_GRACE_DAY_OPTIONS = [15, 25, 45] as const
 

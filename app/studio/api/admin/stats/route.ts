@@ -1,9 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { activeStorageGrantBytes, currentStorageBytes, getMonthUsage, isOverStorageQuota, monthDownloadQuota } from '@/lib/studio/usage'
-import { DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
-import type { Studio } from '@/types/studio'
+import { DEFAULT_RETENTION_GRACE_DAYS, FREE_AI_SEARCH_CREDITS } from '@/constants/studioPricing'
+import type { Studio, StudioProject } from '@/types/studio'
+
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION ?? 'ap-south-1' }))
+
+// Real cumulative "AI photos indexed" count across every project this studio
+// owns — face-indexing costs real AWS Rekognition money per photo, so this is
+// aggregated from the same faceIndexed flag the indexing Lambda already sets
+// (lambda/vayustudio-indexfaces/index.js), not a fabricated number.
+async function countAiIndexedPhotos(studioId: string): Promise<number> {
+  const projects = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studioId)
+  const counts = await Promise.all(
+    projects.map((p) =>
+      ddb.send(new QueryCommand({
+        TableName: TABLES.mediafiles,
+        KeyConditionExpression: 'projectId = :pid',
+        FilterExpression: 'faceIndexed = :true',
+        ExpressionAttributeValues: { ':pid': p.projectId, ':true': true },
+        Select: 'COUNT',
+      })).then((res) => res.Count ?? 0).catch(() => 0)
+    )
+  )
+  return counts.reduce((sum, c) => sum + c, 0)
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,7 +44,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    const monthUsage = await getMonthUsage(studioId)
+    const [monthUsage, aiSearchCreditsUsed] = await Promise.all([
+      getMonthUsage(studioId),
+      countAiIndexedPhotos(studioId),
+    ])
 
     return NextResponse.json({
       success: true,
@@ -36,6 +63,8 @@ export async function GET(req: NextRequest) {
           dataRetentionGraceDays: studio.dataRetentionGraceDays ?? DEFAULT_RETENTION_GRACE_DAYS,
           downloadUsedBytes: monthUsage.downloadBytes,
           downloadQuotaBytes: monthDownloadQuota(monthUsage),
+          aiSearchCreditsUsed,
+          aiSearchCreditsTotal: studio.aiSearchCreditsTotal ?? FREE_AI_SEARCH_CREDITS,
         },
       },
     })

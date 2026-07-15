@@ -8,9 +8,9 @@ export type PhotoScope = 'ALL' | 'STARRED' | 'FAVORITE' | 'FINAL' | 'EDIT_REQUIR
 
 export const PHOTO_SCOPE_LABEL: Record<PhotoScope, string> = {
   ALL:           'All gallery',
-  STARRED:       'Starred',
-  FAVORITE:      'Favorite',
-  FINAL:         'Final',
+  STARRED:       'Starred (Admin only)',
+  FAVORITE:      'Favorite (Admin only)',
+  FINAL:         'Final (Admin only)',
   EDIT_REQUIRED: 'Edit required',
   EDITED:        'Edited',
 }

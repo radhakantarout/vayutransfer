@@ -1,20 +1,30 @@
 'use client'
 
+import { usePathname } from 'next/navigation'
 import StudioNavbar from './StudioNavbar'
 import ConditionalFooter from './ConditionalFooter'
 import ChatWidget from './ChatWidget'
 import { ExpandedGridProvider, useExpandedGrid } from './ExpandedGridContext'
 
 function Chrome({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
   const { expanded, navCollapsed, setNavCollapsed } = useExpandedGrid()
-  const hideNavbar = expanded || navCollapsed
+  // The marketing navbar never belongs inside the authenticated admin app —
+  // it's the logged-out/marketing site's chrome (Pricing/Events/Examples).
+  const isAdminApp = pathname.startsWith('/studio/dashboard')
+  const hideNavbar = isAdminApp || expanded || navCollapsed
 
   return (
-    <div className="min-h-screen bg-bg text-text-primary flex flex-col">
+    // Admin app clips to exactly the viewport height so its internal
+    // flex-1/overflow-y-auto regions (sidebar's project tree, main content)
+    // scroll on their own — otherwise the whole page grows taller than the
+    // screen and pinned sidebar sections (Settings/Storage/AI/profile) end
+    // up below the fold, needing a page-scroll to reach.
+    <div className={`${isAdminApp ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-bg text-text-primary flex flex-col`}>
       {!hideNavbar && <StudioNavbar />}
       {/* Only appears when the dashboard auto-collapsed the navbar for an
           open event gallery — lets the admin peek at it without leaving. */}
-      {!expanded && navCollapsed && (
+      {!isAdminApp && !expanded && navCollapsed && (
         <button onClick={() => setNavCollapsed(false)} title="Show navbar"
           className="self-center sticky top-0 z-50 flex items-center gap-1 px-3 py-0.5 bg-card border border-t-0 border-border rounded-b-lg text-[9px] font-bold text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
           <svg className="w-2.5 h-2.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import type { StudioProject, MediaFile } from '@/types/studio'
@@ -12,7 +13,17 @@ import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
 import AISortingModal from '@/components/studio/AISortingModal'
 import EditClientModal from '@/components/studio/EditClientModal'
+import StudioTopupModal from '@/components/studio/StudioTopupModal'
+import ProfileMenu from '@/components/studio/ProfileMenu'
+import EditProfileModal from '@/components/studio/EditProfileModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
+
+interface NotificationItem {
+  jobId: string
+  jobType: string
+  projectId: string
+  completedAt: string
+}
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -31,45 +42,6 @@ function CheckIcon() {
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
     </svg>
   )
-}
-
-// Collapsed-sidebar icon-only rail button — shows a hover tooltip/flyout with
-// the full label (and optionally richer content via `flyout`).
-function RailItem({
-  icon, label, active, onClick, href, flyout,
-}: {
-  icon: React.ReactNode
-  label: string
-  active?: boolean
-  onClick?: () => void
-  href?: string
-  flyout?: React.ReactNode
-}) {
-  const className = `group/rail relative w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
-    active ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
-  }`
-  const tooltip = !flyout && (
-    <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 rounded-lg bg-text-primary text-bg text-xs font-semibold whitespace-nowrap opacity-0 invisible group-hover/rail:opacity-100 group-hover/rail:visible transition-all duration-150 z-30 shadow-lg pointer-events-none">
-      {label}
-    </span>
-  )
-  const content = (
-    <>
-      {icon}
-      {tooltip}
-      {flyout}
-    </>
-  )
-  if (href) {
-    return <Link href={href} onClick={onClick} className={className} title={label}>{content}</Link>
-  }
-  if (onClick) {
-    return <button onClick={onClick} className={className} title={label}>{content}</button>
-  }
-  // Hover-only trigger (e.g. a flyout with its own nested buttons/links) —
-  // must not be a <button> itself, or the nested interactive elements would
-  // produce invalid nested-button HTML.
-  return <div className={className} title={label}>{content}</div>
 }
 
 function EditIcon() {
@@ -114,9 +86,125 @@ function DotsIcon() {
     </svg>
   )
 }
+function GalleryIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z" />
+    </svg>
+  )
+}
+function WebsiteIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+    </svg>
+  )
+}
+function BookingIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+    </svg>
+  )
+}
+function BellIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+    </svg>
+  )
+}
+function HelpIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.783.38-1.45 1.02-1.45 1.887V14M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  )
+}
 
 function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+}
+
+function fmtBytes(bytes: number): string {
+  if (!bytes) return '0 GB'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+}
+
+// Reads the non-httpOnly `studio_ui` cookie set at login ({role, name, email})
+// — avoids a "who am I" API round trip for something already in the browser.
+function readStudioUiCookie(): { role?: string; name?: string; email?: string } | null {
+  const match = document.cookie.match(/(?:^|; )studio_ui=([^;]*)/)
+  if (!match) return null
+  try {
+    return JSON.parse(decodeURIComponent(match[1]))
+  } catch {
+    return null
+  }
+}
+
+// Flat (non-client-grouped) row for the Recent/Starred sidebar views — same
+// visual language as ClientBranch's own event row, just standalone with the
+// client name inline instead of a group header.
+function FlatProjectRow({
+  project, selectedIds, onToggle, onEditEvent, onDeleteEvents, onQuickShare, onAISort, onCancelSchedule,
+}: {
+  project: StudioProject
+  selectedIds: string[]
+  onToggle: (id: string) => void
+  onEditEvent: (p: StudioProject) => void
+  onDeleteEvents: (projects: StudioProject[]) => void
+  onQuickShare: (projects: StudioProject[]) => void
+  onAISort: (projects: StudioProject[]) => void
+  onCancelSchedule: (p: StudioProject) => void
+}) {
+  const p = project
+  const selected = selectedIds.includes(p.projectId)
+  return (
+    <div
+      onClick={() => onToggle(p.projectId)}
+      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors group/event
+        ${selected ? 'bg-accent/15' : 'hover:bg-border/50'}`}
+    >
+      <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors
+        ${selected ? 'bg-accent border-accent text-bg' : 'border-muted group-hover/event:border-text-primary'}`}>
+        {selected && <CheckIcon />}
+      </div>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
+      <div className="min-w-0 flex-1">
+        <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
+          {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')}
+        </div>
+        <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
+      </div>
+      {p.totalFiles > 0 && (
+        <span className="text-[9px] text-muted bg-border/60 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
+          {p.totalFiles}
+        </span>
+      )}
+      <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
+        <PhotoActionsMenu
+          align="right"
+          trigger={
+            <button title="Event options" className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all">
+              <DotsIcon />
+            </button>
+          }
+          actions={[
+            { label: 'Edit project',    icon: <EditIcon />,  onClick: () => onEditEvent(p) },
+            { label: 'Quick Share',     icon: <ShareIcon />, onClick: () => onQuickShare([p]) },
+            { label: 'AI Sorting / Search', icon: <AIIcon />, onClick: () => onAISort([p]) },
+            ...(p.scheduledDeleteAt
+              ? [{ label: 'Cancel scheduled deletion', icon: <ClockIcon />, onClick: () => onCancelSchedule(p) }]
+              : []),
+            { label: 'Delete', icon: <TrashIcon />, onClick: () => onDeleteEvents([p]), danger: true },
+          ]}
+        />
+      </div>
+    </div>
+  )
 }
 
 function ClientBranch({
@@ -249,8 +337,6 @@ function ClientBranch({
   )
 }
 
-const SIDEBAR_KEY = 'studio_sidebar_open'
-
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname  = usePathname()
   const router    = useRouter()
@@ -258,9 +344,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
-  const [treeOpen, setTreeOpen]         = useState(true)
-  const [sidebarOpen, setSidebarOpen]   = useState(true)
+  const [sidebarView, setSidebarView]   = useState<'dashboard' | 'recent' | 'starred' | 'projects'>('projects')
   const [selectedIds, setSelectedIds]   = useState<string[]>([])
+  const [stats, setStats]               = useState<{ storageUsedBytes: number; storageGrantBytes: number; aiSearchCreditsUsed: number; aiSearchCreditsTotal: number } | null>(null)
+  const [topupKind, setTopupKind]       = useState<'storage' | 'ai-search' | null>(null)
+  const [userInfo, setUserInfo]         = useState<{ role?: string; name?: string; email?: string } | null>(null)
+  const [showEditProfile, setShowEditProfile] = useState(false)
+  const [sidebarNotifications, setSidebarNotifications] = useState<NotificationItem[]>([])
+  const [showSidebarNotif, setShowSidebarNotif] = useState(false)
+  const [notifPos, setNotifPos] = useState<{ top: number; left: number } | null>(null)
+  const notifRef = useRef<HTMLDivElement>(null)
+  const [profilePhone, setProfilePhone] = useState('')
   const [modalClient, setModalClient]   = useState<string | null>(null)
   const [editProject, setEditProject]   = useState<StudioProject | null>(null)
   // Project "⋯" menu modals — each holds the target project(s): length 1 for
@@ -288,7 +382,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [shareError, setShareError]             = useState<string | null>(null)
   const [shareSuccess, setShareSuccess]         = useState<string | null>(null)
   const [sharing, setSharing]                   = useState(false)
-  const sidebarWrapRef                          = useRef<HTMLDivElement>(null)
   const zoomTrackRef                            = useRef<HTMLDivElement>(null)
 
   // Drag the zoom bar's dot up/down the track to set zoom directly, instead
@@ -318,23 +411,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     e.preventDefault()
   }
 
-  useEffect(() => {
-    const saved = localStorage.getItem(SIDEBAR_KEY)
-    if (saved === 'false') setSidebarOpen(false)
-  }, [])
+  const loadStats = () => {
+    fetch('/studio/api/admin/stats')
+      .then(r => r.json())
+      .then(d => { if (d?.success) setStats(d.data.billing) })
+      .catch(() => {})
+  }
 
-  // Auto-close sidebar when clicking anywhere outside it (or its toggle tab)
+  // Storage widget + user footer — both use data that's already fetchable
+  // (existing /admin/stats route, existing studio_ui cookie set at login),
+  // just not previously surfaced anywhere in the sidebar.
   useEffect(() => {
-    if (!sidebarOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (sidebarWrapRef.current && !sidebarWrapRef.current.contains(e.target as Node)) {
-        setSidebarOpen(false)
-        localStorage.setItem(SIDEBAR_KEY, 'false')
-      }
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [sidebarOpen])
+    setUserInfo(readStudioUiCookie())
+    loadStats()
+  }, [])
 
   // Sync sidebar selection to URL — runs on every navigation so "recent activity" links auto-select
   useEffect(() => {
@@ -344,6 +434,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     } else if (pathname === '/studio/dashboard') {
       setSelectedIds([])
     }
+  }, [pathname])
+
+  // Keep the Dashboard tab's highlight in sync with direct navigation/refresh
+  // (e.g. visiting /overview straight from a bookmark) — clicking Recent/
+  // Starred/Projects afterwards doesn't change the URL, so it won't re-fire
+  // this and fight with those tabs' own highlight.
+  useEffect(() => {
+    if (pathname === '/studio/dashboard/overview') setSidebarView('dashboard')
   }, [pathname])
 
   // Auto-hide the top navbar to give an open gallery more room, and re-hide
@@ -356,8 +454,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds.join(',')])
 
-  const toggleSidebar = () => {
-    setSidebarOpen(v => { localStorage.setItem(SIDEBAR_KEY, String(!v)); return !v })
+  const handleLogout = async () => {
+    await fetch('/studio/api/auth/logout', { method: 'POST' })
+    router.push('/studio/login')
+  }
+
+  const openEditProfile = async () => {
+    const res = await fetch('/studio/api/auth/me').then(r => r.json()).catch(() => null)
+    setProfilePhone(res?.data?.phone ?? '')
+    setShowEditProfile(true)
   }
 
   const fetchProjects = () => {
@@ -375,6 +480,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   useEffect(() => { fetchProjects() }, [pathname])
+
+  // Studio-wide notification bell — aggregates the same per-project
+  // /admin/notifications route EventSection already uses, across every
+  // project this studio has (small studios, cheap to do in parallel).
+  const projectIdsKey = projects.map(p => p.projectId).join(',')
+  useEffect(() => {
+    if (projects.length === 0) { setSidebarNotifications([]); return }
+    let cancelled = false
+    Promise.all(
+      projects.map(p =>
+        fetch(`/studio/api/admin/notifications?projectId=${p.projectId}`)
+          .then(r => r.json())
+          .then(d => (d?.success ? d.data.notifications : []) as NotificationItem[])
+          .catch(() => [] as NotificationItem[])
+      )
+    ).then(lists => {
+      if (cancelled) return
+      setSidebarNotifications(lists.flat().sort((a, b) => b.completedAt.localeCompare(a.completedAt)))
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectIdsKey])
+
+  useEffect(() => {
+    if (!showSidebarNotif) return
+    const onDocClick = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowSidebarNotif(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [showSidebarNotif])
 
   const handleCancelSchedule = async (p: StudioProject) => {
     await fetch(`/studio/api/admin/projects/${p.projectId}`, {
@@ -493,9 +629,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })
   })()
 
+  const recentProjects = [...projects]
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    .slice(0, 10)
+  const starredProjects = projects.filter(p => p.isStarred)
+
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
     .filter((p): p is StudioProject => !!p)
+
+  // Which product is active — drives the sidebar's simplified shape (the
+  // Projects tree only makes sense in Gallery mode; Settings/Storage/AI-usage/
+  // profile stay visible in every mode).
+  const activeProduct: 'gallery' | 'website' | 'bookings' = pathname.startsWith('/studio/dashboard/website')
+    ? 'website'
+    : pathname.startsWith('/studio/dashboard/bookings')
+      ? 'bookings'
+      : 'gallery'
+  const PRODUCT_LABEL: Record<typeof activeProduct, string> = {
+    gallery: 'Client Gallery', website: 'My Website', bookings: 'My Booking',
+  }
+  const PRODUCT_ICON: Record<typeof activeProduct, React.ReactNode> = {
+    gallery: <GalleryIcon />, website: <WebsiteIcon />, bookings: <BookingIcon />,
+  }
 
   if (!authChecked) {
     return (
@@ -505,282 +661,371 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     )
   }
 
+  // The product-picker landing page renders full-bleed, no sidebar — it's the
+  // very first thing an admin sees after login, before choosing a product.
+  if (pathname === '/studio/dashboard') {
+    return <div className="flex-1 overflow-auto bg-bg">{children}</div>
+  }
+
   return (
     <div className="flex flex-1 overflow-hidden">
 
-      <div ref={sidebarWrapRef} className="flex flex-shrink-0">
-
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className={`bg-card border-r border-border flex-shrink-0 flex flex-col transition-all duration-200 ease-in-out ${sidebarOpen ? 'w-56 overflow-hidden' : 'w-12 overflow-visible'}`}>
+      <aside className="w-64 flex-shrink-0 bg-card flex flex-col overflow-hidden shadow-[4px_0_24px_-6px_rgba(0,0,0,0.12)] z-10">
 
-        {!sidebarOpen && (
-          /* ── Collapsed icon rail ─────────────────────────────── */
-          <div className="flex flex-col items-center gap-1 pt-3 px-1.5">
-            <RailItem
-              label="Dashboard"
-              active={pathname === '/studio/dashboard' && selectedIds.length === 0}
-              onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
-              icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        {/* Logo + product switcher — one compact header block, no divider
+            between them; real VayuStudios brand mark (same as the marketing
+            navbar's logo.png), not a placeholder icon. Bell/help/profile sit
+            right next to the brand name, not at the sidebar's bottom. */}
+        <div className="px-3 pt-4 pb-3 border-b border-border flex-shrink-0 space-y-2">
+          <div className="flex items-center justify-between gap-2 px-1">
+            <Link href="/studio/home" className="flex items-center gap-1.5 min-w-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="VayuStudios" className="w-5 h-5 rounded-md flex-shrink-0 shadow-sm" />
+              <span className="text-sm font-extrabold leading-none text-text-primary truncate">
+                Vayu<span className="text-accent">Studios</span>
+              </span>
+            </Link>
+
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Notifications — aggregated across every project this studio has.
+                  Portal-rendered (not a plain absolute div) because the
+                  sidebar's own overflow-hidden — needed to keep the project
+                  tree scrolling internally — was clipping an in-place dropdown. */}
+              <div className="relative" ref={notifRef}>
+                <button
+                  onClick={() => {
+                    if (!showSidebarNotif) {
+                      const rect = notifRef.current?.getBoundingClientRect()
+                      // Anchor by left, not right — the trigger sits in a
+                      // narrow ~256px sidebar, so aligning the (also 256px
+                      // wide) popup's right edge to the trigger pushed its
+                      // left edge off-screen. Plenty of room to the right.
+                      if (rect) setNotifPos({ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 256 - 8) })
+                    }
+                    setShowSidebarNotif(v => !v)
+                  }}
+                  title="Notifications"
+                  className="relative w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
+                  <BellIcon />
+                  {sidebarNotifications.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[8px] font-bold">
+                      {sidebarNotifications.length}
+                    </span>
+                  )}
+                </button>
+                {showSidebarNotif && notifPos && typeof document !== 'undefined' && createPortal(
+                  <div
+                    style={{ position: 'fixed', top: notifPos.top, left: notifPos.left, width: 256 }}
+                    className="bg-card border border-border rounded-xl shadow-2xl py-1.5 z-[100] max-h-64 overflow-y-auto">
+                    {sidebarNotifications.length === 0 ? (
+                      <p className="text-xs text-muted px-3 py-2">No recent activity</p>
+                    ) : (
+                      sidebarNotifications.map(n => (
+                        <div key={n.jobId} className="px-3 py-2 text-xs">
+                          <div className="font-semibold text-text-primary">
+                            {n.jobType === 'INDEX_FACES' ? 'Face indexing complete' : n.jobType.replace(/_/g, ' ')}
+                          </div>
+                          <div className="text-[10px] text-muted mt-0.5">
+                            {new Date(n.completedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>,
+                  document.body
+                )}
+              </div>
+
+              {/* Help — direct line to support */}
+              <a href="https://wa.me/918984769522" target="_blank" rel="noopener noreferrer" title="Help & support"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
+                <HelpIcon />
+              </a>
+
+              {/* Profile — same Settings/Edit profile/Billing/Logout menu,
+                  now a small icon here instead of a bottom-anchored row */}
+              {userInfo && (
+                <ProfileMenu
+                  position="below"
+                  align="right"
+                  onEditProfile={openEditProfile}
+                  onLogout={handleLogout}
+                  trigger={
+                    <div className="w-7 h-7 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[11px] font-bold cursor-pointer uppercase">
+                      {userInfo.name?.slice(0, 1) ?? '?'}
+                    </div>
+                  }
+                />
+              )}
+            </div>
+          </div>
+
+          <PhotoActionsMenu
+            align="left"
+            trigger={
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/60 bg-card text-[11px] font-semibold text-text-primary shadow-sm hover:shadow-md hover:border-accent/30 cursor-pointer transition-all">
+                <span className="w-3 h-3 text-accent flex-shrink-0">{PRODUCT_ICON[activeProduct]}</span>
+                {PRODUCT_LABEL[activeProduct]}
+                <svg className="w-2.5 h-2.5 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                </svg>
+              </span>
+            }
+            menuClassName="w-48"
+            actions={[
+              { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
+              { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
+              { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
+            ]}
+          />
+        </div>
+
+        {/* Current project card — only when exactly one event is open */}
+        {selectedIds.length === 1 && selectedProjects[0] && (
+          <button onClick={() => { clearSelection(); router.push('/studio/dashboard/overview') }} title="Back to dashboard"
+            className="mx-3 mt-3 p-2.5 rounded-xl bg-card border border-border/60 shadow-sm flex items-center gap-2.5 text-left hover:shadow-md transition-all flex-shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-accent/15 text-accent flex items-center justify-center text-xs font-bold flex-shrink-0 uppercase">
+              {selectedProjects[0].clientName?.slice(0, 2) ?? '??'}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-bold text-accent uppercase tracking-wide truncate">{(selectedProjects[0].eventType ?? '').replace(/_/g, ' ')}</div>
+              <div className="text-xs font-semibold text-text-primary truncate">{selectedProjects[0].clientName}</div>
+              <div className="text-[10px] text-muted truncate">{fmtDate(selectedProjects[0].eventDate)}</div>
+            </div>
+          </button>
+        )}
+
+        {/* Client Gallery mode: a Dashboard shortcut + Recent/Starred/Projects
+            tabs, replacing a single fixed "Projects" tree header.
+            min-h-0 is required here: without it, a flex child with
+            overflow-y-auto still refuses to shrink below its content's
+            natural height (flexbox's default min-height:auto), so a long
+            project list was overflowing past the sidebar's own bounds and
+            getting silently clipped by <aside>'s overflow-hidden — taking
+            Settings/Storage/AI/profile down with it. */}
+        {activeProduct === 'gallery' && (
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+            <div className="px-2 pt-1 flex-shrink-0 space-y-1.5">
+              <Link href="/studio/dashboard/overview" onClick={() => { clearSelection(); setSidebarView('dashboard') }}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  sidebarView === 'dashboard'
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-muted hover:text-text-primary hover:bg-border/50'
+                }`}>
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <rect x="3" y="3" width="7" height="7" rx="1" />
                   <rect x="14" y="3" width="7" height="7" rx="1" />
                   <rect x="3" y="14" width="7" height="7" rx="1" />
                   <rect x="14" y="14" width="7" height="7" rx="1" />
                 </svg>
-              }
-            />
-            <RailItem
-              label="My Projects"
-              href="/studio/dashboard/projects"
-              onClick={clearSelection}
-              active={pathname === '/studio/dashboard/projects'}
-              icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                </svg>
-              }
-            />
-            <RailItem
-              label="My Website"
-              href="/studio/dashboard/website"
-              onClick={clearSelection}
-              active={pathname.startsWith('/studio/dashboard/website')}
-              icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
-                </svg>
-              }
-            />
-            <RailItem
-              label="My Booking"
-              href="/studio/dashboard/bookings"
-              onClick={clearSelection}
-              active={pathname.startsWith('/studio/dashboard/bookings')}
-              icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-              }
-            />
+                Dashboard
+              </Link>
 
-            <div className="w-6 h-px bg-border my-1.5" />
+              <div className="flex items-center gap-1 px-0.5">
+                {(['recent', 'starred', 'projects'] as const).map(view => (
+                  <button key={view} onClick={() => {
+                    setSidebarView(view)
+                    // "Projects" also opens the My Projects cover-card
+                    // overview in the main content area — same destination
+                    // as picking "Client Gallery" from the dropdown above.
+                    if (view === 'projects') { clearSelection(); router.push('/studio/dashboard/projects') }
+                  }}
+                    className={`flex-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
+                      sidebarView === view ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                    }`}>
+                    {view === 'recent' ? 'Recent' : view === 'starred' ? 'Starred' : 'Projects'}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <RailItem
-              label={`Projects (${projects.length})`}
-              icon={
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
-                </svg>
-              }
-              flyout={
-                <div className="absolute left-full top-0 ml-2 w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-border bg-card shadow-2xl opacity-0 invisible group-hover/rail:opacity-100 group-hover/rail:visible transition-all duration-150 z-30 p-2">
-                  <div className="flex items-center justify-between px-2 py-1.5">
-                    <span className="text-[11px] font-bold text-muted uppercase tracking-widest">Projects</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-muted">{projects.length}</span>
-                      <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
-                        className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-                        </svg>
-                      </Link>
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    {clientGroups.length === 0 ? (
-                      <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
-                    ) : (
-                      clientGroups.map(([clientName, clientProjects]) => (
-                        <div key={clientName}>
-                          <div className="px-2 py-1 text-xs font-semibold text-text-primary truncate">{clientName}</div>
-                          {clientProjects.map(p => (
-                            <button
-                              key={p.projectId}
-                              onClick={() => toggleSelect(p.projectId)}
-                              className={`w-full text-left px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors ${
-                                selectedIds.includes(p.projectId)
-                                  ? 'bg-accent/10 text-accent'
-                                  : 'text-muted hover:text-text-primary hover:bg-border/50'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
-                              <span className="truncate flex-1">{fmtDate(p.eventDate)} · {(p.eventType ?? '').replace(/_/g, ' ')}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              }
-            />
+            {sidebarView === 'projects' && (
+              <div className="flex items-center px-3 pt-2 pb-1 group/header flex-shrink-0">
+                <span className="text-[10px] text-muted flex-1">{projects.length} total</span>
+                <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
+                  className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                  </svg>
+                </Link>
+              </div>
+            )}
+
+            <div className="px-1.5 pb-3 space-y-px flex-1">
+              {sidebarView === 'projects' && (
+                clientGroups.length === 0 ? (
+                  <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
+                ) : (
+                  clientGroups.map(([clientName, clientProjects]) => (
+                    <ClientBranch
+                      key={clientName}
+                      clientName={clientName}
+                      projects={clientProjects}
+                      selectedIds={selectedIds}
+                      onToggle={toggleSelect}
+                      onAddEvent={setModalClient}
+                      onEditEvent={setEditProject}
+                      onDeleteEvents={setDeleteModalProjects}
+                      onQuickShare={setShareModalProjects}
+                      onAISort={setAiModalProjects}
+                      onEditClient={setEditClientModalProjects}
+                      onCancelSchedule={handleCancelSchedule}
+                    />
+                  ))
+                )
+              )}
+
+              {sidebarView === 'recent' && (
+                recentProjects.length === 0 ? (
+                  <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
+                ) : (
+                  recentProjects.map(p => (
+                    <FlatProjectRow
+                      key={p.projectId}
+                      project={p}
+                      selectedIds={selectedIds}
+                      onToggle={toggleSelect}
+                      onEditEvent={setEditProject}
+                      onDeleteEvents={setDeleteModalProjects}
+                      onQuickShare={setShareModalProjects}
+                      onAISort={setAiModalProjects}
+                      onCancelSchedule={handleCancelSchedule}
+                    />
+                  ))
+                )
+              )}
+
+              {sidebarView === 'starred' && (
+                starredProjects.length === 0 ? (
+                  <p className="text-[11px] text-muted px-3 py-2">No starred projects yet</p>
+                ) : (
+                  starredProjects.map(p => (
+                    <FlatProjectRow
+                      key={p.projectId}
+                      project={p}
+                      selectedIds={selectedIds}
+                      onToggle={toggleSelect}
+                      onEditEvent={setEditProject}
+                      onDeleteEvents={setDeleteModalProjects}
+                      onQuickShare={setShareModalProjects}
+                      onAISort={setAiModalProjects}
+                      onCancelSchedule={handleCancelSchedule}
+                    />
+                  ))
+                )
+              )}
+            </div>
           </div>
         )}
 
-        {sidebarOpen && (
-        <>
-        {/* Dashboard nav */}
-        <nav className="px-2 pt-3 pb-2 space-y-0.5 border-b border-border">
-          <button
-            onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
-            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname === '/studio/dashboard' && selectedIds.length === 0
-                ? 'bg-accent/10 text-accent'
-                : 'text-muted hover:text-text-primary hover:bg-border/50'
-            }`}
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="7" height="7" rx="1" />
-            </svg>
-            Dashboard
-          </button>
-          <Link href="/studio/dashboard/projects" onClick={clearSelection}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname === '/studio/dashboard/projects'
-                ? 'bg-accent/10 text-accent'
-                : 'text-muted hover:text-text-primary hover:bg-border/50'
-            }`}>
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-            </svg>
-            My Projects
-          </Link>
-          <Link href="/studio/dashboard/website" onClick={clearSelection}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname.startsWith('/studio/dashboard/website')
-                ? 'bg-accent/10 text-accent'
-                : 'text-muted hover:text-text-primary hover:bg-border/50'
-            }`}>
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
-            </svg>
-            My Website
-          </Link>
-          <Link href="/studio/dashboard/bookings" onClick={clearSelection}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname.startsWith('/studio/dashboard/bookings')
-                ? 'bg-accent/10 text-accent'
-                : 'text-muted hover:text-text-primary hover:bg-border/50'
-            }`}>
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-            </svg>
-            My Booking
-          </Link>
-        </nav>
+        {/* Non-gallery modes have no tree — let their own page fill the
+            remaining space so Settings/Storage/AI-usage/profile still pin
+            to the bottom instead of floating under a short sidebar. */}
+        {activeProduct !== 'gallery' && <div className="flex-1" />}
 
-        {/* Projects tree */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="flex items-center px-3 py-2 group/header">
-            <button onClick={() => setTreeOpen(v => !v)} className="flex items-center gap-1.5 flex-1 min-w-0 hover:opacity-80 transition-opacity">
-              <svg className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${treeOpen ? 'rotate-90' : ''}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-              <span className="text-[11px] font-bold text-muted uppercase tracking-widest">Projects</span>
-            </button>
-            <span className="text-[10px] text-muted mr-1.5">{projects.length}</span>
-            <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
-              className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-              </svg>
-            </Link>
-          </div>
+        {/* Pinned bottom group — Settings / Storage / AI-usage. Profile now
+            lives in the top header row instead, next to the brand name.
+            One divider separating it from the scrollable area above; no
+            lines splitting the items apart, just spacing between them. */}
+        <div className="border-t border-border flex-shrink-0 px-2 py-2 space-y-1.5">
+          <Link href="/studio/dashboard/settings" onClick={clearSelection}
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              pathname.startsWith('/studio/dashboard/settings')
+                ? 'bg-accent/10 text-accent'
+                : 'text-muted hover:text-text-primary hover:bg-border/50'
+            }`}>
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Settings
+          </Link>
 
-          {treeOpen && (
-            <div className="px-1.5 pb-3 space-y-px">
-              {clientGroups.length === 0 ? (
-                <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
-              ) : (
-                clientGroups.map(([clientName, clientProjects]) => (
-                  <ClientBranch
-                    key={clientName}
-                    clientName={clientName}
-                    projects={clientProjects}
-                    selectedIds={selectedIds}
-                    onToggle={toggleSelect}
-                    onAddEvent={setModalClient}
-                    onEditEvent={setEditProject}
-                    onDeleteEvents={setDeleteModalProjects}
-                    onQuickShare={setShareModalProjects}
-                    onAISort={setAiModalProjects}
-                    onEditClient={setEditClientModalProjects}
-                    onCancelSchedule={handleCancelSchedule}
-                  />
-                ))
-              )}
+          {stats && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-border/25">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">Storage</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-muted">{fmtBytes(stats.storageUsedBytes)} / {fmtBytes(stats.storageGrantBytes)}</span>
+                  <button onClick={() => setTopupKind('storage')} title="Top up storage"
+                    className="w-3 h-3 flex items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0">
+                    <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="h-1 rounded-full bg-border overflow-hidden">
+                <div className="h-full bg-accent rounded-full"
+                  style={{ width: `${stats.storageGrantBytes > 0 ? Math.min(100, (stats.storageUsedBytes / stats.storageGrantBytes) * 100) : 0}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* AI search (face-indexing) usage — real cumulative count from the
+              indexing Lambda's faceIndexed flag, aggregated across every
+              project, against a purchasable credit pool. */}
+          {stats && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-border/25">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">AI Search</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[9px] text-muted">{stats.aiSearchCreditsUsed} / {stats.aiSearchCreditsTotal}</span>
+                  <button onClick={() => setTopupKind('ai-search')} title="Top up AI search credits"
+                    className="w-3 h-3 flex items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0">
+                    <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="h-1 rounded-full bg-border overflow-hidden">
+                <div className={`h-full rounded-full ${stats.aiSearchCreditsUsed > stats.aiSearchCreditsTotal ? 'bg-danger' : 'bg-accent'}`}
+                  style={{ width: `${stats.aiSearchCreditsTotal > 0 ? Math.min(100, (stats.aiSearchCreditsUsed / stats.aiSearchCreditsTotal) * 100) : 0}%` }} />
+              </div>
             </div>
           )}
         </div>
-        </>
-        )}
 
       </aside>
 
-      {/* ── Sidebar toggle tab ───────────────────────────────── */}
-      <div className="relative flex-shrink-0">
-        <button onClick={toggleSidebar} title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          className="absolute top-4 -left-px z-10 flex flex-col items-center gap-1 px-1 py-2 bg-card border border-border rounded-r-md text-muted hover:text-text-primary hover:bg-border/60 transition-colors shadow-sm">
-          <svg className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-          <span className="flex flex-col items-center leading-[1.1]">
-            {(sidebarOpen ? 'HIDE' : 'OPEN').split('').map((ch, i) => (
-              <span key={i} className="text-[8px] font-bold tracking-wide">{ch}</span>
-            ))}
-          </span>
-        </button>
-      </div>
-
-      </div>
-
       {/* ── Main content ─────────────────────────────────────── */}
       {selectedIds.length > 0 ? (
-        <main className="flex-1 overflow-auto bg-bg">
+        <main className="flex-1 overflow-auto bg-card">
           <div className="px-6 pt-2 pb-6 space-y-6">
-            {/* Selection bar */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-text-primary">
-                  {selectedIds.length === 1
-                    ? selectedProjects[0]?.clientName
-                    : `${selectedIds.length} events selected`}
-                </span>
-                {selectedIds.length > 1 && (
-                  <span className="text-xs text-muted">
-                    · {Array.from(new Set(selectedProjects.map(p => p.clientName))).join(', ')}
-                  </span>
-                )}
-              </div>
-              <button onClick={() => { clearSelection(); router.push('/studio/dashboard') }}
-                className="text-xs text-muted hover:text-text-primary border border-border px-2.5 py-1 rounded-lg hover:bg-border/40 transition-colors">
-                Clear
-              </button>
-            </div>
-
-            {/* Event sections */}
-            {selectedProjects.map(p => (
+            {/* One EventSection always — same look whether 1 or several
+                events are selected. The host is the first selected project
+                (header/tabs/Face-Index/Selections/Raw-Transfers are always
+                about the host); photoSourceProjects lets its All Photos grid
+                merge in every other selected event too, via the in-header
+                event dropdown (defaults to all checked). */}
+            {selectedProjects[0] && (
               <EventSection
-                key={p.projectId}
-                project={p}
+                key={selectedProjects[0].projectId}
+                project={selectedProjects[0]}
                 onUpdated={fetchProjects}
-                selectedIds={photoSelections.get(p.projectId) ?? new Set()}
-                onSelectionChange={handleSelectionChange(p.projectId)}
-                onFilesLoaded={handleFilesLoaded(p.projectId)}
-                refreshTrigger={refreshTriggers.get(p.projectId) ?? 0}
+                selectedIds={photoSelections.get(selectedProjects[0].projectId) ?? new Set()}
+                onSelectionChange={handleSelectionChange(selectedProjects[0].projectId)}
+                onFilesLoaded={handleFilesLoaded(selectedProjects[0].projectId)}
+                refreshTrigger={refreshTriggers.get(selectedProjects[0].projectId) ?? 0}
                 hidePill={true}
-                triggerShare={shareTargetProjectId === p.projectId}
+                triggerShare={shareTargetProjectId === selectedProjects[0].projectId}
                 onShareTriggered={() => setShareTargetProjectId(null)}
                 zoomLevel={zoomLevel}
                 viewMode={gridViewMode}
                 onViewModeChange={setGridViewMode}
+                onEditProject={setEditProject}
+                onQuickShare={setShareModalProjects}
+                onAISort={setAiModalProjects}
+                onDeleteProject={setDeleteModalProjects}
+                onClose={() => { clearSelection(); router.push('/studio/dashboard/overview') }}
+                photoSourceProjects={selectedProjects}
+                photoSelectionsMap={photoSelections}
+                onPhotoSelectionChange={handleSelectionChange}
+                onFilesLoadedFor={handleFilesLoaded}
               />
-            ))}
+            )}
           </div>
 
           {/* Shared floating zoom bar — one control for every open event's
@@ -806,7 +1051,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </main>
       ) : (
-        <main className="flex-1 overflow-auto bg-bg">{children}</main>
+        <main className="flex-1 overflow-auto bg-card">{children}</main>
       )}
 
       {/* ── Modals ───────────────────────────────────────────── */}
@@ -858,6 +1103,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           projects={editClientModalProjects}
           onClose={() => setEditClientModalProjects(null)}
           onSaved={() => { setEditClientModalProjects(null); fetchProjects() }}
+        />
+      )}
+
+      {topupKind && (
+        <StudioTopupModal
+          kind={topupKind}
+          onClose={() => setTopupKind(null)}
+          onSuccess={() => { setTopupKind(null); loadStats() }}
+        />
+      )}
+
+      {showEditProfile && (
+        <EditProfileModal
+          initialName={userInfo?.name ?? ''}
+          initialPhone={profilePhone}
+          onClose={() => setShowEditProfile(false)}
+          onSaved={(name) => { setShowEditProfile(false); setUserInfo(u => u ? { ...u, name } : u) }}
         />
       )}
 

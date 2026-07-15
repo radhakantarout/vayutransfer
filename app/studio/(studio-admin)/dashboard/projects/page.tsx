@@ -240,7 +240,7 @@ export default function MyProjectsPage() {
                     {STATUS_LABEL[p.status] ?? p.status}
                   </span>
                 </div>
-                <div className="text-xs text-muted">{p.eventType.replace(/_/g, ' ')} · {fmtDate(p.eventDate)}</div>
+                <div className="text-xs text-muted">{(p.eventType ?? '').replace(/_/g, ' ')} · {fmtDate(p.eventDate)}</div>
                 <div className="text-xs text-muted">{p.photoCount} photo{p.photoCount !== 1 ? 's' : ''}</div>
               </div>
             </Link>
@@ -268,7 +268,7 @@ export default function MyProjectsPage() {
                     {p.isStarred && <span className="text-yellow-400 flex-shrink-0"><StarIcon filled /></span>}
                     <span className="text-sm font-semibold text-text-primary truncate">{p.clientName}</span>
                   </div>
-                  <div className="text-xs text-muted">{p.eventType.replace(/_/g, ' ')} · {fmtDate(p.eventDate)} · {p.photoCount} photo{p.photoCount !== 1 ? 's' : ''}</div>
+                  <div className="text-xs text-muted">{(p.eventType ?? '').replace(/_/g, ' ')} · {fmtDate(p.eventDate)} · {p.photoCount} photo{p.photoCount !== 1 ? 's' : ''}</div>
                 </div>
                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${STATUS_COLOR[p.status] ?? 'bg-border text-muted'}`}>
                   {STATUS_LABEL[p.status] ?? p.status}
@@ -295,7 +295,7 @@ export default function MyProjectsPage() {
                       onClick: () => quickCopyLink(p),
                     },
                     {
-                      label: p.isStarred ? 'Unstar' : 'Star as favorite',
+                      label: p.isStarred ? 'Unstar (Admin only)' : 'Star as favorite (Admin only)',
                       icon: <StarIcon filled={!!p.isStarred} />,
                       onClick: () => toggleStar(p),
                     },

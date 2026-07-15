@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from './dynamodb'
 import { currentMonthKey } from './usage'
-import { GB, STORAGE_TOPUP_PACKAGES, DOWNLOAD_TOPUP_PACKAGES } from '@/constants/studioPricing'
+import { GB, STORAGE_TOPUP_PACKAGES, DOWNLOAD_TOPUP_PACKAGES, AI_SEARCH_TOPUP_PACKAGES, FREE_AI_SEARCH_CREDITS } from '@/constants/studioPricing'
 import type { StudioTransaction, StudioTxnType } from '@/types/studio'
 
 export function findStorageTopupPackage(packageId: string) {
@@ -10,6 +10,10 @@ export function findStorageTopupPackage(packageId: string) {
 
 export function findDownloadTopupPackage(packageId: string) {
   return DOWNLOAD_TOPUP_PACKAGES.find((p) => p.id === packageId) ?? null
+}
+
+export function findAiSearchTopupPackage(packageId: string) {
+  return AI_SEARCH_TOPUP_PACKAGES.find((p) => p.id === packageId) ?? null
 }
 
 // Idempotent — mirrors lib/wallet.ts#creditWallet's proven txnId-status-check
@@ -52,6 +56,29 @@ export async function applyTopup(
     const txn: StudioTransaction = {
       txnId, studioId, type, packageId,
       amountPaise: pkg.pricePaise, gbPurchased: pkg.gb, months: pkg.months,
+      razorpayOrderId, razorpayPaymentId, status: 'success', createdAt: now,
+    }
+    await studioPutItem(TABLES.transactions, txn as unknown as Record<string, unknown>)
+    return
+  }
+
+  if (type === 'ai_search_topup') {
+    const pkg = findAiSearchTopupPackage(packageId)
+    if (!pkg) throw new Error('INVALID_PACKAGE')
+
+    // Cumulative total, never decrements — mirrors storageUsedBytes' shape.
+    // Studios created before this field existed start from the free
+    // baseline rather than 0, via if_not_exists.
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId },
+      'SET aiSearchCreditsTotal = if_not_exists(aiSearchCreditsTotal, :free) + :credits, updatedAt = :now',
+      { ':free': FREE_AI_SEARCH_CREDITS, ':credits': pkg.credits, ':now': now }
+    )
+
+    const txn: StudioTransaction = {
+      txnId, studioId, type, packageId,
+      amountPaise: pkg.pricePaise, gbPurchased: 0, creditsPurchased: pkg.credits,
       razorpayOrderId, razorpayPaymentId, status: 'success', createdAt: now,
     }
     await studioPutItem(TABLES.transactions, txn as unknown as Record<string, unknown>)

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { applyTopup, findStorageTopupPackage, findDownloadTopupPackage } from '@/lib/studio/billing'
+import { applyTopup, findStorageTopupPackage, findDownloadTopupPackage, findAiSearchTopupPackage } from '@/lib/studio/billing'
 import { renderReceiptPdf } from '@/lib/studio/receiptPdf'
 import { sendStudioReceiptEmail } from '@/lib/aws/ses'
 import { formatPaiseAsRupees } from '@/constants/studioPricing'
@@ -41,7 +41,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'SIGNATURE_INVALID' }, { status: 400 })
     }
 
-    const pkg = type === 'storage_topup' ? findStorageTopupPackage(packageId) : findDownloadTopupPackage(packageId)
+    const pkg = type === 'storage_topup'
+      ? findStorageTopupPackage(packageId)
+      : type === 'ai_search_topup'
+        ? findAiSearchTopupPackage(packageId)
+        : findDownloadTopupPackage(packageId)
     if (!pkg) {
       return NextResponse.json({ success: false, error: 'INVALID_PACKAGE' }, { status: 400 })
     }

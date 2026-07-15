@@ -2,12 +2,12 @@
 
 import { useState } from 'react'
 import {
-  STORAGE_TOPUP_PACKAGES, DOWNLOAD_TOPUP_PACKAGES,
+  STORAGE_TOPUP_PACKAGES, DOWNLOAD_TOPUP_PACKAGES, AI_SEARCH_TOPUP_PACKAGES,
   formatPaiseAsRupees,
 } from '@/constants/studioPricing'
 
 interface Props {
-  kind: 'storage' | 'download'
+  kind: 'storage' | 'download' | 'ai-search'
   onSuccess: () => void
   onClose: () => void
 }
@@ -37,9 +37,9 @@ export default function StudioTopupModal({ kind, onSuccess, onClose }: Props) {
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const packages = kind === 'storage' ? STORAGE_TOPUP_PACKAGES : DOWNLOAD_TOPUP_PACKAGES
-  const orderEndpoint = kind === 'storage' ? '/studio/api/billing/storage-topup' : '/studio/api/billing/download-topup'
-  const txnType = kind === 'storage' ? 'storage_topup' : 'download_topup'
+  const packages = kind === 'storage' ? STORAGE_TOPUP_PACKAGES : kind === 'ai-search' ? AI_SEARCH_TOPUP_PACKAGES : DOWNLOAD_TOPUP_PACKAGES
+  const orderEndpoint = kind === 'storage' ? '/studio/api/billing/storage-topup' : kind === 'ai-search' ? '/studio/api/billing/ai-search-topup' : '/studio/api/billing/download-topup'
+  const txnType = kind === 'storage' ? 'storage_topup' : kind === 'ai-search' ? 'ai_search_topup' : 'download_topup'
 
   const handleSelect = async (packageId: string) => {
     setError(null)
@@ -65,7 +65,7 @@ export default function StudioTopupModal({ kind, onSuccess, onClose }: Props) {
           currency: 'INR',
           order_id: orderId,
           name: 'VayuStudios',
-          description: kind === 'storage' ? 'Storage top-up' : 'Download top-up',
+          description: kind === 'storage' ? 'Storage top-up' : kind === 'ai-search' ? 'AI search credits top-up' : 'Download top-up',
           theme: { color: '#00C6FF' },
           handler: async (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
             try {
@@ -111,7 +111,7 @@ export default function StudioTopupModal({ kind, onSuccess, onClose }: Props) {
       <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl">
         <div className="flex items-center justify-between p-6 border-b border-border">
           <h2 className="text-lg font-bold text-text-primary">
-            {kind === 'storage' ? 'Top up storage' : 'Top up downloads'}
+            {kind === 'storage' ? 'Top up storage' : kind === 'ai-search' ? 'Top up AI search credits' : 'Top up downloads'}
           </h2>
           <button onClick={onClose} className="text-muted hover:text-text-primary transition-colors text-xl leading-none">×</button>
         </div>

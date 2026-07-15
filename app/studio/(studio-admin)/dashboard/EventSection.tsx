@@ -99,10 +99,10 @@ function sortFiles(files: MediaFile[], mode: SortMode): MediaFile[] {
   if (mode === 'DEFAULT') return files
   const arr = [...files]
   switch (mode) {
-    case 'NAME_ASC':   arr.sort((a, b) => a.originalFilename.localeCompare(b.originalFilename)); break
-    case 'NAME_DESC':  arr.sort((a, b) => b.originalFilename.localeCompare(a.originalFilename)); break
-    case 'DATE_OLD':   arr.sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)); break
-    case 'DATE_NEW':   arr.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)); break
+    case 'NAME_ASC':   arr.sort((a, b) => (a.originalFilename ?? '').localeCompare(b.originalFilename ?? '')); break
+    case 'NAME_DESC':  arr.sort((a, b) => (b.originalFilename ?? '').localeCompare(a.originalFilename ?? '')); break
+    case 'DATE_OLD':   arr.sort((a, b) => (a.uploadedAt ?? '').localeCompare(b.uploadedAt ?? '')); break
+    case 'DATE_NEW':   arr.sort((a, b) => (b.uploadedAt ?? '').localeCompare(a.uploadedAt ?? '')); break
     case 'SIZE_LARGE':  arr.sort((a, b) => b.sizeBytes - a.sizeBytes); break
     case 'SIZE_SMALL':  arr.sort((a, b) => a.sizeBytes - b.sizeBytes); break
   }
@@ -126,7 +126,8 @@ interface EditUploadState {
 interface Props {
   project: StudioProject
   onUpdated: () => void
-  // Cross-event selection (controlled from layout)
+  // Cross-event selection (controlled from layout) — single-project shape,
+  // used as-is when only one project is open at all.
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void
   onFilesLoaded: (files: MediaFile[]) => void
@@ -142,10 +143,61 @@ interface Props {
   zoomLevel: number
   viewMode: 'grid' | 'list'
   onViewModeChange: (mode: 'grid' | 'list') => void
+  // Project-level actions ("...") — same handlers already used by the
+  // sidebar's per-event menu, just surfaced here too when a project is open.
+  onEditProject?: (p: StudioProject) => void
+  onQuickShare?: (projects: StudioProject[]) => void
+  onAISort?: (projects: StudioProject[]) => void
+  onDeleteProject?: (projects: StudioProject[]) => void
+  // Closes this event entirely (clears sidebar selection) — the small ×
+  // next to the "..." menu, replacing the old separate "Clear" bar.
+  onClose?: () => void
+  // Multi-event mode: when 2+ projects are selected in the sidebar, this
+  // SAME EventSection (not a different-looking component) merges their
+  // "All Photos" into one grid instead of stacking a section per project.
+  // `project` above stays the "host" (its header/tabs/Face-Index/Selections/
+  // Raw-Transfers are always about the host only — those are inherently
+  // single-project concepts and don't merge). Only the All Photos grid
+  // pulls from every checked entry here.
+  photoSourceProjects?: StudioProject[]
+  photoSelectionsMap?: Map<string, Set<string>>
+  onPhotoSelectionChange?: (projectId: string) => (ids: Set<string>) => void
+  onFilesLoadedFor?: (projectId: string) => (files: MediaFile[]) => void
 }
 
-export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered, zoomLevel, viewMode, onViewModeChange: setViewMode }: Props) {
+interface NotificationItem {
+  jobId: string
+  jobType: string
+  projectId: string
+  completedAt: string
+}
+
+export default function EventSection({
+  project, onUpdated,
+  selectedIds: selectedIdsProp, onSelectionChange: onSelectionChangeProp,
+  onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered,
+  zoomLevel, viewMode, onViewModeChange: setViewMode,
+  onEditProject, onQuickShare, onAISort, onDeleteProject, onClose,
+  photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
+}: Props) {
   const pathname = usePathname()
+
+  // ── Multi-event photo sources ───────────────────────────────
+  // Which of the available source projects are currently contributing
+  // photos to the All Photos grid — defaults to all of them checked.
+  const sourceProjectIds = (photoSourceProjects ?? []).map(p => p.projectId).join(',')
+  const [checkedSourceIds, setCheckedSourceIds] = useState<Set<string>>(
+    new Set((photoSourceProjects ?? []).map(p => p.projectId))
+  )
+  useEffect(() => {
+    setCheckedSourceIds(new Set((photoSourceProjects ?? []).map(p => p.projectId)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceProjectIds])
+
+  const isMultiSource = (photoSourceProjects?.length ?? 0) > 1
+  const activeSourceProjects = isMultiSource
+    ? (photoSourceProjects ?? []).filter(p => checkedSourceIds.has(p.projectId))
+    : [project]
 
   // ── Photo grid ────────────────────────────────────────────
   const [files, setFiles]           = useState<MediaFile[]>([])
@@ -172,6 +224,9 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const [searchQuery, setSearchQuery]   = useState('')
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [showNotif, setShowNotif]       = useState(false)
 
   // Client selection filter (used for heart/edit icons in header when received)
   type ClientSel = { selection: Selection; file: MediaFile }
@@ -237,6 +292,9 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
+  const notifRef     = useRef<HTMLDivElement>(null)
+  const sourceDropdownRef = useRef<HTMLDivElement>(null)
+  const [showSourceDropdown, setShowSourceDropdown] = useState(false)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
@@ -248,15 +306,98 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const speedRef = useRef<{ bytes: number; time: number }>({ bytes: 0, time: 0 })
 
   // ── Files ─────────────────────────────────────────────────
+  // Every MediaFile already carries its own projectId (the table's real PK),
+  // so merging multiple source projects' files into one array needs no
+  // client-side tagging — actions just read f.projectId instead of assuming
+  // the host project.
+  const activeSourceProjectIds = activeSourceProjects.map(p => p.projectId).join(',')
   const loadFiles = useCallback(async () => {
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files`).then(r => r.json())
-    if (res.success) { setFiles(res.data); onFilesLoaded(res.data) }
+    const sources = isMultiSource ? activeSourceProjects : [project]
+    const results = await Promise.all(
+      sources.map(p =>
+        fetch(`/studio/api/admin/projects/${p.projectId}/files`).then(r => r.json())
+          .then(d => ({ projectId: p.projectId, files: (d.success ? d.data : []) as MediaFile[] }))
+      )
+    )
+    const merged = results.flatMap(r => r.files)
+    setFiles(merged)
+    if (isMultiSource) {
+      results.forEach(({ projectId, files }) => onFilesLoadedFor?.(projectId)(files))
+    } else {
+      onFilesLoaded(merged)
+    }
     setLoading(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.projectId])
+  }, [project.projectId, isMultiSource, activeSourceProjectIds])
 
   useEffect(() => { loadFiles() }, [loadFiles, refreshTrigger])
+
+  // ── Cross-project selection routing ─────────────────────────
+  // projectIdOf: every action below operates on a fileId — look up which
+  // project it actually belongs to (rather than assuming the host project)
+  // so download/delete/watermark/rename/cover/curation/share all target the
+  // right project even when the grid is showing merged multi-event photos.
+  const projectIdOf = (fileId: string): string =>
+    files.find(f => f.fileId === fileId)?.projectId ?? project.projectId
+
+  const combinedSelectedIds: Set<string> = isMultiSource
+    ? new Set(activeSourceProjects.flatMap(p => Array.from(photoSelectionsMap?.get(p.projectId) ?? [])))
+    : selectedIdsProp
+
+  const selectedIds = combinedSelectedIds
+
+  const onSelectionChange = (next: Set<string>) => {
+    if (!isMultiSource || !photoSelectionsMap || !onPhotoSelectionChange) {
+      onSelectionChangeProp(next)
+      return
+    }
+    const current = combinedSelectedIds
+    const added   = Array.from(next).filter(id => !current.has(id))
+    const removed = Array.from(current).filter(id => !next.has(id))
+    const byProject = new Map<string, Set<string>>()
+    activeSourceProjects.forEach(p => byProject.set(p.projectId, new Set(photoSelectionsMap.get(p.projectId) ?? [])))
+    added.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, new Set())
+      byProject.get(pid)!.add(fid)
+    })
+    removed.forEach(fid => { byProject.get(projectIdOf(fid))?.delete(fid) })
+    byProject.forEach((set, pid) => onPhotoSelectionChange(pid)(set))
+  }
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
+
+  // Notification bell — recently completed jobs (face indexing, AI sorting,
+  // watermark backfill) for this project. Same existing /admin/notifications
+  // route the "recent activity" concept already relies on elsewhere.
+  useEffect(() => {
+    const loadNotifications = () => {
+      fetch(`/studio/api/admin/notifications?projectId=${project.projectId}`)
+        .then(r => r.json())
+        .then(d => { if (d?.success) setNotifications(d.data.notifications) })
+        .catch(() => {})
+    }
+    loadNotifications()
+    const interval = setInterval(loadNotifications, 60000)
+    return () => clearInterval(interval)
+  }, [project.projectId])
+
+  useEffect(() => {
+    if (!showNotif) return
+    const onDocClick = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotif(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [showNotif])
+
+  useEffect(() => {
+    if (!showSourceDropdown) return
+    const onDocClick = (e: MouseEvent) => {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) setShowSourceDropdown(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [showSourceDropdown])
 
   // Open share setup when triggered from global pill
   useEffect(() => {
@@ -574,12 +715,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   // Current/best version (edited if one exists) — the general per-photo
   // "Download" action, distinct from downloadOriginalEdit's forced-original.
   const downloadPhoto = async (fileId: string) => {
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/download`).then(r => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}/download`).then(r => r.json())
     if (res.success) window.open(res.data.url, '_blank')
   }
 
   const toggleWatermark = async (fileId: string, watermarkEnabled: boolean) => {
-    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ watermarkEnabled }),
     }).catch(() => {})
@@ -596,11 +737,14 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const CURATION_ORDER: (CurationStatus | undefined)[] = [undefined, 'STARRED', 'FAVORITE', 'FINAL']
   const nextCurationStatus = (current?: CurationStatus): CurationStatus | undefined =>
     CURATION_ORDER[(CURATION_ORDER.indexOf(current) + 1) % CURATION_ORDER.length]
+  // "(Admin only)" — this is the studio admin's own private curation mark,
+  // never visible or settable by the client, distinct from the client's own
+  // loved/submitted state elsewhere in the gallery.
   const curationMenuLabel = (current?: CurationStatus): string => {
-    if (current === 'FINAL') return 'Clear curation status'
-    if (current === 'FAVORITE') return 'Mark Final'
-    if (current === 'STARRED') return 'Mark Favorite'
-    return 'Mark Starred'
+    if (current === 'FINAL') return 'Clear curation status (Admin only)'
+    if (current === 'FAVORITE') return 'Mark Final (Admin only)'
+    if (current === 'STARRED') return 'Mark Favorite (Admin only)'
+    return 'Mark Starred (Admin only)'
   }
   // Optimistic — a full loadFiles() reload re-fetches every photo's signed
   // preview URL (slow on large galleries) for a change that has no
@@ -609,7 +753,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const saveCurationStatus = async (fileId: string, current: CurationStatus | undefined, next: CurationStatus | undefined) => {
     setFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, curationStatus: next } : f))
     try {
-      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}`, {
+      const res = await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ curationStatus: next ?? null }),
       }).then(r => r.json())
@@ -674,7 +818,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       onClick: () => { setRenamingFile(f); setRenameValue(f.originalFilename) },
     },
     {
-      label: project.coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
+      label: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
         </svg>
@@ -702,7 +846,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const saveRename = async () => {
     if (!renamingFile || !renameValue.trim()) return
     setRenameSaving(true)
-    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${renamingFile.fileId}`, {
+    await fetch(`/studio/api/admin/projects/${renamingFile.projectId}/files/${renamingFile.fileId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ originalFilename: renameValue.trim() }),
     }).catch(() => {})
@@ -713,7 +857,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
   const setCoverPhoto = async (fileId: string) => {
     setSettingCoverId(fileId)
-    await fetch(`/studio/api/admin/projects/${project.projectId}`, {
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ coverPhotoFileId: fileId }),
     }).catch(() => {})
@@ -721,13 +865,34 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     onUpdated()
   }
 
+  // Omitting fileIds targets every eligible file in the project — the
+  // backend route already supports this (used for the header's always-on
+  // Watermark button when nothing is selected; targets just the selection
+  // when something is). Grouped per-project so this stays correct when the
+  // grid is showing merged multi-event photos.
   const bulkApplyWatermark = async (watermarkEnabled: boolean) => {
-    if (selectedIds.size === 0) return
     setBulkWatermarking(true)
-    await fetch(`/studio/api/admin/projects/${project.projectId}/watermark`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileIds: Array.from(selectedIds), watermarkEnabled }),
-    }).catch(() => {})
+    if (selectedIds.size > 0) {
+      const byProject = new Map<string, string[]>()
+      selectedIds.forEach(fid => {
+        const pid = projectIdOf(fid)
+        if (!byProject.has(pid)) byProject.set(pid, [])
+        byProject.get(pid)!.push(fid)
+      })
+      await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
+        fetch(`/studio/api/admin/projects/${pid}/watermark`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileIds, watermarkEnabled }),
+        }).catch(() => {})
+      ))
+    } else {
+      await Promise.all(activeSourceProjects.map(p =>
+        fetch(`/studio/api/admin/projects/${p.projectId}/watermark`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ watermarkEnabled }),
+        }).catch(() => {})
+      ))
+    }
     setBulkWatermarking(false)
     setTimeout(loadFiles, 3000)
   }
@@ -757,7 +922,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     setDeleting(true)
     setDeleteError(null)
     const results = await Promise.all(fileIds.map(fid =>
-      fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })
+      fetch(`/studio/api/admin/projects/${projectIdOf(fid)}/files/${fid}`, { method: 'DELETE' })
         .then(async (res) => ({ fid, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
         .catch(() => ({ fid, ok: false }))
     ))
@@ -772,7 +937,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
   const retryFile = async (fileId: string) => {
     setRetryingIds(prev => new Set(prev).add(fileId))
-    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/retry-watermark`, { method: 'POST' }).catch(() => {})
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}/retry-watermark`, { method: 'POST' }).catch(() => {})
     setRetryingIds(prev => { const next = new Set(prev); next.delete(fileId); return next })
     await loadFiles()
   }
@@ -820,25 +985,75 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       setShareError('Please select at least one photo to share')
       return
     }
+
+    // Single project (the common case) — unchanged, including the
+    // selection min/max range option (a per-project setting, meaningless
+    // when spanning multiple events).
+    if (activeSourceProjects.length <= 1) {
+      setShareError(null)
+      setSharing(true)
+      const hasRange = selMax > 0
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expiryDays: 30,
+          ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
+          includedFileIds: Array.from(selectedIds),
+        }),
+      }).then(r => r.json())
+      setSharing(false); setShowShareSetup(false)
+      if (res.success) setShareUrl(res.data.shareUrl)
+      else setShareError(res.message ?? 'Failed to generate link')
+      return
+    }
+
+    // Multi-event — one share link per project the current selection
+    // touches. All involved projects must belong to the same client.
+    const byProject = new Map<string, string[]>()
+    selectedIds.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push(fid)
+    })
+    const involvedProjects = activeSourceProjects.filter(p => byProject.has(p.projectId))
+    const emails = Array.from(new Set(involvedProjects.map(p => p.clientEmail)))
+    if (emails.length > 1) {
+      setShareError('Selected photos belong to different clients. Narrow the event dropdown to one client\'s events before sharing.')
+      return
+    }
+
     setShareError(null)
     setSharing(true)
-    const hasRange = selMax > 0
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        expiryDays: 30,
-        ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
-        includedFileIds: Array.from(selectedIds),
-      }),
-    }).then(r => r.json())
+    const results = await Promise.all(
+      involvedProjects.map(p =>
+        fetch(`/studio/api/admin/projects/${p.projectId}/share-link`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiryDays: 30, includedFileIds: byProject.get(p.projectId) }),
+        }).then(r => r.json())
+      )
+    )
     setSharing(false); setShowShareSetup(false)
-    if (res.success) setShareUrl(res.data.shareUrl)
-    else setShareError(res.message ?? 'Failed to generate link')
+    const failed = results.find(r => !r.success)
+    if (failed) {
+      setShareError(failed.message ?? 'Failed to generate link')
+      return
+    }
+    setShareUrl(results[0]?.data?.shareUrl ?? '')
   }
 
   const copyLink = async () => {
     if (!shareUrl) return
     await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2000)
+  }
+
+  // Lightbox "quick share" — selects just this one photo and opens the
+  // existing share setup panel, reusing its safety behavior (explicit
+  // "Generate & Share" click required, never auto-mints/emails on its own).
+  const quickSharePhoto = (fileId: string) => {
+    onSelectionChange(new Set([fileId]))
+    setShowAdminPreview(false)
+    setShowPhotoInfo(false)
+    setShowShareSetup(true)
   }
 
   // ── Tab switch ────────────────────────────────────────────
@@ -870,7 +1085,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
     : 0
 
-  const sortedDisplayFiles = sortFiles(displayFiles, sortMode)
+  const searchedDisplayFiles = searchQuery.trim()
+    ? displayFiles.filter(f => f.originalFilename.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : displayFiles
+  const sortedDisplayFiles = sortFiles(searchedDisplayFiles, sortMode)
+  const watermarkedCount = files.filter(f => f.watermarkEnabled).length
 
   const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
   const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : sortedDisplayFiles
@@ -969,24 +1188,52 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       {/* ── Admin photo preview modal (lightbox) ──────────────── */}
       {showAdminPreview && previewPhotos.length > 0 && (
         <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }}>
-          {/* Header */}
-          <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="text-white/50 text-xs font-semibold flex-shrink-0">{adminPreviewIdx + 1} / {previewPhotos.length}</span>
-              <span className="text-white font-semibold text-sm truncate">{currentPreviewPhoto?.originalFilename}</span>
+          {/* Header — filename/close on its own row, then a full-width icon
+              toolbar row below, so icons never compete for space with a long
+              filename (that was pushing them off narrow/mobile screens). */}
+          <div className="flex flex-col gap-2 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-white/50 text-xs font-semibold flex-shrink-0">{adminPreviewIdx + 1} / {previewPhotos.length}</span>
+                <span className="text-white font-semibold text-sm truncate">{currentPreviewPhoto?.originalFilename}</span>
+              </div>
+              <button onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }} title="Close"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {currentPreviewPhoto && (
+                <button onClick={() => toggleStarred(currentPreviewPhoto.fileId, currentPreviewPhoto.curationStatus)}
+                  title={currentPreviewPhoto.curationStatus ? 'Unstar (Admin only)' : 'Star (Admin only)'}
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className={`w-4 h-4 ${currentPreviewPhoto.curationStatus ? 'text-yellow-400' : 'text-white'}`}
+                    viewBox="0 0 24 24" fill={currentPreviewPhoto.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                  </svg>
+                </button>
+              )}
+              {currentPreviewPhoto && (
+                <button onClick={() => quickSharePhoto(currentPreviewPhoto.fileId)} title="Quick Share"
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                  </svg>
+                </button>
+              )}
               {currentPreviewPhoto && (
                 <button onClick={() => downloadPhoto(currentPreviewPhoto.fileId)} title="Download"
-                  className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
-                  <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                   </svg>
                 </button>
               )}
               <button onClick={() => setShowPhotoInfo(v => !v)} title="Info (i)"
-                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors ${showPhotoInfo ? 'bg-accent text-bg' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
-                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl transition-colors ${showPhotoInfo ? 'bg-accent text-bg' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>
               </button>
@@ -994,8 +1241,8 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                 <PhotoActionsMenu
                   align="right"
                   trigger={
-                    <span className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white cursor-pointer">
-                      <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 24 24">
+                    <span className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white cursor-pointer">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                         <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
                       </svg>
                     </span>
@@ -1059,11 +1306,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   ]}
                 />
               )}
-              <button onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             </div>
           </div>
           {/* Body: main photo + optional info panel */}
@@ -1142,22 +1384,67 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       {/* z-20, not z-50 — this is a fullscreen *view*, not a modal, and must never
           paint over the delete-confirm/edit/share modals or global overlays that
           also target z-50; those need to stay reachable while the grid is expanded. */}
-      <div className={expanded
-        ? 'fixed inset-0 z-20 overflow-auto bg-bg'
-        : 'border border-border rounded-2xl overflow-hidden bg-card'
-      }>
+      <div className={expanded ? 'fixed inset-0 z-20 overflow-auto bg-bg' : ''}>
 
         {/* ── Event header ──────────────────────────────────────── */}
-        <div className={`px-5 py-3 flex items-center justify-between gap-4 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
-          <div className="flex items-center gap-2 min-w-0">
+        <div className={`px-5 py-3 flex items-center gap-3 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
+          <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
             <span className="text-base flex-shrink-0">{EVENT_ICON[project.eventType] ?? '📷'}</span>
-            <h2 className="text-base font-bold text-text-primary truncate">{project.eventType.replace(/_/g, ' ')}</h2>
+            <h2 className="text-base font-bold text-text-primary truncate">{(project.eventType ?? '').replace(/_/g, ' ')}</h2>
             <span className="text-xs text-muted flex-shrink-0">{fmtDate(project.eventDate)}</span>
-            <span className={`text-[10px] font-bold uppercase tracking-wide flex-shrink-0 ${STATUS_COLOR[project.status]}`}>
-              {project.status.replace(/_/g, ' ')}
+            <span className={`text-[10px] font-bold uppercase tracking-wide flex-shrink-0 ${STATUS_COLOR[project.status] ?? 'text-muted'}`}>
+              {(project.status ?? '').replace(/_/g, ' ')}
             </span>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+
+          {/* Event source dropdown — only when 2+ events are selected in the
+              sidebar. Small checkbox list, defaults to all checked, so the
+              grid shows however many events are checked (1, 2, 3...). */}
+          {isMultiSource && activeTab === 'photos' && (
+            <div className="relative flex-shrink-0" ref={sourceDropdownRef}>
+              <button onClick={() => setShowSourceDropdown(v => !v)}
+                className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-border text-text-primary hover:bg-border/40 transition-colors">
+                {checkedSourceIds.size} event{checkedSourceIds.size !== 1 ? 's' : ''}
+                <svg className="w-3 h-3 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showSourceDropdown && (
+                <div className="absolute left-0 top-full mt-1.5 w-56 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-30 max-h-64 overflow-y-auto">
+                  {(photoSourceProjects ?? []).map(p => (
+                    <label key={p.projectId} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-border/50">
+                      <input type="checkbox" checked={checkedSourceIds.has(p.projectId)}
+                        onChange={() => setCheckedSourceIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(p.projectId)) next.delete(p.projectId)
+                          else next.add(p.projectId)
+                          return next
+                        })}
+                        className="w-3.5 h-3.5 rounded accent-accent flex-shrink-0" />
+                      <span className="truncate text-text-primary">{p.clientName} — {(p.eventType ?? '').replace(/_/g, ' ')}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Filename search — client-side filter over already-loaded photos */}
+          {activeTab === 'photos' && (
+            <div className="flex-1 min-w-[100px] max-w-xs relative hidden sm:block">
+              <svg className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search photos..."
+                className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-border bg-bg text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
+              />
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
             {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
               <>
                 <button onClick={() => toggleFilter('loved')} disabled={selLoading} title="View photos loved by client"
@@ -1218,6 +1505,41 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                 />
               </>
             )}
+            {/* AI Face — shortcut into the Face Index tab, same feature just surfaced here too */}
+            <button onClick={() => switchTab('faces')} title="AI Face Index"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+              </svg>
+            </button>
+            {/* Watermark — same on/off route as before, now always visible and
+                targeting the whole project when nothing's selected */}
+            <PhotoActionsMenu
+              align="right"
+              trigger={
+                <span className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                  bulkWatermarking ? 'bg-accent/70 text-white' : 'bg-accent text-white hover:bg-accent/90'
+                }`}>
+                  {bulkWatermarking
+                    ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>}
+                  Watermark
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+              }
+              actions={[
+                { label: selectedCount > 0 ? `Apply to ${selectedCount} selected` : 'Apply to all photos',
+                  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+                  onClick: () => bulkApplyWatermark(true) },
+                { label: selectedCount > 0 ? `Remove from ${selectedCount} selected` : 'Remove from all photos',
+                  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
+                  onClick: () => bulkApplyWatermark(false) },
+              ]}
+            />
             <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -1242,6 +1564,90 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   </svg>
               }
             </button>
+
+            {/* Notifications — recently completed jobs for this project */}
+            <div className="relative" ref={notifRef}>
+              <button onClick={() => setShowNotif(v => !v)} title="Notifications"
+                className="relative w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+                </svg>
+                {notifications.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold">
+                    {notifications.length}
+                  </span>
+                )}
+              </button>
+              {showNotif && (
+                <div className="absolute right-0 top-full mt-1.5 w-64 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-30">
+                  {notifications.length === 0 ? (
+                    <p className="text-xs text-muted px-3 py-2">No recent activity</p>
+                  ) : (
+                    notifications.map(n => (
+                      <div key={n.jobId} className="px-3 py-2 text-xs">
+                        <div className="font-semibold text-text-primary">
+                          {n.jobType === 'INDEX_FACES' ? 'Face indexing complete' : n.jobType.replace(/_/g, ' ')}
+                        </div>
+                        <div className="text-[10px] text-muted mt-0.5">
+                          {new Date(n.completedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Project actions — same actions already available from the
+                sidebar's per-event "⋯", surfaced here too when a project is open */}
+            {(onEditProject || onQuickShare || onAISort || onDeleteProject) && (
+              <PhotoActionsMenu
+                align="right"
+                trigger={
+                  <span title="Project options"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors cursor-pointer">
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                    </svg>
+                  </span>
+                }
+                actions={[
+                  ...(onEditProject ? [{
+                    label: 'Edit project',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>,
+                    onClick: () => onEditProject(project),
+                  }] : []),
+                  ...(onQuickShare ? [{
+                    label: 'Quick Share',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
+                    onClick: () => onQuickShare([project]),
+                  }] : []),
+                  ...(onAISort ? [{
+                    label: 'AI Sorting / Search',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" /></svg>,
+                    onClick: () => onAISort([project]),
+                  }] : []),
+                  ...(onDeleteProject ? [{
+                    label: 'Delete',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" /></svg>,
+                    onClick: () => onDeleteProject([project]),
+                    danger: true,
+                  }] : []),
+                ]}
+              />
+            )}
+
+            {/* Close — clears the sidebar selection, replacing the old
+                separate "clientName + Clear" bar above the grid so the
+                grid itself gets that vertical space back. */}
+            {onClose && (
+              <button onClick={onClose} title="Close"
+                className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-red-500 hover:border-red-500/40 hover:bg-red-500/10 transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1450,6 +1856,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                                   )}
                                   {(f.editedS3Key || f.editedR2Key) && <span className="text-[9px] text-muted">Edited</span>}
                                   {f.watermarkEnabled && <span className="text-[9px] text-muted">Watermarked</span>}
+                                  {isMultiSource && (
+                                    <span className="text-[9px] font-semibold text-accent uppercase">
+                                      {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                               <button onClick={e => { e.stopPropagation(); downloadPhoto(f.fileId) }} title="Download"
@@ -1511,7 +1922,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                             <div data-no-drag="true" onClick={e => e.stopPropagation()}
                               className="flex items-center justify-between px-1 h-7 bg-border/25">
                               <button onClick={() => toggleStarred(f.fileId, f.curationStatus)}
-                                title={f.curationStatus ? 'Unstar' : 'Star'}
+                                title={f.curationStatus ? 'Unstar (Admin only)' : 'Star (Admin only)'}
                                 className={`flex items-center justify-center p-1 -m-1 rounded-md transition-colors ${f.curationStatus ? 'text-yellow-400' : 'text-black hover:text-black/70'}`}>
                                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill={f.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
@@ -1588,6 +1999,19 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                                   </svg>
                                 )}
                               </div>
+                              {f.watermarkEnabled && (
+                                <span className="absolute bottom-1 left-1 flex items-center gap-0.5 bg-black/55 text-white text-[8px] font-semibold px-1.5 py-0.5 rounded-md leading-tight">
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  Watermarked
+                                </span>
+                              )}
+                              {isMultiSource && (
+                                <span className="absolute top-1 right-1 bg-black/55 text-white text-[8px] font-semibold uppercase px-1.5 py-0.5 rounded-md leading-tight truncate max-w-[65%]">
+                                  {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
+                                </span>
+                              )}
                               {editComment && (
                                 <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
                                   {editComment}
@@ -1606,6 +2030,40 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     )}
                     </div>
                   </div>
+                </div>
+
+                {/* Watermark status — real aggregate from already-loaded files,
+                    not a fabricated project-level flag (none exists yet). */}
+                <div className="mt-4 flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-border/25 border border-border/60">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg ${watermarkedCount > 0 ? 'bg-accent/15 text-accent' : 'bg-border/60 text-muted'}`}>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-text-primary truncate">
+                        {watermarkedCount === 0 ? 'No photos watermarked yet' : `${watermarkedCount} of ${files.length} photos watermarked`}
+                      </p>
+                      <p className="text-[11px] text-muted truncate">Use the Watermark button above to apply or remove it</p>
+                    </div>
+                  </div>
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <span className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border border-border text-text-primary hover:bg-border/50 cursor-pointer transition-colors">
+                        Edit Watermark
+                      </span>
+                    }
+                    actions={[
+                      { label: selectedCount > 0 ? `Apply to ${selectedCount} selected` : 'Apply to all photos',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+                        onClick: () => bulkApplyWatermark(true) },
+                      { label: selectedCount > 0 ? `Remove from ${selectedCount} selected` : 'Remove from all photos',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
+                        onClick: () => bulkApplyWatermark(false) },
+                    ]}
+                  />
                 </div>
               </>
             )}
