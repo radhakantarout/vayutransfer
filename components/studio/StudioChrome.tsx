@@ -33,7 +33,13 @@ function Chrome({ children }: { children: React.ReactNode }) {
           SHOW
         </button>
       )}
-      <div className="flex-1 flex flex-col">
+      {/* min-h-0 is required here too — without it this flex-1 wrapper
+          refuses to shrink below its content's natural height (flexbox's
+          default min-height:auto), so a tall sidebar (e.g. once the "current
+          project" card appears) grew the whole wrapper past the viewport
+          instead of clipping to it, defeating the h-screen constraint above
+          and pushing Settings/Storage/AI/profile below the fold again. */}
+      <div className="flex-1 min-h-0 flex flex-col">
         {children}
       </div>
       {!expanded && <ConditionalFooter />}

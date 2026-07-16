@@ -3,8 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const EVENT_TYPES = ['WEDDING', 'PRE_WEDDING', 'CORPORATE', 'SCHOOL', 'OTHER']
-
 function validateEmail(v: string) {
   if (!v) return ''
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? '' : 'Enter a valid email address'
@@ -17,7 +15,7 @@ function validatePhone(v: string) {
 export default function NewProjectPage() {
   const router = useRouter()
   const [form, setForm] = useState({
-    clientName: '', clientEmail: '', clientPhone: '', eventDate: '', eventType: 'WEDDING',
+    clientName: '', clientEmail: '', clientPhone: '',
   })
   const [errors, setErrors]   = useState({ clientName: '', clientEmail: '', clientPhone: '' })
   const [loading, setLoading] = useState(false)
@@ -53,7 +51,7 @@ export default function NewProjectPage() {
       })
       const data = await res.json()
       if (!data.success) { setError(data.message ?? 'Failed to create project'); return }
-      router.push(`/studio/dashboard/projects/${data.data.projectId}`)
+      router.push(`/studio/dashboard/overview?clientSelect=${encodeURIComponent(form.clientName)}`)
     } catch {
       setError('Network error — please try again')
     } finally {
@@ -95,28 +93,7 @@ export default function NewProjectPage() {
         {field('Client email', 'clientEmail', 'email', false, 'priya@gmail.com')}
         {field('Client phone', 'clientPhone', 'tel',   false, '9876543210')}
 
-        {/* Date — constrained width so it doesn't stretch */}
-        <div className="space-y-1.5">
-          <label className="text-sm text-muted">Event date <span className="text-danger">*</span></label>
-          <input
-            type="date"
-            value={form.eventDate}
-            onChange={e => set('eventDate', e.target.value)}
-            required
-            className="w-48 bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm text-muted">Event type <span className="text-danger">*</span></label>
-          <select
-            value={form.eventType}
-            onChange={e => set('eventType', e.target.value)}
-            className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary focus:outline-none focus:border-accent"
-          >
-            {EVENT_TYPES.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
-          </select>
-        </div>
+        <p className="text-xs text-muted">You'll add the event date and type in the next step, once the project is created.</p>
 
         {error && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">{error}</div>

@@ -22,12 +22,12 @@ export async function PATCH(
 
     const { projectId } = params
     const body = await req.json().catch(() => ({}))
-    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId, isStarred, scheduledDeleteAt } = body
+    const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation, coverPhotoFileId, isStarred, scheduledDeleteAt, clientCoverProjectId, clientCoverFileId, eventOrder } = body
 
-    // Set-cover-photo, set-starred, and set-scheduled-delete are separate,
-    // smaller updates — don't require the full edit-details fields to also
-    // be present.
-    if ((coverPhotoFileId !== undefined || isStarred !== undefined || scheduledDeleteAt !== undefined) && clientName === undefined) {
+    // Set-cover-photo, set-starred, set-scheduled-delete, set-client-cover,
+    // and set-event-order are separate, smaller updates — don't require the
+    // full edit-details fields to also be present.
+    if ((coverPhotoFileId !== undefined || isStarred !== undefined || scheduledDeleteAt !== undefined || clientCoverFileId !== undefined || eventOrder !== undefined) && clientName === undefined) {
       const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId, projectId })
       if (!project) {
         return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -36,6 +36,19 @@ export async function PATCH(
         const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId: coverPhotoFileId })
         if (!file || file.studioId !== auth.studioId) {
           return NextResponse.json({ success: false, error: 'NOT_FOUND', message: 'Photo not found in this event' }, { status: 404 })
+        }
+      }
+      // clientCoverFileId is client-spanning — it may point at a different
+      // event than the one this route is targeting (:projectId is just
+      // whichever row anchors the client-level pointer), so validate the
+      // file under the GIVEN clientCoverProjectId, not the URL's projectId.
+      if (clientCoverFileId !== undefined && clientCoverFileId !== null) {
+        if (!clientCoverProjectId) {
+          return NextResponse.json({ success: false, error: 'INVALID_INPUT', message: 'clientCoverProjectId is required with clientCoverFileId' }, { status: 400 })
+        }
+        const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId: clientCoverProjectId, fileId: clientCoverFileId })
+        if (!file || file.studioId !== auth.studioId) {
+          return NextResponse.json({ success: false, error: 'NOT_FOUND', message: 'Photo not found for this client' }, { status: 404 })
         }
       }
 
@@ -64,6 +77,19 @@ export async function PATCH(
           values[':sched'] = scheduledDeleteAt
         }
       }
+      if (clientCoverFileId !== undefined) {
+        if (clientCoverFileId === null) {
+          removes.push('clientCoverFileId', 'clientCoverProjectId')
+        } else {
+          updates.push('clientCoverFileId = :ccfid', 'clientCoverProjectId = :ccpid')
+          values[':ccfid'] = clientCoverFileId
+          values[':ccpid'] = clientCoverProjectId
+        }
+      }
+      if (eventOrder !== undefined) {
+        updates.push('eventOrder = :eo')
+        values[':eo'] = eventOrder
+      }
 
       const expression = removes.length > 0
         ? `SET ${updates.join(', ')} REMOVE ${removes.join(', ')}`
@@ -90,12 +116,14 @@ export async function PATCH(
 
     const now = new Date().toISOString()
     const hasLocation = typeof eventLocation === 'string' && eventLocation.trim().length > 0
+    // Providing full event details always means "this is now a real event" —
+    // clears isPlaceholder unconditionally (a no-op REMOVE if it was never set).
     await studioUpdateItem(
       TABLES.projects,
       { studioId: auth.studioId, projectId },
       hasLocation
-        ? 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, eventLocation = :el, updatedAt = :now'
-        : 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, updatedAt = :now',
+        ? 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, eventLocation = :el, updatedAt = :now REMOVE isPlaceholder'
+        : 'SET clientName = :cn, clientEmail = :ce, clientPhone = :cp, eventDate = :ed, eventType = :et, updatedAt = :now REMOVE isPlaceholder',
       hasLocation
         ? { ':cn': clientName, ':ce': clientEmail ?? '', ':cp': clientPhone ?? '', ':ed': eventDate, ':et': eventType, ':el': eventLocation.trim(), ':now': now }
         : { ':cn': clientName, ':ce': clientEmail ?? '', ':cp': clientPhone ?? '', ':ed': eventDate, ':et': eventType, ':now': now }

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import type { StudioProject, MediaFile } from '@/types/studio'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
@@ -25,11 +25,21 @@ interface NotificationItem {
   completedAt: string
 }
 
+const SIDEBAR_COLLAPSED_KEY = 'vayu_studio_sidebar_collapsed'
+
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
   ACTIVE:             'bg-accent',
   SELECTION_RECEIVED: 'bg-yellow-400',
   COMPLETED:          'bg-success',
+}
+// Status is no longer shown in the gallery header (removed as redundant with
+// the sidebar) — this tiny label is now the only place it's visible.
+const STATUS_LABEL: Record<string, string> = {
+  DRAFT:              'Draft',
+  ACTIVE:             'Active',
+  SELECTION_RECEIVED: 'Selection in',
+  COMPLETED:          'Completed',
 }
 
 function fmtDate(iso: string) {
@@ -208,11 +218,13 @@ function FlatProjectRow({
 }
 
 function ClientBranch({
-  clientName, projects, selectedIds, onToggle, onAddEvent, onEditEvent,
-  onDeleteEvents, onQuickShare, onAISort, onEditClient, onCancelSchedule,
+  clientName, projects, coverUrl, selectedIds, onToggle, onAddEvent, onEditEvent,
+  onDeleteEvents, onQuickShare, onAISort, onEditClient, onCancelSchedule, onReorder,
+  onBulkWatermark, bulkWatermarking, selectedPhotoCount,
 }: {
   clientName: string
   projects: StudioProject[]
+  coverUrl?: string | null
   selectedIds: string[]
   onToggle: (id: string) => void
   onAddEvent: (name: string) => void
@@ -222,59 +234,139 @@ function ClientBranch({
   onAISort: (projects: StudioProject[]) => void
   onEditClient: (projects: StudioProject[]) => void
   onCancelSchedule: (p: StudioProject) => void
+  onReorder: (orderedProjectIds: string[]) => void
+  onBulkWatermark: (watermarkEnabled: boolean) => void
+  bulkWatermarking: boolean
+  selectedPhotoCount: number
 }) {
-  const anySelected = projects.some(p => selectedIds.includes(p.projectId))
-  const [open, setOpen] = useState(anySelected)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
-  // Auto-open branch when an event inside gets selected externally
-  useEffect(() => { if (anySelected) setOpen(true) }, [anySelected])
+  const sortedByDate = [...projects].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+  const dateLabel = sortedByDate[0] ? `${fmtDate(sortedByDate[0].eventDate)}${projects.length > 1 ? ' · +more' : ''}` : null
+  // The gallery is only actually "open" (something to watermark) once at
+  // least one of this client's events is checked — mirrors the old header
+  // button's implicit scope (the currently active EventSection's photos).
+  const anyEventOpen = projects.some(p => selectedIds.includes(p.projectId))
+
+  // Once the admin has drag-reordered this client's events, every row gets a
+  // sequential eventOrder (see handleReorderEvents) — sort by that when
+  // present, otherwise fall back to most-recently-updated first.
+  const hasCustomOrder = projects.some(p => p.eventOrder !== undefined)
+  const orderedProjects = hasCustomOrder
+    ? [...projects].sort((a, b) => (a.eventOrder ?? Number.MAX_SAFE_INTEGER) - (b.eventOrder ?? Number.MAX_SAFE_INTEGER))
+    : sortedByDate
+
+  const handleDrop = (dropIndex: number) => {
+    if (dragIndex === null || dragIndex === dropIndex) { setDragIndex(null); setDragOverIndex(null); return }
+    const reordered = [...orderedProjects]
+    const [moved] = reordered.splice(dragIndex, 1)
+    reordered.splice(dropIndex, 0, moved)
+    onReorder(reordered.map(p => p.projectId))
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
 
   return (
     <div className="group/branch">
-      {/* Client row */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-border/50 transition-colors">
-        <button onClick={() => setOpen(v => !v)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
-          <svg className={`w-3 h-3 text-muted flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-xs font-semibold text-text-primary truncate flex-1">{clientName}</span>
-        </button>
-        <span className="text-[10px] text-muted">{projects.length}</span>
-        <button onClick={() => onAddEvent(clientName)} title="Add event"
-          className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
-        <PhotoActionsMenu
-          align="right"
-          trigger={
-            <button title="Client options" className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
-              <DotsIcon />
-            </button>
-          }
-          actions={[
-            { label: 'Edit client info',      icon: <EditIcon />,  onClick: () => onEditClient(projects) },
-            { label: `Quick Share (all ${projects.length})`, icon: <ShareIcon />, onClick: () => onQuickShare(projects) },
-            { label: `AI Sorting (all ${projects.length})`,  icon: <AIIcon />,    onClick: () => onAISort(projects) },
-            { label: `Delete all ${projects.length} events`, icon: <TrashIcon />, onClick: () => onDeleteEvents(projects), danger: true },
-          ]}
-        />
+      {/* Project card — cover photo left, name/date right, always shown
+          (no collapse toggle) with the events list unconditionally below it */}
+      <div className="flex items-center gap-3 p-2.5 rounded-xl border border-border/60 bg-card shadow-md shadow-black/5 mb-2">
+        <div className="w-12 h-12 rounded-lg overflow-hidden bg-border/40 flex-shrink-0 flex items-center justify-center">
+          {coverUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={coverUrl} alt={clientName} className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-muted text-lg">📷</span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-text-primary truncate">{clientName}</div>
+          <div className="text-[11px] text-muted truncate">{dateLabel ?? 'No events yet'}</div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {projects.length > 0 && (
+            <span className="text-[10px] text-muted mr-0.5" title={`${projects.length} event${projects.length !== 1 ? 's' : ''}`}>
+              {projects.reduce((s, p) => s + (p.totalFiles ?? 0), 0)}
+            </span>
+          )}
+          {projects.length > 0 && (
+            <PhotoActionsMenu
+              align="right"
+              trigger={
+                <button title="Client options" className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
+                  <DotsIcon />
+                </button>
+              }
+              actions={[
+                { label: 'Edit client info',      icon: <EditIcon />,  onClick: () => onEditClient(projects) },
+                { label: `Quick Share (all ${projects.length})`, icon: <ShareIcon />, onClick: () => onQuickShare(projects) },
+                { label: `AI Sorting (all ${projects.length})`,  icon: <AIIcon />,    onClick: () => onAISort(projects) },
+                { label: `Delete all ${projects.length} events`, icon: <TrashIcon />, onClick: () => onDeleteEvents(projects), danger: true },
+              ]}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Event rows */}
-      {open && (
-        <div className="ml-3 pl-2.5 border-l border-border/50 space-y-px mt-px">
-          {projects.map(p => {
+      {/* Watermark (moved from the gallery header — one less button up there)
+          + Add Event — both plain bold text links in the app's accent color,
+          same treatment as "+ Add more events" on the My Projects cards */}
+      <div className="flex items-center gap-4 px-1 mb-2">
+        {anyEventOpen && (
+          <PhotoActionsMenu
+            align="left"
+            trigger={
+              <span className={`flex items-center gap-1 text-[11px] font-bold cursor-pointer transition-colors flex-shrink-0 ${bulkWatermarking ? 'text-accent/50' : 'text-accent hover:text-accent/80'}`}>
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {bulkWatermarking ? 'Watermarking…' : 'Watermark'}
+              </span>
+            }
+            actions={[
+              { label: selectedPhotoCount > 0 ? `Apply to ${selectedPhotoCount} selected` : 'Apply to all photos',
+                icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+                onClick: () => onBulkWatermark(true) },
+              { label: selectedPhotoCount > 0 ? `Remove from ${selectedPhotoCount} selected` : 'Remove from all photos',
+                icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
+                onClick: () => onBulkWatermark(false) },
+            ]}
+          />
+        )}
+        <button onClick={() => onAddEvent(clientName)}
+          className="text-[11px] font-bold text-accent hover:text-accent/80 transition-colors flex-shrink-0">
+          {projects.length === 0 ? '+ Add First Event' : '+ Add Event'}
+        </button>
+      </div>
+
+      {/* Event rows — drag the grip handle to reorder */}
+      {projects.length === 0 ? (
+        <p className="text-[11px] text-muted px-2 py-1.5">No events yet</p>
+      ) : (
+        <div className="space-y-px">
+          {orderedProjects.map((p, i) => {
             const selected = selectedIds.includes(p.projectId)
             return (
               <div
                 key={p.projectId}
+                draggable
+                onDragStart={(e) => { setDragIndex(i); e.dataTransfer.effectAllowed = 'move' }}
+                onDragOver={(e) => { e.preventDefault(); setDragOverIndex(i) }}
+                onDragLeave={() => setDragOverIndex(prev => (prev === i ? null : prev))}
+                onDrop={(e) => { e.preventDefault(); handleDrop(i) }}
+                onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
                 onClick={() => onToggle(p.projectId)}
-                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors group/event
-                  ${selected ? 'bg-accent/15' : 'hover:bg-border/50'}`}
+                className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg cursor-pointer transition-colors group/event
+                  ${selected ? 'bg-accent/15' : 'hover:bg-border/50'}
+                  ${dragOverIndex === i && dragIndex !== null && dragIndex !== i ? 'ring-2 ring-accent/60' : ''}
+                  ${dragIndex === i ? 'opacity-40' : ''}`}
               >
+                {/* Drag handle */}
+                <span className="w-3 h-3 flex-shrink-0 text-muted/50 group-hover/event:text-muted cursor-grab active:cursor-grabbing" title="Drag to reorder">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="1.5" /><circle cx="16" cy="6" r="1.5" /><circle cx="8" cy="12" r="1.5" /><circle cx="16" cy="12" r="1.5" /><circle cx="8" cy="18" r="1.5" /><circle cx="16" cy="18" r="1.5" /></svg>
+                </span>
+
                 {/* Checkbox */}
                 <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors
                   ${selected ? 'bg-accent border-accent text-bg' : 'border-muted group-hover/event:border-text-primary'}`}>
@@ -289,7 +381,9 @@ function ClientBranch({
                   <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
                     {(p.eventType ?? '').replace(/_/g, ' ')}
                   </div>
-                  <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
+                  <div className="text-[10px] text-muted leading-tight">
+                    {fmtDate(p.eventDate)} · <span className="text-[8px] uppercase tracking-wide">{STATUS_LABEL[p.status] ?? p.status}</span>
+                  </div>
                 </div>
 
                 {/* Scheduled-delete badge */}
@@ -340,12 +434,21 @@ function ClientBranch({
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname  = usePathname()
   const router    = useRouter()
+  const searchParams = useSearchParams()
   const { setNavCollapsed } = useExpandedGrid()
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
   const [sidebarView, setSidebarView]   = useState<'dashboard' | 'recent' | 'starred' | 'projects'>('projects')
   const [selectedIds, setSelectedIds]   = useState<string[]>([])
+  // Set when arriving via a My Projects card click (?clientSelect=) — narrows
+  // the sidebar's Projects tree to just this one client ("drill-down"), and
+  // drives the empty-state below when they have zero real events yet.
+  const [focusedClient, setFocusedClient] = useState<string | null>(null)
+  // Cover photo shown on the focused client's small card header in the
+  // sidebar — fetched on demand (not on every project list refresh) since
+  // resolving covers means a files lookup per event.
+  const [focusedCoverUrl, setFocusedCoverUrl] = useState<string | null>(null)
   const [stats, setStats]               = useState<{ storageUsedBytes: number; storageGrantBytes: number; aiSearchCreditsUsed: number; aiSearchCreditsTotal: number } | null>(null)
   const [topupKind, setTopupKind]       = useState<'storage' | 'ai-search' | null>(null)
   const [userInfo, setUserInfo]         = useState<{ role?: string; name?: string; email?: string } | null>(null)
@@ -354,6 +457,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showSidebarNotif, setShowSidebarNotif] = useState(false)
   const [notifPos, setNotifPos] = useState<{ top: number; left: number } | null>(null)
   const notifRef = useRef<HTMLDivElement>(null)
+  const compactNotifRef = useRef<HTMLDivElement>(null)
   const [profilePhone, setProfilePhone] = useState('')
   const [modalClient, setModalClient]   = useState<string | null>(null)
   const [editProject, setEditProject]   = useState<StudioProject | null>(null)
@@ -371,6 +475,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [gridViewMode, setGridViewMode] = useState<'grid' | 'list'>('grid')
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
+  const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  // Persisted across navigations/reloads for the whole session — read once
+  // on mount (not in the initializer, to avoid an SSR/client hydration
+  // mismatch) and written back on every change. Cleared on logout so the
+  // next login starts expanded again.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  useEffect(() => {
+    if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSidebarCollapsed(true)
+  }, [])
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
   const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
   const [refreshTriggers, setRefreshTriggers] = useState<Map<string, number>>(new Map())
   // Global pill modals
@@ -430,18 +546,63 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     const match = pathname.match(/\/studio\/dashboard\/projects\/([^/]+)/)
     if (match && match[1] && match[1] !== 'new') {
+      // A direct single-event link (e.g. Recent activity) selects just that
+      // one event, not a client drill-down — clear any stale sidebar focus.
+      setFocusedClient(null)
       setSelectedIds(prev => prev.includes(match[1]) ? prev : [match[1]])
     } else if (pathname === '/studio/dashboard') {
       setSelectedIds([])
     }
   }, [pathname])
 
+  // Fetch the focused client's cover photo for the sidebar's small project
+  // card header — only when drilling into a client, not on every project
+  // list refresh (resolving a cover means a files lookup per event).
+  useEffect(() => {
+    if (!focusedClient) { setFocusedCoverUrl(null); return }
+    let cancelled = false
+    fetch('/studio/api/admin/projects/with-covers').then(r => r.json()).then(d => {
+      if (cancelled || !d.success) return
+      const match = (d.data as (StudioProject & { coverUrl: string | null; clientCoverUrl: string | null })[])
+        .filter(p => p.clientName === focusedClient)
+      const cover = match.find(p => p.clientCoverUrl)?.clientCoverUrl ?? match.find(p => p.coverUrl)?.coverUrl ?? null
+      setFocusedCoverUrl(cover)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [focusedClient])
+
+  // "My Projects" client cards navigate here with ?clientSelect=<clientName>
+  // so every event belonging to that client gets selected in the sidebar —
+  // runs after the effect above (which would otherwise reset selectedIds to
+  // [] on this same navigation) so it wins. Clears the param once applied so
+  // a later project refetch (new array reference) doesn't re-select after
+  // the admin has manually changed the selection.
+  useEffect(() => {
+    const clientSelect = searchParams.get('clientSelect')
+    if (!clientSelect || projects.length === 0) return
+    const ids = projects.filter(p => p.clientName === clientSelect && !p.isPlaceholder).map(p => p.projectId)
+    setSelectedIds(ids)
+    setFocusedClient(clientSelect)
+    setSidebarView('projects')
+    router.replace('/studio/dashboard/overview')
+  }, [searchParams, projects, router])
+
   // Keep the Dashboard tab's highlight in sync with direct navigation/refresh
   // (e.g. visiting /overview straight from a bookmark) — clicking Recent/
   // Starred/Projects afterwards doesn't change the URL, so it won't re-fire
-  // this and fight with those tabs' own highlight.
+  // this and fight with those tabs' own highlight. Skipped when arriving via
+  // ?clientSelect= — deliberately depends on [pathname] ONLY (not
+  // searchParams): useSearchParams() returns a new object identity after the
+  // clientSelect effect's router.replace strips the param, which would
+  // re-fire this effect and stomp sidebarView back to 'dashboard' a moment
+  // after the drill-down set it to 'projects' (the exact bug that happened
+  // when searchParams was in this dependency array). With only [pathname],
+  // this runs once when arriving at /overview — while clientSelect is still
+  // in the URL — and never again, since pathname itself doesn't change when
+  // the param is stripped.
   useEffect(() => {
-    if (pathname === '/studio/dashboard/overview') setSidebarView('dashboard')
+    if (pathname === '/studio/dashboard/overview' && !searchParams.get('clientSelect')) setSidebarView('dashboard')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
   // Auto-hide the top navbar to give an open gallery more room, and re-hide
@@ -455,6 +616,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [selectedIds.join(',')])
 
   const handleLogout = async () => {
+    localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
     await fetch('/studio/api/auth/logout', { method: 'POST' })
     router.push('/studio/login')
   }
@@ -521,6 +683,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     fetchProjects()
   }
 
+  // Persist a client's drag-reordered event list — writes a sequential
+  // eventOrder to every event in the new order (not just the moved one) so
+  // once the admin has reordered once, every row has a real order to sort by.
+  const handleReorderEvents = (orderedProjectIds: string[]) => {
+    setProjects(prev => {
+      const orderMap = new Map(orderedProjectIds.map((id, i) => [id, i]))
+      return prev.map(p => orderMap.has(p.projectId) ? { ...p, eventOrder: orderMap.get(p.projectId) } : p)
+    })
+    orderedProjectIds.forEach((id, i) => {
+      fetch(`/studio/api/admin/projects/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventOrder: i }),
+      }).catch(() => {})
+    })
+  }
+
   const toggleSelect = (id: string) => {
     setSelectedIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -530,6 +709,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const clearSelection = () => {
     setSelectedIds([])
     setPhotoSelections(new Map())
+    setFocusedClient(null)
   }
 
   const handleSelectionChange = (projectId: string) => (ids: Set<string>) => {
@@ -551,6 +731,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const allSelectedPhotos = Array.from(photoSelections.entries()).flatMap(([pid, ids]) =>
     (projectFiles.get(pid) ?? []).filter(f => ids.has(f.fileId))
   )
+
+  // Moved here from EventSection's header — same routes, just triggered from
+  // the sidebar's project card now instead of an always-visible toolbar
+  // button (one less button cluttering the gallery header). Targets whatever
+  // photos are selected in the grid, or every photo across the currently
+  // open events when nothing's selected.
+  const handleBulkWatermark = async (watermarkEnabled: boolean) => {
+    setBulkWatermarking(true)
+    if (totalPhotoSelected > 0) {
+      await Promise.all(
+        Array.from(photoSelections.entries()).map(([pid, ids]) =>
+          fetch(`/studio/api/admin/projects/${pid}/watermark`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileIds: Array.from(ids), watermarkEnabled }),
+          }).catch(() => {})
+        )
+      )
+    } else {
+      await Promise.all(
+        selectedProjects.map(p =>
+          fetch(`/studio/api/admin/projects/${p.projectId}/watermark`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ watermarkEnabled }),
+          }).catch(() => {})
+        )
+      )
+    }
+    setBulkWatermarking(false)
+    // Watermarking runs async (Lambda) — give it a moment before reloading
+    // each affected EventSection's files, same delay as before the move.
+    setTimeout(() => {
+      setRefreshTriggers(prev => {
+        const next = new Map(prev)
+        selectedProjects.forEach(p => next.set(p.projectId, (next.get(p.projectId) ?? 0) + 1))
+        return next
+      })
+    }, 3000)
+  }
 
   const deleteAllSelected = async () => {
     setGlobalDeleting(true)
@@ -629,10 +847,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })
   })()
 
-  const recentProjects = [...projects]
+  const recentProjects = projects
+    .filter(p => !p.isPlaceholder)
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 10)
-  const starredProjects = projects.filter(p => p.isStarred)
+  const starredProjects = projects.filter(p => p.isStarred && !p.isPlaceholder)
 
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
@@ -668,10 +887,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-1 overflow-hidden relative">
 
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="w-64 flex-shrink-0 bg-card flex flex-col overflow-hidden shadow-[4px_0_24px_-6px_rgba(0,0,0,0.12)] z-10">
+      <aside style={{ width: sidebarCollapsed ? 48 : 256 }}
+        className="relative flex-shrink-0 bg-gradient-to-b from-card to-card/95 flex flex-col overflow-hidden shadow-[4px_0_24px_-6px_rgba(0,0,0,0.12)] z-10 transition-[width] duration-300 ease-in-out">
 
         {/* Logo + product switcher — one compact header block, no divider
             between them; real VayuStudios brand mark (same as the marketing
@@ -761,40 +981,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </div>
 
-          <PhotoActionsMenu
-            align="left"
-            trigger={
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/60 bg-card text-[11px] font-semibold text-text-primary shadow-sm hover:shadow-md hover:border-accent/30 cursor-pointer transition-all">
-                <span className="w-3 h-3 text-accent flex-shrink-0">{PRODUCT_ICON[activeProduct]}</span>
-                {PRODUCT_LABEL[activeProduct]}
-                <svg className="w-2.5 h-2.5 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+          <div className="flex items-center gap-2">
+            <PhotoActionsMenu
+              align="left"
+              trigger={
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/60 bg-card text-[11px] font-semibold text-text-primary shadow-sm hover:shadow-md hover:border-accent/30 cursor-pointer transition-all">
+                  <span className="w-3 h-3 text-accent flex-shrink-0">{PRODUCT_ICON[activeProduct]}</span>
+                  {PRODUCT_LABEL[activeProduct]}
+                  <svg className="w-2.5 h-2.5 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                  </svg>
+                </span>
+              }
+              menuClassName="w-48"
+              actions={[
+                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
+                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
+                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
+              ]}
+            />
+            {activeProduct === 'gallery' && (
+              <Link href="/studio/dashboard/projects/new" onClick={clearSelection}
+                className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold tracking-wide text-white bg-accent rounded-lg py-1 shadow-md shadow-accent/30 hover:shadow-lg hover:shadow-accent/40 hover:-translate-y-0.5 active:translate-y-0 transition-all">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
                 </svg>
-              </span>
-            }
-            menuClassName="w-48"
-            actions={[
-              { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
-              { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
-              { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
-            ]}
-          />
+                New Project
+              </Link>
+            )}
+          </div>
         </div>
-
-        {/* Current project card — only when exactly one event is open */}
-        {selectedIds.length === 1 && selectedProjects[0] && (
-          <button onClick={() => { clearSelection(); router.push('/studio/dashboard/overview') }} title="Back to dashboard"
-            className="mx-3 mt-3 p-2.5 rounded-xl bg-card border border-border/60 shadow-sm flex items-center gap-2.5 text-left hover:shadow-md transition-all flex-shrink-0">
-            <div className="w-9 h-9 rounded-lg bg-accent/15 text-accent flex items-center justify-center text-xs font-bold flex-shrink-0 uppercase">
-              {selectedProjects[0].clientName?.slice(0, 2) ?? '??'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-bold text-accent uppercase tracking-wide truncate">{(selectedProjects[0].eventType ?? '').replace(/_/g, ' ')}</div>
-              <div className="text-xs font-semibold text-text-primary truncate">{selectedProjects[0].clientName}</div>
-              <div className="text-[10px] text-muted truncate">{fmtDate(selectedProjects[0].eventDate)}</div>
-            </div>
-          </button>
-        )}
 
         {/* Client Gallery mode: a Dashboard shortcut + Recent/Starred/Projects
             tabs, replacing a single fixed "Projects" tree header.
@@ -832,7 +1048,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     if (view === 'projects') { clearSelection(); router.push('/studio/dashboard/projects') }
                   }}
                     className={`flex-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
-                      sidebarView === view ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                      // Once a project card is drilled into, this no longer
+                      // reflects "browsing all projects" — don't show the
+                      // tab as active so clicking it again reads as a fresh
+                      // navigation back to the My Projects grid.
+                      sidebarView === view && !(view === 'projects' && focusedClient) ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
                     }`}>
                     {view === 'recent' ? 'Recent' : view === 'starred' ? 'Starred' : 'Projects'}
                   </button>
@@ -840,28 +1060,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
             </div>
 
-            {sidebarView === 'projects' && (
-              <div className="flex items-center px-3 pt-2 pb-1 group/header flex-shrink-0">
-                <span className="text-[10px] text-muted flex-1">{projects.length} total</span>
-                <Link href="/studio/dashboard/projects/new" title="New project" onClick={clearSelection}
-                  className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all flex-shrink-0">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-                  </svg>
-                </Link>
-              </div>
-            )}
-
-            <div className="px-1.5 pb-3 space-y-px flex-1">
-              {sidebarView === 'projects' && (
-                clientGroups.length === 0 ? (
+            <div className="px-1.5 pt-2 pb-3 space-y-px flex-1 min-h-0">
+              {/* Blank on purpose when the Projects tab is selected but no
+                  client is drilled into — the My Projects grid page already
+                  covers browsing everyone; the tree only reappears once a
+                  project card is clicked (focusedClient set). */}
+              {sidebarView === 'projects' && focusedClient && (
+                clientGroups.filter(([name]) => name === focusedClient).length === 0 ? (
                   <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
                 ) : (
-                  clientGroups.map(([clientName, clientProjects]) => (
+                  clientGroups.filter(([name]) => name === focusedClient).map(([clientName, clientProjects]) => (
                     <ClientBranch
                       key={clientName}
                       clientName={clientName}
-                      projects={clientProjects}
+                      coverUrl={focusedCoverUrl}
+                      projects={clientProjects.filter(p => !p.isPlaceholder)}
                       selectedIds={selectedIds}
                       onToggle={toggleSelect}
                       onAddEvent={setModalClient}
@@ -871,6 +1084,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onAISort={setAiModalProjects}
                       onEditClient={setEditClientModalProjects}
                       onCancelSchedule={handleCancelSchedule}
+                      onReorder={handleReorderEvents}
+                      onBulkWatermark={handleBulkWatermark}
+                      bulkWatermarking={bulkWatermarking}
+                      selectedPhotoCount={totalPhotoSelected}
                     />
                   ))
                 )
@@ -988,7 +1205,150 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
+        {/* Collapsed rail — same icons/actions as the expanded header, just
+            stacked and icon-only. Painted over the (still-mounted, just too
+            narrow to read) content above via z-30 so nothing squeezed behind
+            it is accidentally clickable. The notification dropdown itself is
+            portal-rendered straight to document.body, so it still works
+            correctly from this second trigger with no logic duplicated —
+            only the trigger button markup is repeated. */}
+        {sidebarCollapsed && (
+          <div className="absolute inset-0 z-30 bg-gradient-to-b from-card to-card/95 flex flex-col items-center gap-3 pt-4 pb-3 overflow-y-auto vayu-scroll">
+            {userInfo && (
+              <ProfileMenu
+                position="below"
+                align="left"
+                onEditProfile={openEditProfile}
+                onLogout={handleLogout}
+                trigger={
+                  <div title={userInfo.name ?? 'Profile'}
+                    className="w-8 h-8 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[11px] font-bold cursor-pointer uppercase">
+                    {userInfo.name?.slice(0, 1) ?? '?'}
+                  </div>
+                }
+              />
+            )}
+            <div ref={compactNotifRef}>
+              <button
+                onClick={() => {
+                  if (!showSidebarNotif) {
+                    const rect = compactNotifRef.current?.getBoundingClientRect()
+                    if (rect) setNotifPos({ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 256 - 8) })
+                  }
+                  setShowSidebarNotif(v => !v)
+                }}
+                title="Notifications"
+                className="relative w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
+                <BellIcon />
+                {sidebarNotifications.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[8px] font-bold">
+                    {sidebarNotifications.length}
+                  </span>
+                )}
+              </button>
+            </div>
+            <a href="https://wa.me/918984769522" target="_blank" rel="noopener noreferrer" title="Help & support"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
+              <HelpIcon />
+            </a>
+            <PhotoActionsMenu
+              align="left"
+              menuClassName="w-48"
+              trigger={
+                <span title={PRODUCT_LABEL[activeProduct]}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg border border-border/60 bg-card text-accent shadow-sm hover:shadow-md hover:border-accent/30 cursor-pointer transition-all">
+                  <span className="w-3.5 h-3.5">{PRODUCT_ICON[activeProduct]}</span>
+                </span>
+              }
+              actions={[
+                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
+                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
+                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
+              ]}
+            />
+
+            <div className="w-6 border-t border-border/60 flex-shrink-0" />
+
+            {/* Dashboard / Recent / Starred / Projects — same destinations
+                as the expanded tabs, icon-only */}
+            <Link href="/studio/dashboard/overview" onClick={() => { clearSelection(); setSidebarView('dashboard') }}
+              title="Dashboard"
+              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                sidebarView === 'dashboard' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+              }`}>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </Link>
+            <button onClick={() => setSidebarView('recent')} title="Recent"
+              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                sidebarView === 'recent' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+              }`}>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+            <button onClick={() => setSidebarView('starred')} title="Starred"
+              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                sidebarView === 'starred' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+              }`}>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+              </svg>
+            </button>
+            <button onClick={() => { setSidebarView('projects'); clearSelection(); router.push('/studio/dashboard/projects') }} title="Projects"
+              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                sidebarView === 'projects' && !focusedClient ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+              }`}>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+              </svg>
+            </button>
+
+            {/* Focused client's events — short 3-letter chips, still
+                clickable/multi-selectable, same selectedIds/toggleSelect as
+                the expanded event rows */}
+            {focusedClient && (() => {
+              const events = (clientGroups.find(([name]) => name === focusedClient)?.[1] ?? []).filter(p => !p.isPlaceholder)
+              return events.length > 0 ? (
+                <>
+                  <div className="w-6 border-t border-border/60 flex-shrink-0" />
+                  <div className="flex flex-col items-center gap-1.5">
+                    {events.map(p => {
+                      const selected = selectedIds.includes(p.projectId)
+                      return (
+                        <button key={p.projectId} onClick={() => toggleSelect(p.projectId)}
+                          title={`${(p.eventType ?? '').replace(/_/g, ' ')} — ${fmtDate(p.eventDate)}`}
+                          className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-[10px] font-bold uppercase transition-colors ${
+                            selected ? 'bg-accent text-white' : 'bg-border/40 text-muted hover:text-text-primary hover:bg-border/70'
+                          }`}>
+                          {(p.eventType ?? '???').slice(0, 3)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              ) : null
+            })()}
+          </div>
+        )}
+
       </aside>
+
+      {/* Sidebar collapse/expand "roller" tab — sits outside <aside> (not
+          clipped by its own overflow-hidden) so it stays visible and slides
+          along with the sidebar's width transition, straddling its edge. */}
+      <button
+        onClick={() => setSidebarCollapsed(v => !v)}
+        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        style={{ left: sidebarCollapsed ? 48 : 256, marginLeft: -10 }}
+        className="absolute bottom-4 z-20 w-5 h-9 flex items-center justify-center rounded-md bg-accent text-white shadow-lg shadow-accent/30 hover:shadow-xl hover:shadow-accent/40 hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out"
+      >
+        <svg className={`w-3 h-3 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
 
       {/* ── Main content ─────────────────────────────────────── */}
       {selectedIds.length > 0 ? (
@@ -1049,6 +1409,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </button>
             </div>
           )}
+        </main>
+      ) : focusedClient ? (
+        <main className="flex-1 overflow-auto bg-card">
+          <div className="max-w-md mx-auto text-center py-20 px-6 space-y-4">
+            <div className="text-5xl">📸</div>
+            <div className="text-lg font-bold text-text-primary">No events yet for {focusedClient}</div>
+            <p className="text-sm text-muted">Create your first event, then upload photos and set one as the cover.</p>
+            <button onClick={() => setModalClient(focusedClient)}
+              className="bg-accent text-bg text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors">
+              + Create first event
+            </button>
+            <div>
+              <button onClick={() => setFocusedClient(null)} className="text-xs text-muted hover:text-text-primary transition-colors">
+                ← Back to all projects
+              </button>
+            </div>
+          </div>
         </main>
       ) : (
         <main className="flex-1 overflow-auto bg-card">{children}</main>

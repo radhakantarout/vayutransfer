@@ -108,15 +108,20 @@ export default function DashboardOverviewPage() {
     }).finally(() => setLoading(false))
   }, [])
 
-  const total       = projects.length
-  const active      = projects.filter((p) => p.status === 'ACTIVE').length
-  const selections  = projects.filter((p) => p.status === 'SELECTION_RECEIVED').length
-  const completed   = projects.filter((p) => p.status === 'COMPLETED').length
-  const totalPhotos = projects.reduce((s, p) => s + (p.totalFiles ?? 0), 0)
-  const needEdits   = projects.reduce((s, p) => s + (p.editingRequiredCount ?? 0), 0)
+  // Placeholder "client shell" rows (New Project before any real event is
+  // added) aren't real events yet — exclude them from every stat/list below
+  // except the client count, since the client relationship still exists.
+  const realProjects = projects.filter((p) => !p.isPlaceholder)
+
+  const total       = realProjects.length
+  const active      = realProjects.filter((p) => p.status === 'ACTIVE').length
+  const selections  = realProjects.filter((p) => p.status === 'SELECTION_RECEIVED').length
+  const completed   = realProjects.filter((p) => p.status === 'COMPLETED').length
+  const totalPhotos = realProjects.reduce((s, p) => s + (p.totalFiles ?? 0), 0)
+  const needEdits   = realProjects.reduce((s, p) => s + (p.editingRequiredCount ?? 0), 0)
   const clients     = new Set(projects.map((p) => p.clientName)).size
 
-  const recent = [...projects]
+  const recent = [...realProjects]
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 4)
 
@@ -221,7 +226,7 @@ export default function DashboardOverviewPage() {
       )}
 
       {/* Empty state */}
-      {total === 0 && (
+      {projects.length === 0 && (
         <div className="text-center py-16 space-y-4">
           <div className="text-5xl">📷</div>
           <div className="text-text-primary font-semibold text-lg">No projects yet</div>

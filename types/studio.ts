@@ -103,6 +103,20 @@ export interface StudioProject {
   // this entirely). Past-due projects are swept by the daily scheduled-deletes
   // cron. Cancel by clearing this field.
   scheduledDeleteAt?: string
+  // True only for the "client shell" row created by New Project before any
+  // real event exists — hidden from every event list/count until the first
+  // Add Event promotes it in place (see AddEventModal + PATCH route).
+  isPlaceholder?: boolean
+  // Client-spanning cover photo pointer — which event + which file — set via
+  // the My Projects card's "Change cover" action. Independent of the
+  // per-event coverPhotoFileId above, and may point at a different project.
+  clientCoverProjectId?: string
+  clientCoverFileId?: string
+  // Admin-chosen sidebar/gallery display order among a client's events —
+  // set via drag-to-reorder in the sidebar's event list. Absent means "use
+  // the default (updatedAt) order" — only populated once the admin actually
+  // reorders that client's events for the first time.
+  eventOrder?: number
   createdAt: string
   updatedAt: string
 }

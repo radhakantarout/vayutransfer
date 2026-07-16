@@ -41,12 +41,18 @@ export async function POST(req: NextRequest) {
     const studioId = auth.studioId ?? body.studioId
     const { clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation } = body
 
-    if (!studioId || !clientName || !eventDate || !eventType) {
+    if (!studioId || !clientName) {
       return NextResponse.json(
-        { success: false, error: 'INVALID_INPUT', message: 'clientName, eventDate, eventType are required' },
+        { success: false, error: 'INVALID_INPUT', message: 'clientName is required' },
         { status: 400 }
       )
     }
+
+    // New Project creation (from /projects/new) sends no eventDate — this
+    // creates a placeholder "client shell" with no real event yet, promoted
+    // in place by AddEventModal the first time a real event is added. The
+    // AddEventModal path always sends eventDate and creates a real event.
+    const isPlaceholder = !eventDate
 
     const now = new Date().toISOString()
     const project: StudioProject = {
@@ -55,9 +61,12 @@ export async function POST(req: NextRequest) {
       clientName,
       clientEmail: clientEmail ?? '',
       clientPhone: clientPhone ?? '',
-      eventDate,
-      eventType,
+      eventDate: eventDate ?? '',
+      // Event type is chosen per-event (e.g. via "+ Add event"), not at
+      // project-creation time — defaults to OTHER, editable later.
+      eventType: eventType ?? 'OTHER',
       ...(eventLocation ? { eventLocation } : {}),
+      ...(isPlaceholder ? { isPlaceholder: true } : {}),
       status: 'DRAFT',
       totalFiles: 0,
       selectedFilesCount: 0,

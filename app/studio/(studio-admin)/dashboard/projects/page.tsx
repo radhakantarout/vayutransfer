@@ -3,22 +3,34 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { StudioProject, ProjectStatus } from '@/types/studio'
+import AddEventModal from '../AddEventModal'
+import ChangeClientCoverModal from '@/components/studio/ChangeClientCoverModal'
 import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
-import EditEventModal from '../EditEventModal'
 
-type ProjectWithCover = StudioProject & { coverUrl: string | null; photoCount: number }
-
-const STATUS_COLOR: Record<string, string> = {
-  DRAFT:              'bg-border/60 text-muted',
-  ACTIVE:             'bg-accent/15 text-accent',
-  SELECTION_RECEIVED: 'bg-yellow-400/15 text-yellow-400',
-  COMPLETED:          'bg-success/15 text-success',
+type GridSize = 'small' | 'medium' | 'large'
+const GRID_SIZE_COLS: Record<GridSize, string> = {
+  small:  'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5',
+  medium: 'grid-cols-1 sm:grid-cols-3 lg:grid-cols-4',
+  large:  'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
 }
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT:              'Draft',
-  ACTIVE:             'Active',
-  SELECTION_RECEIVED: 'Selection in',
-  COMPLETED:          'Completed',
+
+type ProjectWithCover = StudioProject & { coverUrl: string | null; clientCoverUrl: string | null; photoCount: number }
+
+interface ClientGroup {
+  clientName: string
+  // Real events only (excludes the placeholder "client shell" row, if any) —
+  // used for display/counts.
+  events: ProjectWithCover[]
+  // Every row for this client, including a placeholder — passed to
+  // AddEventModal so it can detect and promote the placeholder in place.
+  allProjects: ProjectWithCover[]
+  // Whichever row currently anchors the client-spanning cover pointer —
+  // the oldest row (stable across future event additions/promotions).
+  anchorProjectId: string
+  coverUrl: string | null
+  totalPhotos: number
+  isStarred: boolean
+  latestUpdatedAt: string
 }
 
 type DateFilter   = 'ALL' | 'UPCOMING' | 'PAST'
@@ -49,13 +61,14 @@ export default function MyProjectsPage() {
   const [projects, setProjects]   = useState<ProjectWithCover[]>([])
   const [loading, setLoading]     = useState(true)
   const [view, setView]           = useState<'grid' | 'list'>('grid')
+  const [gridSize, setGridSize]   = useState<GridSize>('small')
   const [search, setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState<'ALL' | ProjectStatus>('ALL')
   const [dateFilter, setDateFilter]     = useState<DateFilter>('ALL')
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('ALL')
   const [starredOnly, setStarredOnly]   = useState(false)
-  const [editProject, setEditProject]   = useState<StudioProject | null>(null)
-  const [toast, setToast]               = useState('')
+  const [addEventClient, setAddEventClient] = useState<string | null>(null)
+  const [coverPickerClient, setCoverPickerClient] = useState<string | null>(null)
 
   const loadProjects = () => {
     fetch('/studio/api/admin/projects/with-covers').then(r => r.json()).then(res => {
@@ -65,12 +78,6 @@ export default function MyProjectsPage() {
 
   useEffect(() => { loadProjects() }, [])
 
-  useEffect(() => {
-    if (!toast) return
-    const t = setTimeout(() => setToast(''), 2500)
-    return () => clearTimeout(t)
-  }, [toast])
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     const now = Date.now()
@@ -79,40 +86,46 @@ export default function MyProjectsPage() {
         const haystack = `${p.clientName} ${p.eventType} ${p.eventLocation ?? ''}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
+      if (starredOnly && !p.isStarred) return false
+      // A placeholder has no real status/date/link yet — it always passes
+      // the event-specific filters below so its client card can still show
+      // up as "no events yet" rather than vanishing under any filter.
+      if (p.isPlaceholder) return true
       if (statusFilter !== 'ALL' && p.status !== statusFilter) return false
       if (dateFilter === 'UPCOMING' && new Date(p.eventDate).getTime() < now) return false
       if (dateFilter === 'PAST' && new Date(p.eventDate).getTime() >= now) return false
       if (expiryFilter !== 'ALL' && expiryState(p) !== expiryFilter) return false
-      if (starredOnly && !p.isStarred) return false
       return true
     })
   }, [projects, search, statusFilter, dateFilter, expiryFilter, starredOnly])
 
-  const toggleStar = async (p: ProjectWithCover) => {
-    const next = !p.isStarred
-    setProjects(prev => prev.map(x => x.projectId === p.projectId ? { ...x, isStarred: next } : x))
-    await fetch(`/studio/api/admin/projects/${p.projectId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isStarred: next }),
-    })
-  }
-
-  const quickCopyLink = async (p: ProjectWithCover) => {
-    if (p.clientShareToken && expiryState(p) !== 'EXPIRED' && expiryState(p) !== 'NO_LINK') {
-      const url = `${window.location.origin}/studio/gallery/${p.clientShareToken}`
-      await navigator.clipboard.writeText(url)
-      setToast('Link copied to clipboard')
-    } else {
-      setToast('No active share link yet — open the project to generate one')
+  // One project (client) can have multiple events — group here so the
+  // overview shows a single card per client, not one per event.
+  const clientGroups = useMemo<ClientGroup[]>(() => {
+    const map = new Map<string, ProjectWithCover[]>()
+    for (const p of filtered) {
+      const key = p.clientName || 'Unknown'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(p)
     }
-  }
-
-  const deleteProject = async (p: ProjectWithCover) => {
-    if (!confirm(`Delete "${p.clientName}"? This permanently deletes all photos and cannot be undone.`)) return
-    setProjects(prev => prev.filter(x => x.projectId !== p.projectId))
-    await fetch(`/studio/api/admin/projects/${p.projectId}`, { method: 'DELETE' })
-  }
+    return Array.from(map.entries())
+      .map(([clientName, allProjects]) => {
+        const events = allProjects.filter(p => !p.isPlaceholder)
+        const sorted = [...events].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+        const anchor = [...allProjects].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))[0]
+        return {
+          clientName,
+          events: sorted,
+          allProjects,
+          anchorProjectId: anchor.projectId,
+          coverUrl: allProjects.find(e => e.clientCoverUrl)?.clientCoverUrl ?? sorted.find(e => e.coverUrl)?.coverUrl ?? null,
+          totalPhotos: events.reduce((s, e) => s + e.photoCount, 0),
+          isStarred: events.some(e => e.isStarred),
+          latestUpdatedAt: (sorted[0] ?? allProjects[0])?.updatedAt ?? '',
+        }
+      })
+      .sort((a, b) => b.latestUpdatedAt.localeCompare(a.latestUpdatedAt))
+  }, [filtered])
 
   if (loading) {
     return (
@@ -129,41 +142,30 @@ export default function MyProjectsPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-extrabold text-text-primary">My Projects</h1>
-          <p className="text-sm text-muted mt-0.5">{filtered.length} of {projects.length} project{projects.length !== 1 ? 's' : ''}</p>
+          <p className="text-sm text-muted mt-0.5">{clientGroups.length} of {new Set(projects.map(p => p.clientName)).size} project{new Set(projects.map(p => p.clientName)).size !== 1 ? 's' : ''}</p>
         </div>
-        <Link href="/studio/dashboard/projects/new"
-          className="bg-accent text-bg text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-accent/90 transition-colors">
-          + New Project
-        </Link>
-      </div>
-
-      {/* Search + view toggle */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[220px]">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
-          </svg>
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search projects by client, event type, location…"
-            className="w-full bg-card border border-border rounded-xl pl-9 pr-3 py-2.5 text-sm text-text-primary placeholder:text-muted/60 focus:outline-none focus:border-accent/60 transition-colors"
-          />
-        </div>
-        <div className="flex items-center bg-card border border-border rounded-xl p-1 flex-shrink-0">
-          <button onClick={() => setView('grid')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${view === 'grid' ? 'bg-accent/15 text-accent' : 'text-muted hover:text-text-primary'}`}>
-            Grid
-          </button>
-          <button onClick={() => setView('list')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${view === 'list' ? 'bg-accent/15 text-accent' : 'text-muted hover:text-text-primary'}`}>
-            List
-          </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative w-64 flex-shrink-0">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search projects…"
+              title="Search projects by client, event type, location"
+              className="w-full bg-card border border-border rounded-xl pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-muted/60 focus:outline-none focus:border-accent/60 transition-colors"
+            />
+          </div>
+          <Link href="/studio/dashboard/projects/new"
+            className="bg-accent text-bg text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-accent/90 transition-colors flex-shrink-0">
+            + New Project
+          </Link>
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters + view toggle — one row */}
       <div className="flex items-center gap-2 flex-wrap">
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'ALL' | ProjectStatus)}
           className="bg-card border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent">
@@ -187,16 +189,48 @@ export default function MyProjectsPage() {
           <option value="NO_LINK">No link yet</option>
         </select>
         <button onClick={() => setStarredOnly(v => !v)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex-shrink-0 ${
             starredOnly ? 'bg-yellow-400/15 border-yellow-400/40 text-yellow-400' : 'bg-card border-border text-muted hover:text-text-primary'
           }`}>
           <StarIcon filled={starredOnly} />
           Starred
         </button>
+
+        {/* View toggle — small icon-only, pushed to the row's end */}
+        <div className="flex items-center gap-1 ml-auto flex-shrink-0">
+          <PhotoActionsMenu
+            align="right"
+            trigger={
+              <span title="Grid view — click for size options"
+                className={`w-7 h-7 flex items-center justify-center rounded-lg border cursor-pointer transition-colors ${view === 'grid' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-text-primary'}`}>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </span>
+            }
+            actions={(['small', 'medium', 'large'] as GridSize[]).map(size => ({
+              label: (view === 'grid' && gridSize === size ? '✓ ' : '') + size[0].toUpperCase() + size.slice(1),
+              icon: (
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              ),
+              onClick: () => { setView('grid'); setGridSize(size) },
+            }))}
+          />
+          <button onClick={() => setView('list')} title="List view"
+            className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${view === 'list' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-text-primary'}`}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Empty state */}
-      {filtered.length === 0 && (
+      {clientGroups.length === 0 && (
         <div className="text-center py-16 space-y-4">
           <div className="text-5xl">📁</div>
           <div className="text-text-primary font-semibold text-lg">
@@ -212,36 +246,53 @@ export default function MyProjectsPage() {
       )}
 
       {/* Grid view */}
-      {filtered.length > 0 && view === 'grid' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(p => (
-            <Link key={p.projectId} href={`/studio/dashboard/projects/${p.projectId}`}
+      {clientGroups.length > 0 && view === 'grid' && (
+        <div className={`grid ${GRID_SIZE_COLS[gridSize]} gap-4`}>
+          {clientGroups.map(g => (
+            <Link key={g.clientName} href={`/studio/dashboard/overview?clientSelect=${encodeURIComponent(g.clientName)}`}
               className="group bg-card border border-border rounded-2xl overflow-hidden hover:border-accent/40 transition-colors">
               <div className="relative aspect-video bg-border/40">
-                {p.coverUrl ? (
+                {g.coverUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.coverUrl} alt={p.clientName} className="w-full h-full object-cover" />
+                  <img src={g.coverUrl} alt={g.clientName} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-muted text-3xl">📷</div>
                 )}
-                <button
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleStar(p) }}
-                  className={`absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-sm transition-colors ${
-                    p.isStarred ? 'bg-yellow-400/90 text-bg' : 'bg-black/40 text-white hover:bg-black/60'
-                  }`}
-                >
-                  <StarIcon filled={!!p.isStarred} />
-                </button>
+                {g.isStarred && (
+                  <div className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full bg-yellow-400/90 text-bg backdrop-blur-sm">
+                    <StarIcon filled />
+                  </div>
+                )}
+                {g.events.length > 0 && (
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCoverPickerClient(g.clientName) }}
+                    className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 opacity-0 group-hover:opacity-100 transition-all text-white text-xs font-bold"
+                  >
+                    {g.coverUrl ? 'Change cover' : 'Set cover'}
+                  </button>
+                )}
               </div>
               <div className="p-4 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-bold text-text-primary truncate">{p.clientName}</span>
-                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${STATUS_COLOR[p.status] ?? 'bg-border text-muted'}`}>
-                    {STATUS_LABEL[p.status] ?? p.status}
+                  <span className="text-sm font-bold text-text-primary truncate">{g.clientName}</span>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${g.events.length === 0 ? 'bg-border/60 text-muted' : 'bg-accent/15 text-accent'}`}>
+                    {g.events.length === 0 ? 'No events yet' : `${g.events.length} event${g.events.length !== 1 ? 's' : ''}`}
                   </span>
                 </div>
-                <div className="text-xs text-muted">{(p.eventType ?? '').replace(/_/g, ' ')} · {fmtDate(p.eventDate)}</div>
-                <div className="text-xs text-muted">{p.photoCount} photo{p.photoCount !== 1 ? 's' : ''}</div>
+                {g.events.length > 0 ? (
+                  <>
+                    <div className="text-xs text-muted">{fmtDate(g.events[0].eventDate)}</div>
+                    <div className="text-xs text-muted">{g.totalPhotos} photo{g.totalPhotos !== 1 ? 's' : ''}</div>
+                  </>
+                ) : (
+                  <div className="text-xs text-muted">Click to create your first event</div>
+                )}
+                <button
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAddEventClient(g.clientName) }}
+                  className="text-xs font-semibold text-accent hover:text-accent/80 transition-colors pt-0.5"
+                >
+                  {g.events.length === 0 ? '+ Add first event' : '+ Add more events'}
+                </button>
               </div>
             </Link>
           ))}
@@ -249,83 +300,65 @@ export default function MyProjectsPage() {
       )}
 
       {/* List view */}
-      {filtered.length > 0 && view === 'list' && (
+      {clientGroups.length > 0 && view === 'list' && (
         <div className="bg-card border border-border rounded-2xl overflow-hidden divide-y divide-border">
-          {filtered.map(p => (
-            <div key={p.projectId} className="relative">
-              <Link href={`/studio/dashboard/projects/${p.projectId}`}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-border/20 transition-colors">
-                <div className="w-12 h-12 rounded-lg bg-border/40 flex-shrink-0 overflow-hidden flex items-center justify-center">
-                  {p.coverUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.coverUrl} alt={p.clientName} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-muted text-lg">📷</span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    {p.isStarred && <span className="text-yellow-400 flex-shrink-0"><StarIcon filled /></span>}
-                    <span className="text-sm font-semibold text-text-primary truncate">{p.clientName}</span>
-                  </div>
-                  <div className="text-xs text-muted">{(p.eventType ?? '').replace(/_/g, ' ')} · {fmtDate(p.eventDate)} · {p.photoCount} photo{p.photoCount !== 1 ? 's' : ''}</div>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${STATUS_COLOR[p.status] ?? 'bg-border text-muted'}`}>
-                  {STATUS_LABEL[p.status] ?? p.status}
-                </span>
-                <div className="w-8 flex-shrink-0" />
-              </Link>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                <PhotoActionsMenu
-                  align="right"
-                  trigger={
-                    <button className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
-                    </button>
-                  }
-                  actions={[
-                    {
-                      label: 'Edit project',
-                      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.5-9.5a2.121 2.121 0 013 3L12 16l-4 1 1-4 9.5-9.5z" /></svg>,
-                      onClick: () => setEditProject(p),
-                    },
-                    {
-                      label: 'Quick copy link',
-                      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
-                      onClick: () => quickCopyLink(p),
-                    },
-                    {
-                      label: p.isStarred ? 'Unstar (Admin only)' : 'Star as favorite (Admin only)',
-                      icon: <StarIcon filled={!!p.isStarred} />,
-                      onClick: () => toggleStar(p),
-                    },
-                    {
-                      label: 'Delete project',
-                      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" /></svg>,
-                      onClick: () => deleteProject(p),
-                      danger: true,
-                    },
-                  ]}
-                />
+          {clientGroups.map(g => (
+            <Link key={g.clientName} href={`/studio/dashboard/overview?clientSelect=${encodeURIComponent(g.clientName)}`}
+              className="flex items-center gap-3 px-4 py-3 hover:bg-border/20 transition-colors">
+              <div className="w-12 h-12 rounded-lg bg-border/40 flex-shrink-0 overflow-hidden flex items-center justify-center">
+                {g.coverUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={g.coverUrl} alt={g.clientName} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-muted text-lg">📷</span>
+                )}
               </div>
-            </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  {g.isStarred && <span className="text-yellow-400 flex-shrink-0"><StarIcon filled /></span>}
+                  <span className="text-sm font-semibold text-text-primary truncate">{g.clientName}</span>
+                </div>
+                <div className="text-xs text-muted">
+                  {g.events.length > 0
+                    ? `${fmtDate(g.events[0].eventDate)} · ${g.totalPhotos} photo${g.totalPhotos !== 1 ? 's' : ''}`
+                    : 'Click to create your first event'}
+                </div>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 ${g.events.length === 0 ? 'bg-border/60 text-muted' : 'bg-accent/15 text-accent'}`}>
+                {g.events.length === 0 ? 'No events yet' : `${g.events.length} event${g.events.length !== 1 ? 's' : ''}`}
+              </span>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAddEventClient(g.clientName) }}
+                className="text-xs font-semibold text-accent hover:text-accent/80 transition-colors flex-shrink-0"
+              >
+                {g.events.length === 0 ? '+ Add first event' : '+ Add event'}
+              </button>
+            </Link>
           ))}
         </div>
       )}
 
-      {editProject && (
-        <EditEventModal
-          project={editProject}
-          onClose={() => setEditProject(null)}
-          onSaved={loadProjects}
+      {addEventClient && (
+        <AddEventModal
+          clientName={addEventClient}
+          existingProjects={clientGroups.find(g => g.clientName === addEventClient)?.allProjects ?? []}
+          onClose={() => setAddEventClient(null)}
+          onCreated={() => { setAddEventClient(null); loadProjects() }}
         />
       )}
 
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-text-primary text-bg text-sm font-medium px-4 py-2.5 rounded-xl shadow-2xl z-50">
-          {toast}
-        </div>
-      )}
+      {coverPickerClient && (() => {
+        const g = clientGroups.find(g => g.clientName === coverPickerClient)
+        return g ? (
+          <ChangeClientCoverModal
+            clientName={g.clientName}
+            events={g.events}
+            anchorProjectId={g.anchorProjectId}
+            onClose={() => setCoverPickerClient(null)}
+            onSaved={() => { setCoverPickerClient(null); loadProjects() }}
+          />
+        ) : null
+      })()}
     </div>
   )
 }

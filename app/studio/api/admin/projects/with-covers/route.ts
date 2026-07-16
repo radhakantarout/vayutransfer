@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
@@ -43,9 +43,21 @@ export async function GET(req: NextRequest) {
           ?? (readyFiles.length > 0 ? readyFiles[stableRandomIndex(project.projectId, readyFiles.length)] : undefined)
         const coverUrl: string | null = coverFile ? (await getMediaPreviewUrl(coverFile)) ?? null : null
 
+        // Client-spanning cover, if set — resolved separately since it can
+        // point at a different event's file than this project's own.
+        let clientCoverUrl: string | null = null
+        if (project.clientCoverProjectId && project.clientCoverFileId) {
+          const clientCoverFile = await studioGetItem<MediaFile>(TABLES.mediafiles, {
+            projectId: project.clientCoverProjectId,
+            fileId: project.clientCoverFileId,
+          })
+          if (clientCoverFile) clientCoverUrl = (await getMediaPreviewUrl(clientCoverFile)) ?? null
+        }
+
         return {
           ...project,
           coverUrl,
+          clientCoverUrl,
           photoCount: readyFiles.length,
         }
       })

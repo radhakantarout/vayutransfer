@@ -61,15 +61,6 @@ async function initOrResumeUpload(
   return { fileId, uploadId, presignedUrls, completedParts: [] }
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  DRAFT: 'text-muted', ACTIVE: 'text-accent',
-  SELECTION_RECEIVED: 'text-yellow-400', COMPLETED: 'text-success',
-}
-const EVENT_ICON: Record<string, string> = {
-  WEDDING: '💒', MEHENDI: '🪔', RECEPTION: '🎊', ENGAGEMENT: '💍',
-  PRE_WEDDING: '📸', BIRTHDAY: '🎂', CORPORATE: '🏢', SCHOOL: '🎒', OTHER: '📷',
-}
-
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
@@ -183,21 +174,12 @@ export default function EventSection({
   const pathname = usePathname()
 
   // ── Multi-event photo sources ───────────────────────────────
-  // Which of the available source projects are currently contributing
-  // photos to the All Photos grid — defaults to all of them checked.
-  const sourceProjectIds = (photoSourceProjects ?? []).map(p => p.projectId).join(',')
-  const [checkedSourceIds, setCheckedSourceIds] = useState<Set<string>>(
-    new Set((photoSourceProjects ?? []).map(p => p.projectId))
-  )
-  useEffect(() => {
-    setCheckedSourceIds(new Set((photoSourceProjects ?? []).map(p => p.projectId)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceProjectIds])
-
+  // Which events contribute photos to the All Photos grid — always every
+  // event currently checked in the sidebar (that checkbox list is the only
+  // selection mechanism now; there used to be a second, redundant checkbox
+  // dropdown here that just duplicated it).
   const isMultiSource = (photoSourceProjects?.length ?? 0) > 1
-  const activeSourceProjects = isMultiSource
-    ? (photoSourceProjects ?? []).filter(p => checkedSourceIds.has(p.projectId))
-    : [project]
+  const activeSourceProjects = photoSourceProjects ?? [project]
 
   // ── Photo grid ────────────────────────────────────────────
   const [files, setFiles]           = useState<MediaFile[]>([])
@@ -293,8 +275,6 @@ export default function EventSection({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
   const notifRef     = useRef<HTMLDivElement>(null)
-  const sourceDropdownRef = useRef<HTMLDivElement>(null)
-  const [showSourceDropdown, setShowSourceDropdown] = useState(false)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
@@ -389,15 +369,6 @@ export default function EventSection({
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [showNotif])
-
-  useEffect(() => {
-    if (!showSourceDropdown) return
-    const onDocClick = (e: MouseEvent) => {
-      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) setShowSourceDropdown(false)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [showSourceDropdown])
 
   // Open share setup when triggered from global pill
   useEffect(() => {
@@ -1089,7 +1060,6 @@ export default function EventSection({
     ? displayFiles.filter(f => f.originalFilename.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : displayFiles
   const sortedDisplayFiles = sortFiles(searchedDisplayFiles, sortMode)
-  const watermarkedCount = files.filter(f => f.watermarkEnabled).length
 
   const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
   const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : sortedDisplayFiles
@@ -1387,47 +1357,25 @@ export default function EventSection({
       <div className={expanded ? 'fixed inset-0 z-20 overflow-auto bg-bg' : ''}>
 
         {/* ── Event header ──────────────────────────────────────── */}
+        {/* Event name/date/status and the multi-select-events dropdown were
+            removed — the sidebar already shows all of that (project card +
+            per-event checkboxes), so duplicating it here was just confusing.
+            The tab navigation now lives in this same row instead of its own
+            row below, since that space is free. */}
         <div className={`px-5 py-3 flex items-center gap-3 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
-          <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
-            <span className="text-base flex-shrink-0">{EVENT_ICON[project.eventType] ?? '📷'}</span>
-            <h2 className="text-base font-bold text-text-primary truncate">{(project.eventType ?? '').replace(/_/g, ' ')}</h2>
-            <span className="text-xs text-muted flex-shrink-0">{fmtDate(project.eventDate)}</span>
-            <span className={`text-[10px] font-bold uppercase tracking-wide flex-shrink-0 ${STATUS_COLOR[project.status] ?? 'text-muted'}`}>
-              {(project.status ?? '').replace(/_/g, ' ')}
-            </span>
-          </div>
-
-          {/* Event source dropdown — only when 2+ events are selected in the
-              sidebar. Small checkbox list, defaults to all checked, so the
-              grid shows however many events are checked (1, 2, 3...). */}
-          {isMultiSource && activeTab === 'photos' && (
-            <div className="relative flex-shrink-0" ref={sourceDropdownRef}>
-              <button onClick={() => setShowSourceDropdown(v => !v)}
-                className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-border text-text-primary hover:bg-border/40 transition-colors">
-                {checkedSourceIds.size} event{checkedSourceIds.size !== 1 ? 's' : ''}
-                <svg className="w-3 h-3 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
+          <div className="flex items-center gap-0 flex-shrink-0">
+            {(['photos', 'faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
+              <button
+                key={tab}
+                onClick={() => switchTab(tab)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                  activeTab === tab ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
+                }`}
+              >
+                {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
               </button>
-              {showSourceDropdown && (
-                <div className="absolute left-0 top-full mt-1.5 w-56 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-30 max-h-64 overflow-y-auto">
-                  {(photoSourceProjects ?? []).map(p => (
-                    <label key={p.projectId} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-border/50">
-                      <input type="checkbox" checked={checkedSourceIds.has(p.projectId)}
-                        onChange={() => setCheckedSourceIds(prev => {
-                          const next = new Set(prev)
-                          if (next.has(p.projectId)) next.delete(p.projectId)
-                          else next.add(p.projectId)
-                          return next
-                        })}
-                        className="w-3.5 h-3.5 rounded accent-accent flex-shrink-0" />
-                      <span className="truncate text-text-primary">{p.clientName} — {(p.eventType ?? '').replace(/_/g, ' ')}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+            ))}
+          </div>
 
           {/* Filename search — client-side filter over already-loaded photos */}
           {activeTab === 'photos' && (
@@ -1512,34 +1460,6 @@ export default function EventSection({
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
               </svg>
             </button>
-            {/* Watermark — same on/off route as before, now always visible and
-                targeting the whole project when nothing's selected */}
-            <PhotoActionsMenu
-              align="right"
-              trigger={
-                <span className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                  bulkWatermarking ? 'bg-accent/70 text-white' : 'bg-accent text-white hover:bg-accent/90'
-                }`}>
-                  {bulkWatermarking
-                    ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>}
-                  Watermark
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </span>
-              }
-              actions={[
-                { label: selectedCount > 0 ? `Apply to ${selectedCount} selected` : 'Apply to all photos',
-                  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-                  onClick: () => bulkApplyWatermark(true) },
-                { label: selectedCount > 0 ? `Remove from ${selectedCount} selected` : 'Remove from all photos',
-                  icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
-                  onClick: () => bulkApplyWatermark(false) },
-              ]}
-            />
             <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -1651,22 +1571,6 @@ export default function EventSection({
           </div>
         </div>
 
-        {/* ── Tab navigation ────────────────────────────────────── */}
-        <div className="flex items-center gap-0 border-b border-border px-5">
-          {(['photos', 'faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
-            <button
-              key={tab}
-              onClick={() => switchTab(tab)}
-              className={`text-xs font-semibold px-3 py-2.5 border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-accent text-accent'
-                  : 'border-transparent text-muted hover:text-text-primary hover:border-border'
-              }`}
-            >
-              {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
-            </button>
-          ))}
-        </div>
 
         {/* ── Share setup panel ─────────────────────────────────── */}
         {showShareSetup && (
@@ -1817,8 +1721,11 @@ export default function EventSection({
                   </div>
                 )}
 
-                {/* Grid / List + floating zoom bar */}
-                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
+                {/* Grid / List + floating zoom bar — fills down to roughly
+                    the bottom of the viewport (now that the watermark status
+                    bar below it is gone) instead of stopping at a fixed
+                    520px, while keeping its own independent scrollbar. */}
+                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : 'calc(100vh - 130px)' }}>
                   <div className="flex items-start gap-3">
 
 
@@ -1928,6 +1835,11 @@ export default function EventSection({
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                                 </svg>
                               </button>
+                              {isMultiSource && (
+                                <span className="flex-1 min-w-0 text-center text-[9px] font-semibold text-muted uppercase truncate px-1">
+                                  {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
+                                </span>
+                              )}
                               <PhotoActionsMenu
                                 align="right"
                                 trigger={
@@ -2007,11 +1919,6 @@ export default function EventSection({
                                   Watermarked
                                 </span>
                               )}
-                              {isMultiSource && (
-                                <span className="absolute top-1 right-1 bg-black/55 text-white text-[8px] font-semibold uppercase px-1.5 py-0.5 rounded-md leading-tight truncate max-w-[65%]">
-                                  {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
-                                </span>
-                              )}
                               {editComment && (
                                 <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
                                   {editComment}
@@ -2032,39 +1939,6 @@ export default function EventSection({
                   </div>
                 </div>
 
-                {/* Watermark status — real aggregate from already-loaded files,
-                    not a fabricated project-level flag (none exists yet). */}
-                <div className="mt-4 flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-border/25 border border-border/60">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg ${watermarkedCount > 0 ? 'bg-accent/15 text-accent' : 'bg-border/60 text-muted'}`}>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-text-primary truncate">
-                        {watermarkedCount === 0 ? 'No photos watermarked yet' : `${watermarkedCount} of ${files.length} photos watermarked`}
-                      </p>
-                      <p className="text-[11px] text-muted truncate">Use the Watermark button above to apply or remove it</p>
-                    </div>
-                  </div>
-                  <PhotoActionsMenu
-                    align="right"
-                    trigger={
-                      <span className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border border-border text-text-primary hover:bg-border/50 cursor-pointer transition-colors">
-                        Edit Watermark
-                      </span>
-                    }
-                    actions={[
-                      { label: selectedCount > 0 ? `Apply to ${selectedCount} selected` : 'Apply to all photos',
-                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-                        onClick: () => bulkApplyWatermark(true) },
-                      { label: selectedCount > 0 ? `Remove from ${selectedCount} selected` : 'Remove from all photos',
-                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
-                        onClick: () => bulkApplyWatermark(false) },
-                    ]}
-                  />
-                </div>
               </>
             )}
           </div>
