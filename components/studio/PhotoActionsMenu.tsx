@@ -29,14 +29,26 @@ interface PhotoActionsMenuProps {
   actions: PhotoMenuAction[]
   trigger: React.ReactNode
   align?: 'left' | 'right'
-  // 'down' (default) opens below the trigger — wrong for triggers sitting
-  // near the bottom of the viewport (e.g. the floating selection pill),
-  // where the panel would render mostly/entirely off-screen. Pass 'up' there.
-  direction?: 'down' | 'up'
+  // 'auto' (default) measures the trigger's position and opens below unless
+  // there isn't enough room in the viewport, in which case it opens above —
+  // e.g. a grid tile's "⋯" menu near the bottom of a scrolled photo grid.
+  // Pass 'down'/'up' to force a side regardless (e.g. the floating selection
+  // pill, always near the bottom, always wants 'up').
+  direction?: 'down' | 'up' | 'auto'
   menuClassName?: string
+  // Root wrapper class — defaults to 'inline-block' (icon-button triggers).
+  // Pass 'block w-full' when the trigger itself should fill its container,
+  // e.g. a full-width dropdown replacing a native <select>.
+  className?: string
 }
 
-export default function PhotoActionsMenu({ actions, trigger, align = 'right', direction = 'down', menuClassName = '' }: PhotoActionsMenuProps) {
+// Rough per-row height (icon+label row: py-2 + text ~= 36px) plus the
+// panel's own vertical padding — used only to decide up-vs-down in 'auto'
+// mode, not for exact layout, so an approximation is fine.
+const ROW_HEIGHT_ESTIMATE = 36
+const PANEL_PADDING_ESTIMATE = 12
+
+export default function PhotoActionsMenu({ actions, trigger, align = 'right', direction = 'auto', menuClassName = '', className = 'inline-block' }: PhotoActionsMenuProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -45,8 +57,13 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', di
   const openMenu = () => {
     const rect = rootRef.current?.getBoundingClientRect()
     if (!rect) return
+    let openUp = direction === 'up'
+    if (direction === 'auto') {
+      const estimatedHeight = actions.length * ROW_HEIGHT_ESTIMATE + PANEL_PADDING_ESTIMATE
+      openUp = rect.bottom + 4 + estimatedHeight > window.innerHeight
+    }
     setPos({
-      ...(direction === 'up' ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+      ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
       ...(align === 'right' ? { right: window.innerWidth - rect.right } : { left: rect.left }),
     })
     setOpen(true)
@@ -75,7 +92,7 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', di
   }, [open])
 
   return (
-    <div ref={rootRef} className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+    <div ref={rootRef} className={`relative ${className}`} onClick={(e) => e.stopPropagation()}>
       <div onClick={() => (open ? setOpen(false) : openMenu())}>{trigger}</div>
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div

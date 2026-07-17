@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
-import { PHOTO_SCOPE_LABEL, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
-
-const AI_SCOPES: PhotoScope[] = ['ALL', 'FINAL', 'EDITED', 'FAVORITE', 'STARRED']
+import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
+import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
+import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 
 interface Props {
   projects: StudioProject[]  // length 1 for a single event, >1 for "index all events for this client"
@@ -76,10 +76,25 @@ export default function AISortingModal({ projects, onClose }: Props) {
         <div className="px-6 py-5 space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted uppercase tracking-wider">Apply to</label>
-            <select value={scope} onChange={e => setScope(e.target.value as PhotoScope)}
-              className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors">
-              {AI_SCOPES.map(s => <option key={s} value={s}>{PHOTO_SCOPE_LABEL[s]}</option>)}
-            </select>
+            <PhotoActionsMenu
+              align="left"
+              className="block w-full"
+              menuClassName="w-full"
+              trigger={
+                <button className="w-full flex items-center gap-2 bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary hover:border-accent/60 transition-colors">
+                  <PhotoScopeIcon scope={scope} />
+                  {PHOTO_SCOPE_LABEL[scope]}
+                  <svg className="w-3.5 h-3.5 ml-auto text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              }
+              actions={PHOTO_SCOPE_ORDER.map(s => ({
+                label: scope === s ? `${PHOTO_SCOPE_LABEL[s]}  ✓` : PHOTO_SCOPE_LABEL[s],
+                icon: <PhotoScopeIcon scope={s} />,
+                onClick: () => setScope(s),
+              }))}
+            />
           </div>
 
           <p className="text-xs text-muted">Indexes the chosen photos so guests can find themselves by selfie. Runs in the background.</p>

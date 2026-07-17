@@ -105,10 +105,10 @@ export default function ChatWidget() {
         <div className="flex items-center justify-between px-4 py-3 bg-accent flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <RobotIcon size={18} className="text-white animate-pavan-bob" />
+              <RobotIcon size={18} className="text-white animate-bot-bob" />
             </div>
             <div>
-              <p className="text-sm font-bold text-white leading-snug">Pavan</p>
+              <p className="text-sm font-bold text-white leading-snug">VayuStudios Assistant</p>
               <div className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
                 <p className="text-[10px] text-white/70">Replies instantly</p>
@@ -136,7 +136,7 @@ export default function ChatWidget() {
                 <div className="bg-bg border border-border/60 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[260px]">
                   <p className="text-sm font-semibold text-text-primary mb-1">Hi there! 👋</p>
                   <p className="text-xs text-muted leading-relaxed">
-                    I'm Pavan, your VayuStudios assistant. Ask me anything about features, how-tos, or getting started.
+                    I'm your VayuStudios assistant. Ask me anything about features, how-tos, or getting started.
                   </p>
                 </div>
               </div>
@@ -235,12 +235,12 @@ export default function ChatWidget() {
           hover:scale-105 active:scale-95
           transition-all duration-200
         `}
-        aria-label={open ? 'Close chat with Pavan' : 'Open chat with Pavan'}
+        aria-label={open ? 'Close chat' : 'Open chat'}
       >
         <span className={`transition-transform duration-300 ${open ? 'rotate-180' : 'rotate-0'}`}>
-          {open ? <ChevronDownIcon /> : <RobotIcon size={18} className="text-white animate-pavan-bob" />}
+          {open ? <ChevronDownIcon /> : <RobotIcon size={18} className="text-white animate-bot-bob" />}
         </span>
-        <span className="text-sm font-semibold">{open ? 'Close' : 'Pavan'}</span>
+        <span className="text-sm font-semibold">{open ? 'Close' : 'Chat'}</span>
       </button>
     </>
   )

@@ -1011,7 +1011,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* ── Sidebar ──────────────────────────────────────────── */}
       <aside style={{ width: sidebarCollapsed ? 48 : 256 }}
-        className="relative flex-shrink-0 bg-gradient-to-b from-card to-card/95 flex flex-col overflow-hidden shadow-[4px_0_24px_-6px_rgba(0,0,0,0.12)] z-10 transition-[width] duration-300 ease-in-out">
+        className="dash-bold-text relative flex-shrink-0 bg-gradient-to-b from-card to-card/95 flex flex-col overflow-hidden shadow-[4px_0_24px_-6px_rgba(0,0,0,0.12)] z-10 transition-[width] duration-300 ease-in-out">
 
         {/* Logo + product switcher — one compact header block, no divider
             between them; real VayuStudios brand mark (same as the marketing
@@ -1167,13 +1167,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     // as picking "Client Gallery" from the dropdown above.
                     if (view === 'projects') { clearSelection(); router.push('/studio/dashboard/projects') }
                   }}
-                    className={`flex-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
+                    className={`flex-1 flex items-center justify-center gap-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
                       // Once a project card is drilled into, this no longer
                       // reflects "browsing all projects" — don't show the
                       // tab as active so clicking it again reads as a fresh
                       // navigation back to the My Projects grid.
                       sidebarView === view && !(view === 'projects' && focusedClient) ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
                     }`}>
+                    {view === 'recent' && (
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                    {view === 'starred' && (
+                      <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                      </svg>
+                    )}
+                    {view === 'projects' && (
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                      </svg>
+                    )}
                     {view === 'recent' ? 'Recent' : view === 'starred' ? 'Starred' : 'Projects'}
                   </button>
                 ))}

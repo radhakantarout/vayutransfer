@@ -8,6 +8,9 @@ import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
 import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/PhotoActionsMenu'
+import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
+import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
+import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -209,6 +212,7 @@ export default function EventSection({
   const [renamingFile, setRenamingFile] = useState<MediaFile | null>(null)
   const [renameValue, setRenameValue]   = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
+  const [moveCopyTarget, setMoveCopyTarget] = useState<{ mode: 'copy' | 'move'; file: MediaFile } | null>(null)
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [bulkAISorting, setBulkAISorting] = useState(false)
@@ -217,11 +221,11 @@ export default function EventSection({
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [showNotif, setShowNotif]       = useState(false)
 
-  // Client selection filter (used for heart/edit icons in header when received)
+  // Client selection filter (loaded on demand — only CLIENT_FAVORITE/EDIT_REQUIRED need it)
   type ClientSel = { selection: Selection; file: MediaFile }
   const [clientSelections, setClientSelections] = useState<ClientSel[] | null>(null)
   const [selLoading, setSelLoading]             = useState(false)
-  const [viewFilter, setViewFilter]             = useState<'all' | 'loved' | 'edit'>('all')
+  const [viewFilter, setViewFilter]             = useState<PhotoScope>('ALL')
 
   // ── Tabs ─────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
@@ -824,6 +828,22 @@ export default function EventSection({
       onClick: () => cycleCurationStatus(f.fileId, f.curationStatus),
     },
     {
+      label: 'Copy to event…', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+        </svg>
+      ),
+      onClick: () => setMoveCopyTarget({ mode: 'copy', file: f }),
+    },
+    {
+      label: 'Move to event…', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
+        </svg>
+      ),
+      onClick: () => setMoveCopyTarget({ mode: 'move', file: f }),
+    },
+    {
       label: 'Delete', danger: true, icon: (
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -929,7 +949,7 @@ export default function EventSection({
     }
   }
 
-  // ── Client selections filter (header buttons) ─────────────
+  // ── Photo lifecycle filter (header filter icon) ────────────
   const loadSelections = async () => {
     if (clientSelections !== null) return
     setSelLoading(true)
@@ -938,9 +958,10 @@ export default function EventSection({
     setSelLoading(false)
   }
 
-  const toggleFilter = async (filter: 'loved' | 'edit') => {
-    if (viewFilter === filter) { setViewFilter('all'); return }
-    await loadSelections(); setViewFilter(filter)
+  const setFilter = async (scope: PhotoScope) => {
+    if (scope === 'ALL' || viewFilter === scope) { setViewFilter('ALL'); return }
+    if (scope === 'CLIENT_FAVORITE' || scope === 'EDIT_REQUIRED') await loadSelections()
+    setViewFilter(scope)
   }
 
   const togglePhoto = (fileId: string) => {
@@ -1097,16 +1118,16 @@ export default function EventSection({
   }
 
   // ── Derived values ────────────────────────────────────────
-  const lovedCount = clientSelections?.length ?? null
-  const editCount  = clientSelections?.filter(s => s.selection.editingRequired).length ?? null
-
   const displayFiles: MediaFile[] = (() => {
-    if (viewFilter === 'all' || !clientSelections) return files
-    if (viewFilter === 'loved') return clientSelections.map(s => s.file)
-    return clientSelections.filter(s => s.selection.editingRequired).map(s => s.file)
+    if (viewFilter === 'ALL') return files
+    const selections = clientSelections?.map(s => s.selection) ?? []
+    const ids = resolveScopeFileIds(viewFilter, files, selections, project)
+    if (!ids) return files
+    const idSet = new Set(ids)
+    return files.filter(f => idSet.has(f.fileId))
   })()
 
-  const editCommentMap: Map<string, string> = viewFilter === 'edit' && clientSelections
+  const editCommentMap: Map<string, string> = viewFilter === 'EDIT_REQUIRED' && clientSelections
     ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
     : new Map()
 
@@ -1177,6 +1198,17 @@ export default function EventSection({
             </div>
           </div>
         </div>
+      )}
+
+      {moveCopyTarget && (
+        <MoveCopyPhotoModal
+          mode={moveCopyTarget.mode}
+          clientName={(activeSourceProjects.find(p => p.projectId === moveCopyTarget.file.projectId) ?? project).clientName}
+          currentProjectId={moveCopyTarget.file.projectId}
+          fileId={moveCopyTarget.file.fileId}
+          onClose={() => setMoveCopyTarget(null)}
+          onDone={() => { setMoveCopyTarget(null); loadFiles(); onUpdated() }}
+        />
       )}
 
       {/* ── Delete confirmation modal ───────────────────────── */}
@@ -1415,7 +1447,7 @@ export default function EventSection({
       {/* z-20, not z-50 — this is a fullscreen *view*, not a modal, and must never
           paint over the delete-confirm/edit/share modals or global overlays that
           also target z-50; those need to stay reachable while the grid is expanded. */}
-      <div className={expanded ? 'fixed inset-0 z-20 overflow-auto bg-bg' : ''}>
+      <div className={`dash-bold-text ${expanded ? 'fixed inset-0 z-20 overflow-auto bg-bg' : ''}`}>
 
         {/* ── Event header ──────────────────────────────────────── */}
         {/* Event name/date/status and the multi-select-events dropdown were
@@ -1425,7 +1457,31 @@ export default function EventSection({
             row below, since that space is free. */}
         <div className={`px-5 py-3 flex items-center gap-3 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
           <div className="flex items-center gap-0 flex-shrink-0">
-            {(['photos', 'faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
+            {/* "All Photos" tab doubles as the lifecycle filter dropdown — picking
+                a stage both switches to the photos tab and applies that filter,
+                so there's no separate filter icon to find. */}
+            <PhotoActionsMenu
+              align="left"
+              trigger={
+                <button
+                  onClick={() => switchTab('photos')}
+                  className={`flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                    activeTab === 'photos' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
+                  }`}
+                >
+                  {activeTab === 'photos' ? PHOTO_SCOPE_LABEL[viewFilter] : 'All Photos'}
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              }
+              actions={PHOTO_SCOPE_ORDER.map(scope => ({
+                label: viewFilter === scope ? `${PHOTO_SCOPE_LABEL[scope]}  ✓` : PHOTO_SCOPE_LABEL[scope],
+                icon: <PhotoScopeIcon scope={scope} />,
+                onClick: () => { switchTab('photos'); setFilter(scope) },
+              }))}
+            />
+            {(['faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => switchTab(tab)}
@@ -1433,7 +1489,7 @@ export default function EventSection({
                   activeTab === tab ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
                 }`}
               >
-                {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
+                {tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
               </button>
             ))}
           </div>
@@ -1454,26 +1510,6 @@ export default function EventSection({
           )}
 
           <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-            {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
-              <>
-                <button onClick={() => toggleFilter('loved')} disabled={selLoading} title="View photos loved by client"
-                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'loved' ? 'bg-rose-500 text-white shadow-sm' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`}>
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/>
-                  </svg>
-                  {lovedCount !== null ? lovedCount : selLoading ? '…' : ''}
-                </button>
-                <button onClick={() => toggleFilter('edit')} disabled={selLoading} title="View photos needing edits"
-                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'edit' ? 'bg-orange-500 text-white shadow-sm' : 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'}`}>
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  {editCount !== null ? editCount : selLoading ? '…' : ''}
-                </button>
-              </>
-            )}
             {activeTab === 'photos' && (
               <>
                 <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
@@ -1771,14 +1807,12 @@ export default function EventSection({
                     <button onClick={() => setDeleteError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
                   </div>
                 )}
-                {viewFilter !== 'all' && (
-                  <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
-                    ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
-                    {viewFilter === 'loved'
-                      ? <><svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg> Loved by client</>
-                      : <><svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg> Needs editing</>}
+                {viewFilter !== 'ALL' && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3 bg-accent/10 text-accent">
+                    <PhotoScopeIcon scope={viewFilter} className="w-3.5 h-3.5 flex-shrink-0" />
+                    {PHOTO_SCOPE_LABEL[viewFilter]}
                     <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
-                    <button onClick={() => setViewFilter('all')} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Clear ×</button>
+                    <button onClick={() => setViewFilter('ALL')} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Clear ×</button>
                   </div>
                 )}
 
