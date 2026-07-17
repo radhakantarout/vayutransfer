@@ -154,6 +154,11 @@ interface Props {
   photoSelectionsMap?: Map<string, Set<string>>
   onPhotoSelectionChange?: (projectId: string) => (ids: Set<string>) => void
   onFilesLoadedFor?: (projectId: string) => (files: MediaFile[]) => void
+  // Lets a parent-level bulk action (the global selection pill's star
+  // toggle) patch curationStatus straight into this component's own `files`
+  // state instantly, instead of waiting on a full loadFiles() re-fetch —
+  // `token` must change on every dispatch (even repeats) so the effect fires.
+  externalCurationUpdate?: { fileIds: string[]; curationStatus: CurationStatus | undefined; token: number } | null
 }
 
 interface NotificationItem {
@@ -170,6 +175,7 @@ export default function EventSection({
   zoomLevel, viewMode, onViewModeChange: setViewMode,
   onEditProject, onQuickShare, onAISort, onDeleteProject, onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
+  externalCurationUpdate,
 }: Props) {
   const pathname = usePathname()
 
@@ -205,6 +211,7 @@ export default function EventSection({
   const [renameSaving, setRenameSaving] = useState(false)
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  const [bulkAISorting, setBulkAISorting] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [searchQuery, setSearchQuery]   = useState('')
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
@@ -311,6 +318,18 @@ export default function EventSection({
   }, [project.projectId, isMultiSource, activeSourceProjectIds])
 
   useEffect(() => { loadFiles() }, [loadFiles, refreshTrigger])
+
+  // Applies a parent-dispatched bulk curationStatus patch straight to this
+  // component's own files — instant UI feedback for the global selection
+  // pill's star toggle, no full reload needed. Runs off `token` (not the
+  // fileIds/status themselves) so a repeat dispatch always re-fires.
+  useEffect(() => {
+    if (!externalCurationUpdate) return
+    const { fileIds, curationStatus } = externalCurationUpdate
+    const idSet = new Set(fileIds)
+    setFiles(prev => prev.map(f => idSet.has(f.fileId) ? { ...f, curationStatus } : f))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalCurationUpdate?.token])
 
   // ── Cross-project selection routing ─────────────────────────
   // projectIdOf: every action below operates on a fileId — look up which
@@ -866,6 +885,48 @@ export default function EventSection({
     }
     setBulkWatermarking(false)
     setTimeout(loadFiles, 3000)
+  }
+
+  // Selection-bar bulk star toggle — standard "star-all" UX: if every
+  // selected photo is already starred, clicking clears all of them;
+  // otherwise it stars every selected photo that isn't already. Reuses the
+  // same optimistic saveCurationStatus() the single-photo star button uses.
+  const selectedFiles = files.filter(f => selectedIds.has(f.fileId))
+  const allSelectedStarred = selectedFiles.length > 0 && selectedFiles.every(f => !!f.curationStatus)
+  const bulkToggleStar = async () => {
+    const next = allSelectedStarred ? undefined : 'STARRED'
+    await Promise.all(selectedFiles.map(f => saveCurationStatus(f.fileId, f.curationStatus, next)))
+  }
+
+  // Runs AI face indexing scoped to just the selected photos — same route
+  // the Face Index tab already uses, grouped per-project the same way
+  // bulkApplyWatermark is (a selection can span multiple merged events).
+  const bulkAISort = async () => {
+    setBulkAISorting(true)
+    const byProject = new Map<string, string[]>()
+    selectedIds.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push(fid)
+    })
+    await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
+      fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds }),
+      }).catch(() => {})
+    ))
+    setBulkAISorting(false)
+  }
+
+  // Sequential with a small stagger — opening many tabs at once via
+  // Promise.all would get most of them blocked by the browser's popup
+  // blocker (only the first synchronous window.open per user gesture is
+  // reliably allowed).
+  const bulkDownloadSelected = async () => {
+    for (const fid of Array.from(selectedIds)) {
+      await downloadPhoto(fid)
+      await new Promise(r => setTimeout(r, 150))
+    }
   }
 
   // ── Client selections filter (header buttons) ─────────────
@@ -1722,10 +1783,11 @@ export default function EventSection({
                 )}
 
                 {/* Grid / List + floating zoom bar — fills down to roughly
-                    the bottom of the viewport (now that the watermark status
-                    bar below it is gone) instead of stopping at a fixed
-                    520px, while keeping its own independent scrollbar. */}
-                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : 'calc(100vh - 130px)' }}>
+                    the bottom of the viewport instead of stopping short,
+                    while keeping its own independent scrollbar. Offset
+                    shrunk from 130px since the tab row merged into the
+                    header this session, freeing up vertical space above. */}
+                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : 'calc(100vh - 90px)' }}>
                   <div className="flex items-start gap-3">
 
 
@@ -2330,37 +2392,59 @@ export default function EventSection({
       {/* ── Floating selection pill (admin grid) ──────────────── */}
       {selectedCount > 0 && activeTab === 'photos' && !hidePill && (
         <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
-          <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
-            <div className="flex items-center gap-1 px-2 py-2.5">
+          <div className="bg-accent shadow-[0_10px_30px_-6px_rgba(0,0,0,0.45)] rounded-2xl overflow-hidden w-full max-w-md">
+            <div className="flex items-center gap-0.5 px-2 py-2">
 
               {/* × clear */}
               <button onClick={() => onSelectionChange(new Set())}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors" aria-label="Clear selection">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
 
-              {/* Count */}
-              <span className="flex-1 text-sm font-bold text-text-primary">{selectedCount} selected</span>
+              {/* Count + select-all dropdown — compact trigger with a
+                  spacer after it so the gap before the star icon isn't
+                  itself one giant clickable "select all" button */}
+              <PhotoActionsMenu
+                align="left"
+                direction="up"
+                trigger={
+                  <span title="Select all" className="flex items-center gap-1 pl-1 pr-2 py-1.5 rounded-xl text-white hover:bg-white/15 transition-colors cursor-pointer">
+                    <span className="text-xs font-bold whitespace-nowrap">{selectedCount} selected</span>
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                  </span>
+                }
+                actions={[
+                  { label: 'Select all', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>, onClick: () => onSelectionChange(new Set(sortedDisplayFiles.map(f => f.fileId))) },
+                  ...(isMultiSource ? activeSourceProjects.map(p => ({
+                    label: `Select all — ${p.clientName} (${(p.eventType ?? '').replace(/_/g, ' ')})`,
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
+                    onClick: () => onSelectionChange(new Set(sortedDisplayFiles.filter(f => f.projectId === p.projectId).map(f => f.fileId))),
+                  })) : []),
+                ]}
+              />
+              <div className="flex-1" />
 
-              {/* 👁 Preview */}
-              <button onClick={() => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              {/* ★ Star (bulk toggle) */}
+              <button onClick={bulkToggleStar} title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                 </svg>
               </button>
 
               {/* 🄫 Watermark (bulk) */}
               <PhotoActionsMenu
                 align="right"
+                direction="up"
                 trigger={
-                  <span className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer ${bulkWatermarking ? 'text-accent' : 'text-muted hover:text-text-primary hover:bg-border/60'}`} aria-label="Watermark options">
+                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="Watermark options">
                     {bulkWatermarking
-                      ? <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                      : <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>}
                   </span>
@@ -2371,24 +2455,48 @@ export default function EventSection({
                 ]}
               />
 
-              {/* Divider */}
-              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
-
-              {/* 🗑 Delete selected */}
-              <button onClick={() => setDeleteMode('selected')}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-red-500/15 transition-colors text-red-500/70 hover:text-red-500" aria-label="Delete selected">
-                <svg className="w-4.5 h-4.5 w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
+              {/* ✨ AI Sorting/Search (bulk) */}
+              <button onClick={bulkAISort} title="Run AI Sorting on selected photos"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                {bulkAISorting
+                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                    </svg>}
               </button>
 
-              {/* 📤 Share (opens share setup) */}
-              <button onClick={() => { setShowShareSetup(true) }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
-                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              {/* 📤 Quick Share (opens share setup) */}
+              <button onClick={() => { setShowShareSetup(true) }} title="Quick Share selected photos"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
                 </svg>
               </button>
+
+              {/* ⋯ More — everything else from the per-photo/per-event menus
+                  that still makes sense in bulk */}
+              <PhotoActionsMenu
+                align="right"
+                direction="up"
+                trigger={
+                  <span className="flex items-center gap-0.5 w-8 h-8 flex-shrink-0 justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="More options">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                    </svg>
+                  </span>
+                }
+                actions={[
+                  { label: 'Preview selected',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+                    onClick: () => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) } },
+                  { label: 'Download selected',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
+                    onClick: bulkDownloadSelected },
+                  { label: 'Delete selected', danger: true,
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>,
+                    onClick: () => setDeleteMode('selected') },
+                ]}
+              />
 
             </div>
           </div>

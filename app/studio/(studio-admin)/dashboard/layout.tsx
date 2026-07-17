@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import type { StudioProject, MediaFile } from '@/types/studio'
+import type { StudioProject, MediaFile, CurationStatus } from '@/types/studio'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
 import EventSection from './EventSection'
@@ -476,6 +476,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  const [bulkAISorting, setBulkAISorting] = useState(false)
+  // Dispatched to EventSection so its own `files` state updates instantly
+  // (no full reload) when the global pill's star toggle fires — see
+  // EventSection's externalCurationUpdate prop.
+  const [curationUpdateSignal, setCurationUpdateSignal] = useState<{ fileIds: string[]; curationStatus: CurationStatus | undefined; token: number } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 12000)
+    return () => clearTimeout(t)
+  }, [toast])
   // Persisted across navigations/reloads for the whole session — read once
   // on mount (not in the initializer, to avoid an SSR/client hydration
   // mismatch) and written back on every change. Cleared on logout so the
@@ -770,6 +781,89 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }, 3000)
   }
 
+  const bumpRefreshForSelectedProjects = () => {
+    setRefreshTriggers(prev => {
+      const next = new Map(prev)
+      selectedProjects.forEach(p => next.set(p.projectId, (next.get(p.projectId) ?? 0) + 1))
+      return next
+    })
+  }
+
+  // "Select all" dropdown — a master checkbox plus one per currently open
+  // event, all togglable independently without closing the menu, so the
+  // admin can select everything then deselect just one event's photos.
+  const isProjectFullySelected = (projectId: string) => {
+    const total = (projectFiles.get(projectId) ?? []).length
+    const sel = photoSelections.get(projectId)?.size ?? 0
+    return total > 0 && sel === total
+  }
+
+  // Global selection pill's star toggle — standard "star-all" UX, same as
+  // the single-photo star button: if every selected photo is already
+  // starred, clicking clears all of them; otherwise it stars every one
+  // that isn't already. Updates the UI instantly (both projectFiles here —
+  // so a rapid second click sees the correct state — and each open
+  // EventSection's own files via externalCurationUpdate) and fires the
+  // backend PATCHes in the background, instead of waiting on them plus a
+  // full reload before anything visibly changes.
+  const allSelectedStarred = allSelectedPhotos.length > 0 && allSelectedPhotos.every(f => !!f.curationStatus)
+  const handleGlobalToggleStar = () => {
+    const willStar = !allSelectedStarred
+    const nextForUi: CurationStatus | undefined = willStar ? 'STARRED' : undefined
+    const nextForApi: CurationStatus | null = willStar ? 'STARRED' : null
+    const fileIds = allSelectedPhotos.map(f => f.fileId)
+    if (fileIds.length === 0) return
+
+    setProjectFiles(prev => {
+      const next = new Map(prev)
+      photoSelections.forEach((ids, pid) => {
+        const filesForP = next.get(pid)
+        if (!filesForP) return
+        next.set(pid, filesForP.map(f => ids.has(f.fileId) ? { ...f, curationStatus: nextForUi } : f))
+      })
+      return next
+    })
+    setCurationUpdateSignal({ fileIds, curationStatus: nextForUi, token: Date.now() })
+    setToast(`${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} ${willStar ? 'starred' : 'unstarred'}`)
+
+    Promise.all(
+      allSelectedPhotos.map(f =>
+        fetch(`/studio/api/admin/projects/${f.projectId}/files/${f.fileId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ curationStatus: nextForApi }),
+        }).catch(() => {})
+      )
+    )
+  }
+
+  // Same fileIds-scoped face-indexing route the sidebar's per-event "⋯"
+  // menu already uses, grouped per-project for a selection spanning
+  // multiple merged events.
+  const handleGlobalAISort = async () => {
+    setBulkAISorting(true)
+    await Promise.all(
+      Array.from(photoSelections.entries()).map(([pid, ids]) =>
+        fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileIds: Array.from(ids) }),
+        }).catch(() => {})
+      )
+    )
+    setBulkAISorting(false)
+  }
+
+  // Sequential with a stagger — opening every selected photo's download tab
+  // at once via Promise.all gets most of them blocked by the browser's
+  // popup blocker (only the first synchronous window.open per user gesture
+  // is reliably allowed).
+  const handleGlobalDownload = async () => {
+    for (const f of allSelectedPhotos) {
+      const res = await fetch(`/studio/api/admin/projects/${f.projectId}/files/${f.fileId}/download`).then(r => r.json()).catch(() => null)
+      if (res?.success) window.open(res.data.url, '_blank')
+      await new Promise(r => setTimeout(r, 150))
+    }
+  }
+
   const deleteAllSelected = async () => {
     setGlobalDeleting(true)
     await Promise.all(
@@ -856,6 +950,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
     .filter((p): p is StudioProject => !!p)
+
+  const allOpenFullySelected = selectedProjects.length > 0 && selectedProjects.every(p => isProjectFullySelected(p.projectId))
+  const toggleSelectAllMaster = () => {
+    if (allOpenFullySelected) {
+      setPhotoSelections(new Map())
+      return
+    }
+    const next = new Map<string, Set<string>>()
+    selectedProjects.forEach(p => {
+      const filesForP = projectFiles.get(p.projectId) ?? []
+      if (filesForP.length > 0) next.set(p.projectId, new Set(filesForP.map(f => f.fileId)))
+    })
+    setPhotoSelections(next)
+  }
+  const toggleProjectFullSelection = (projectId: string) => {
+    setPhotoSelections(prev => {
+      const next = new Map(prev)
+      if (isProjectFullySelected(projectId)) {
+        next.delete(projectId)
+      } else {
+        const filesForP = projectFiles.get(projectId) ?? []
+        if (filesForP.length > 0) next.set(projectId, new Set(filesForP.map(f => f.fileId)))
+      }
+      return next
+    })
+  }
 
   // Which product is active — drives the sidebar's simplified shape (the
   // Projects tree only makes sense in Gallery mode; Settings/Storage/AI-usage/
@@ -1384,6 +1504,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 photoSelectionsMap={photoSelections}
                 onPhotoSelectionChange={handleSelectionChange}
                 onFilesLoadedFor={handleFilesLoaded}
+                externalCurationUpdate={curationUpdateSignal}
               />
             )}
           </div>
@@ -1500,60 +1621,138 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       )}
 
+      {/* ── Toast — quick confirmation for instant bulk actions (e.g. the
+          star toggle), auto-dismisses after 12s ─────────────────── */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 bg-card border border-border rounded-xl shadow-2xl px-4 py-2.5 flex items-center gap-2">
+          <svg className="w-4 h-4 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-sm font-medium text-text-primary">{toast}</span>
+          <button onClick={() => setToast(null)} className="text-muted hover:text-text-primary flex-shrink-0 ml-1">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* ── Global selection pill (all events combined) ──────── */}
       {totalPhotoSelected > 0 && (
         <div className="fixed bottom-5 inset-x-4 z-40 flex justify-center">
-          <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
-            <div className="flex items-center gap-1 px-2 py-2.5">
+          <div className="bg-accent shadow-[0_10px_30px_-6px_rgba(0,0,0,0.45)] rounded-2xl overflow-hidden w-full max-w-md">
+            <div className="flex items-center gap-0.5 px-2 py-2">
 
               {/* × clear */}
               <button onClick={() => setPhotoSelections(new Map())}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors" aria-label="Clear selection">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
 
-              {/* Count */}
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-bold text-text-primary">{totalPhotoSelected} selected</span>
-                {photoSelections.size > 1 && (
-                  <span className="text-[11px] text-muted ml-1.5">· {photoSelections.size} events</span>
-                )}
-              </div>
+              {/* Count + select-all dropdown — compact trigger (not a
+                  flex-1 button, which used to make the whole gap between
+                  it and the star icon clickable) with a spacer after it to
+                  push the remaining icons to the right */}
+              <PhotoActionsMenu
+                align="left"
+                direction="up"
+                trigger={
+                  <span title="Select all" className="flex items-center gap-1 pl-1 pr-2 py-1.5 rounded-xl text-white hover:bg-white/15 transition-colors cursor-pointer">
+                    <span className="text-xs font-bold whitespace-nowrap">
+                      {totalPhotoSelected} selected{photoSelections.size > 1 ? ` · ${photoSelections.size} events` : ''}
+                    </span>
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                  </span>
+                }
+                actions={[
+                  { label: 'Select all', checked: allOpenFullySelected, onClick: toggleSelectAllMaster },
+                  ...(selectedProjects.length > 1 ? selectedProjects.map(p => ({
+                    label: (p.eventType ?? '').replace(/_/g, ' '),
+                    checked: isProjectFullySelected(p.projectId),
+                    onClick: () => toggleProjectFullSelection(p.projectId),
+                  })) : []),
+                ]}
+              />
+              <div className="flex-1" />
 
-              {/* 👁 Preview */}
-              <button onClick={() => { setGlobalPreviewIdx(0); setShowGlobalPreview(true) }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              {/* ★ Star (bulk toggle) */}
+              <button onClick={handleGlobalToggleStar} title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                 </svg>
               </button>
 
-              {/* Divider */}
-              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
+              {/* 🄫 Watermark (bulk) */}
+              <PhotoActionsMenu
+                align="right"
+                direction="up"
+                trigger={
+                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="Watermark options">
+                    {bulkWatermarking
+                      ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>}
+                  </span>
+                }
+                actions={[
+                  { label: 'Apply Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, onClick: () => handleBulkWatermark(true) },
+                  { label: 'Remove Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>, onClick: () => handleBulkWatermark(false) },
+                ]}
+              />
 
-              {/* 🗑 Delete */}
-              <button onClick={() => setShowGlobalDelete(true)}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-red-500/15 transition-colors text-red-500/70 hover:text-red-500" aria-label="Delete selected">
-                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
+              {/* ✨ AI Sorting/Search (bulk) */}
+              <button onClick={handleGlobalAISort} title="Run AI Sorting on selected photos"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                {bulkAISorting
+                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                    </svg>}
               </button>
 
-              {/* 📤 Share */}
+              {/* 📤 Quick Share */}
               <button
                 onClick={handleGlobalShare}
                 disabled={sharing}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent disabled:opacity-50" aria-label="Share with client">
+                title="Quick Share selected photos"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors disabled:opacity-50">
                 {sharing
-                  ? <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                  : <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
                     </svg>
                 }
               </button>
+
+              {/* ⋯ More — everything else that still makes sense in bulk */}
+              <PhotoActionsMenu
+                align="right"
+                direction="up"
+                trigger={
+                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="More options">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                    </svg>
+                  </span>
+                }
+                actions={[
+                  { label: 'Preview selected',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+                    onClick: () => { setGlobalPreviewIdx(0); setShowGlobalPreview(true) } },
+                  { label: 'Download selected',
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
+                    onClick: handleGlobalDownload },
+                  { label: 'Delete selected', danger: true,
+                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>,
+                    onClick: () => setShowGlobalDelete(true) },
+                ]}
+              />
 
             </div>
 

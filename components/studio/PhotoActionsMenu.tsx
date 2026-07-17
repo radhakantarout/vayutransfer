@@ -16,32 +16,39 @@ import { createPortal } from 'react-dom'
 
 export interface PhotoMenuAction {
   label: string
-  icon: React.ReactNode
+  icon?: React.ReactNode
   onClick: () => void
   danger?: boolean
+  // When set, the row renders as a checkbox instead of icon+label, and
+  // clicking it does NOT close the menu — for a "select all / deselect
+  // individually" style list where the admin toggles several rows in a row.
+  checked?: boolean
 }
 
 interface PhotoActionsMenuProps {
   actions: PhotoMenuAction[]
   trigger: React.ReactNode
   align?: 'left' | 'right'
+  // 'down' (default) opens below the trigger — wrong for triggers sitting
+  // near the bottom of the viewport (e.g. the floating selection pill),
+  // where the panel would render mostly/entirely off-screen. Pass 'up' there.
+  direction?: 'down' | 'up'
   menuClassName?: string
 }
 
-export default function PhotoActionsMenu({ actions, trigger, align = 'right', menuClassName = '' }: PhotoActionsMenuProps) {
+export default function PhotoActionsMenu({ actions, trigger, align = 'right', direction = 'down', menuClassName = '' }: PhotoActionsMenuProps) {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null)
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const openMenu = () => {
     const rect = rootRef.current?.getBoundingClientRect()
     if (!rect) return
-    setPos(
-      align === 'right'
-        ? { top: rect.bottom + 4, right: window.innerWidth - rect.right }
-        : { top: rect.bottom + 4, left: rect.left }
-    )
+    setPos({
+      ...(direction === 'up' ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+      ...(align === 'right' ? { right: window.innerWidth - rect.right } : { left: rect.left }),
+    })
     setOpen(true)
   }
 
@@ -74,17 +81,28 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', me
         <div
           ref={menuRef}
           onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right }}
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, right: pos.right }}
           className={`z-[100] min-w-[170px] bg-card border border-border rounded-xl shadow-2xl py-1.5 ${menuClassName}`}
         >
           {actions.map((action, i) => (
             <button
               key={i}
-              onClick={() => { setOpen(false); action.onClick() }}
+              onClick={() => { if (action.checked === undefined) setOpen(false); action.onClick() }}
               className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-left transition-colors
                 ${action.danger ? 'text-red-400 hover:bg-red-500/10' : 'text-text-primary hover:bg-border/50'}`}
             >
-              <span className="w-4 h-4 flex-shrink-0">{action.icon}</span>
+              {action.checked !== undefined ? (
+                <span className={`w-3.5 h-3.5 flex-shrink-0 rounded border flex items-center justify-center transition-colors
+                  ${action.checked ? 'bg-accent border-accent text-white' : 'border-muted'}`}>
+                  {action.checked && (
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </span>
+              ) : (
+                <span className="w-4 h-4 flex-shrink-0">{action.icon}</span>
+              )}
               {action.label}
             </button>
           ))}
