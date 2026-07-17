@@ -3,14 +3,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
-import type { StudioProject, MediaFile, Selection, StudioTransfer, CurationStatus } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection, StudioTransfer, CurationStatus, StudioFace } from '@/types/studio'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
 import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/PhotoActionsMenu'
 import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
+import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
 import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
+import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
+import AccuracySlider from '@/components/studio/AccuracySlider'
+import { loadAccuracyLevel, saveAccuracyLevel } from '@/lib/studio/faceAccuracy'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -26,6 +30,24 @@ const STALE_UPLOAD_MS = 15 * 60 * 1000
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
+}
+
+// Deterministic "random-looking" pick — used for the AI Face group cards'
+// photo-stack cover. A real Math.random() shuffle would re-pick different
+// covers on every re-render (search keystrokes, selection changes, etc.),
+// making the stack visibly flicker; seeding off the group's own id keeps the
+// pick stable for that group across the whole session while still differing
+// from group to group.
+function pickStableRandom<T>(arr: T[], seed: string, count: number): T[] {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  const copy = [...arr]
+  for (let i = copy.length - 1; i > 0; i--) {
+    h = (h * 1103515245 + 12345) >>> 0
+    const j = h % (i + 1)
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy.slice(0, count)
 }
 
 // Resumes a previously interrupted upload if the same file (matched by
@@ -126,7 +148,6 @@ interface Props {
   onSelectionChange: (ids: Set<string>) => void
   onFilesLoaded: (files: MediaFile[]) => void
   refreshTrigger?: number
-  hidePill?: boolean
   triggerShare?: boolean
   onShareTriggered?: () => void
   // Grid zoom + grid/list view mode — controlled from layout so both stay in
@@ -137,14 +158,8 @@ interface Props {
   zoomLevel: number
   viewMode: 'grid' | 'list'
   onViewModeChange: (mode: 'grid' | 'list') => void
-  // Project-level actions ("...") — same handlers already used by the
-  // sidebar's per-event menu, just surfaced here too when a project is open.
-  onEditProject?: (p: StudioProject) => void
-  onQuickShare?: (projects: StudioProject[]) => void
-  onAISort?: (projects: StudioProject[]) => void
-  onDeleteProject?: (projects: StudioProject[]) => void
   // Closes this event entirely (clears sidebar selection) — the small ×
-  // next to the "..." menu, replacing the old separate "Clear" bar.
+  // next to the header, replacing the old separate "Clear" bar.
   onClose?: () => void
   // Multi-event mode: when 2+ projects are selected in the sidebar, this
   // SAME EventSection (not a different-looking component) merges their
@@ -164,19 +179,12 @@ interface Props {
   externalCurationUpdate?: { fileIds: string[]; curationStatus: CurationStatus | undefined; token: number } | null
 }
 
-interface NotificationItem {
-  jobId: string
-  jobType: string
-  projectId: string
-  completedAt: string
-}
-
 export default function EventSection({
   project, onUpdated,
   selectedIds: selectedIdsProp, onSelectionChange: onSelectionChangeProp,
-  onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered,
+  onFilesLoaded, refreshTrigger, triggerShare, onShareTriggered,
   zoomLevel, viewMode, onViewModeChange: setViewMode,
-  onEditProject, onQuickShare, onAISort, onDeleteProject, onClose,
+  onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
   externalCurationUpdate,
 }: Props) {
@@ -212,20 +220,20 @@ export default function EventSection({
   const [renamingFile, setRenamingFile] = useState<MediaFile | null>(null)
   const [renameValue, setRenameValue]   = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
-  const [moveCopyTarget, setMoveCopyTarget] = useState<{ mode: 'copy' | 'move'; file: MediaFile } | null>(null)
+  const [moveCopyTarget, setMoveCopyTarget] = useState<{ mode: 'copy' | 'move'; clientName: string; files: { fileId: string; projectId: string }[] } | null>(null)
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [bulkAISorting, setBulkAISorting] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [searchQuery, setSearchQuery]   = useState('')
-  const [notifications, setNotifications] = useState<NotificationItem[]>([])
-  const [showNotif, setShowNotif]       = useState(false)
 
   // Client selection filter (loaded on demand — only CLIENT_FAVORITE/EDIT_REQUIRED need it)
   type ClientSel = { selection: Selection; file: MediaFile }
   const [clientSelections, setClientSelections] = useState<ClientSel[] | null>(null)
   const [selLoading, setSelLoading]             = useState(false)
-  const [viewFilter, setViewFilter]             = useState<PhotoScope>('ALL')
+  // Multiple lifecycle stages can be active at once (e.g. Starred + Client
+  // Favorite together) — empty set means "All Photos", no filter applied.
+  const [viewFilters, setViewFilters]           = useState<Set<PhotoScope>>(new Set())
 
   // ── Tabs ─────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
@@ -241,6 +249,21 @@ export default function EventSection({
   const [faceTriggering, setFaceTriggering] = useState(false)
   const [faceError, setFaceError]           = useState<string | null>(null)
   const [faceFeatureOff, setFaceFeatureOff] = useState(false)
+  // Admin-curated photo groups (pick from already AI-enabled photos + save
+  // selection) — no automatic clustering, no selfie search, no local upload;
+  // same MoveCopyPhotoModal-style additive design.
+  const [faceGroups, setFaceGroups]             = useState<StudioFace[] | null>(null)
+  const [faceGroupsLoading, setFaceGroupsLoading] = useState(false)
+  const [faceGroupFilter, setFaceGroupFilter]   = useState<{ faceId: string; fileIds: Set<string> } | null>(null)
+  const [savingGroup, setSavingGroup]           = useState(false)
+  const [startSortingOpen, setStartSortingOpen] = useState(false)
+  const [showQrModal, setShowQrModal]           = useState(false)
+  const [showReindexConfirm, setShowReindexConfirm] = useState(false)
+  // Single 0-100 dial the admin controls — persisted to localStorage so it
+  // carries across sessions/projects, not tied to any one project's data.
+  const [accuracyLevel, setAccuracyLevel] = useState(85)
+  useEffect(() => { setAccuracyLevel(loadAccuracyLevel()) }, [])
+  const handleAccuracyChange = (level: number) => { setAccuracyLevel(level); saveAccuracyLevel(level) }
   const [qrExpiry, setQrExpiry]           = useState<12 | 24 | 48>(24)
   const [qrGenerating, setQrGenerating]   = useState(false)
   const [qrDataUrl, setQrDataUrl]         = useState<string | null>(null)
@@ -285,7 +308,6 @@ export default function EventSection({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
-  const notifRef     = useRef<HTMLDivElement>(null)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
@@ -368,30 +390,6 @@ export default function EventSection({
     byProject.forEach((set, pid) => onPhotoSelectionChange(pid)(set))
   }
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
-
-  // Notification bell — recently completed jobs (face indexing, AI sorting,
-  // watermark backfill) for this project. Same existing /admin/notifications
-  // route the "recent activity" concept already relies on elsewhere.
-  useEffect(() => {
-    const loadNotifications = () => {
-      fetch(`/studio/api/admin/notifications?projectId=${project.projectId}`)
-        .then(r => r.json())
-        .then(d => { if (d?.success) setNotifications(d.data.notifications) })
-        .catch(() => {})
-    }
-    loadNotifications()
-    const interval = setInterval(loadNotifications, 60000)
-    return () => clearInterval(interval)
-  }, [project.projectId])
-
-  useEffect(() => {
-    if (!showNotif) return
-    const onDocClick = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotif(false)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [showNotif])
 
   // Open share setup when triggered from global pill
   useEffect(() => {
@@ -503,22 +501,80 @@ export default function EventSection({
     }
   }, [project.projectId])
 
-  // Poll while face job is active
+  // Poll while a face-indexing job is genuinely still in progress — not
+  // gated to the AI Face tab, since the "being reindexed" blur/spinner on
+  // photo tiles needs to keep updating even while looking at All Photos.
+  // Also stops the moment counts catch up even if the job record itself
+  // lags (mirrors the `isIndexing` derived value below), so a stale/never-
+  // closed job of any kind can't leave this polling forever.
   useEffect(() => {
-    if (activeTab !== 'faces' || !faceStatus?.activeJob) return
-    const t = setInterval(loadFaceStatus, 6000)
+    if (!faceStatus?.activeJob) return
+    if ((faceStatus.indexedPhotos ?? 0) >= (faceStatus.totalPhotos ?? 0)) return
+    // Also refresh the actual file list each tick — the per-photo blur/
+    // spinner is driven by each MediaFile's own faceIndexed flag, which only
+    // this (not the aggregate faceStatus counts) reflects.
+    const t = setInterval(() => { loadFaceStatus(); loadFiles() }, 6000)
     return () => clearInterval(t)
-  }, [activeTab, faceStatus?.activeJob, loadFaceStatus])
+  }, [faceStatus?.activeJob, faceStatus?.indexedPhotos, faceStatus?.totalPhotos, loadFaceStatus, loadFiles])
 
-  const triggerFaceIndexing = async () => {
+  const triggerFaceIndexing = async (forceAll?: boolean) => {
     setFaceTriggering(true); setFaceError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, { method: 'POST' }).then(r => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(forceAll ? { forceAll: true } : {}), accuracyLevel }),
+    }).then(r => r.json())
     setFaceTriggering(false)
     if (!res.success) {
       if (res.error === 'FEATURE_DISABLED') { setFaceFeatureOff(true); return }
       setFaceError(res.message ?? res.error); return
     }
-    setFaceStatus(prev => prev ? { ...prev, activeJob: { jobId: res.data.jobId, status: 'PENDING' } } : prev)
+    // forceAll resets every targeted photo back to "not yet indexed"
+    // server-side — reflect that immediately instead of waiting for the
+    // next 6s poll, so the progress bar/counts don't briefly show stale
+    // "all done" numbers.
+    setFaceStatus(prev => prev
+      ? {
+          ...prev,
+          activeJob: { jobId: res.data.jobId, status: 'PENDING' },
+          ...(forceAll ? { indexedPhotos: 0, pendingPhotos: prev.totalPhotos } : {}),
+        }
+      : prev)
+    // Mirror that reset onto the actual file list too, so every photo's
+    // blur/spinner shows immediately instead of waiting for the first poll.
+    if (forceAll) {
+      setFiles(prev => prev.map(f => f.fileType === 'IMAGE' ? { ...f, faceIndexed: false, faceCount: 0 } : f))
+    }
+  }
+
+  const loadFaceGroups = useCallback(async () => {
+    setFaceGroupsLoading(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`).then(r => r.json()).catch(() => null)
+    if (res?.success) setFaceGroups(res.data)
+    setFaceGroupsLoading(false)
+  }, [project.projectId])
+
+  const handleSaveGroup = async () => {
+    if (selectedIds.size === 0) return
+    setSavingGroup(true)
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoIds: Array.from(selectedIds) }),
+      }).then(r => r.json())
+      if (res.success) {
+        setFaceGroups(prev => [...(prev ?? []), res.data as StudioFace].sort((a, b) => b.photoCount - a.photoCount))
+        onSelectionChange(new Set())
+      }
+    } finally {
+      setSavingGroup(false)
+    }
+  }
+
+  const handleDeleteGroup = async (faceId: string) => {
+    setFaceGroups(prev => (prev ?? []).filter(g => g.faceId !== faceId))
+    if (faceGroupFilter?.faceId === faceId) setFaceGroupFilter(null)
+    await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups/${faceId}`, { method: 'DELETE' }).catch(() => {})
   }
 
   const generateQr = async () => {
@@ -833,7 +889,11 @@ export default function EventSection({
           <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
         </svg>
       ),
-      onClick: () => setMoveCopyTarget({ mode: 'copy', file: f }),
+      onClick: () => setMoveCopyTarget({
+        mode: 'copy',
+        clientName: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).clientName,
+        files: [{ fileId: f.fileId, projectId: f.projectId }],
+      }),
     },
     {
       label: 'Move to event…', icon: (
@@ -841,7 +901,11 @@ export default function EventSection({
           <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
         </svg>
       ),
-      onClick: () => setMoveCopyTarget({ mode: 'move', file: f }),
+      onClick: () => setMoveCopyTarget({
+        mode: 'move',
+        clientName: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).clientName,
+        files: [{ fileId: f.fileId, projectId: f.projectId }],
+      }),
     },
     {
       label: 'Delete', danger: true, icon: (
@@ -958,10 +1022,16 @@ export default function EventSection({
     setSelLoading(false)
   }
 
-  const setFilter = async (scope: PhotoScope) => {
-    if (scope === 'ALL' || viewFilter === scope) { setViewFilter('ALL'); return }
+  // Toggling 'ALL' always resets to no filter; toggling any other stage adds
+  // or removes it from the active set, leaving the rest untouched.
+  const toggleFilterScope = async (scope: PhotoScope) => {
+    if (scope === 'ALL') { setViewFilters(new Set()); return }
     if (scope === 'CLIENT_FAVORITE' || scope === 'EDIT_REQUIRED') await loadSelections()
-    setViewFilter(scope)
+    setViewFilters(prev => {
+      const next = new Set(prev)
+      next.has(scope) ? next.delete(scope) : next.add(scope)
+      return next
+    })
   }
 
   const togglePhoto = (fileId: string) => {
@@ -1113,21 +1183,32 @@ export default function EventSection({
   const switchTab = (tab: ActiveTab) => {
     setActiveTab(tab)
     if (tab === 'faces' && !faceStatus && !faceLoading) loadFaceStatus()
+    if (tab === 'faces' && faceGroups === null && !faceGroupsLoading) loadFaceGroups()
     if (tab === 'selections') loadSelItems()
     if (tab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
   }
 
   // ── Derived values ────────────────────────────────────────
+  // The "AI Face" tab reuses this exact same grid/selection-bar pipeline,
+  // just scoped to faceIndexed files (and further to one saved group, once
+  // the admin drills into a group card) instead of the lifecycle filters
+  // that apply to the "All Photos" tab.
   const displayFiles: MediaFile[] = (() => {
-    if (viewFilter === 'ALL') return files
+    if (activeTab === 'faces') {
+      const aiFiles = files.filter(f => f.faceIndexed)
+      return faceGroupFilter ? aiFiles.filter(f => faceGroupFilter.fileIds.has(f.fileId)) : aiFiles
+    }
+    if (viewFilters.size === 0) return files
     const selections = clientSelections?.map(s => s.selection) ?? []
-    const ids = resolveScopeFileIds(viewFilter, files, selections, project)
-    if (!ids) return files
-    const idSet = new Set(ids)
+    const idSet = new Set<string>()
+    viewFilters.forEach(scope => {
+      const ids = resolveScopeFileIds(scope, files, selections, project)
+      if (ids) ids.forEach(id => idSet.add(id))
+    })
     return files.filter(f => idSet.has(f.fileId))
   })()
 
-  const editCommentMap: Map<string, string> = viewFilter === 'EDIT_REQUIRED' && clientSelections
+  const editCommentMap: Map<string, string> = viewFilters.has('EDIT_REQUIRED') && clientSelections
     ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
     : new Map()
 
@@ -1147,10 +1228,10 @@ export default function EventSection({
   const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : sortedDisplayFiles
   const currentPreviewPhoto = previewPhotos[adminPreviewIdx] as MediaFile | undefined
 
-  // Face index derived
-  const isIndexing = !!faceStatus?.activeJob
-  const isReady    = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) === 0
-  const hasPartial = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) > 0
+  // Face index derived — also stops on count parity, not just the job
+  // record, so the spinner doesn't keep rolling if the backend job status
+  // lags a moment behind the counts actually catching up.
+  const isIndexing = !!faceStatus?.activeJob && (faceStatus?.indexedPhotos ?? 0) < (faceStatus?.totalPhotos ?? 0)
   const neverRun   = !isIndexing && (faceStatus?.indexedPhotos ?? 0) === 0
 
   // Keyboard navigation for the admin photo preview lightbox — placed here
@@ -1203,11 +1284,139 @@ export default function EventSection({
       {moveCopyTarget && (
         <MoveCopyPhotoModal
           mode={moveCopyTarget.mode}
-          clientName={(activeSourceProjects.find(p => p.projectId === moveCopyTarget.file.projectId) ?? project).clientName}
-          currentProjectId={moveCopyTarget.file.projectId}
-          fileId={moveCopyTarget.file.fileId}
+          clientName={moveCopyTarget.clientName}
+          files={moveCopyTarget.files}
           onClose={() => setMoveCopyTarget(null)}
-          onDone={() => { setMoveCopyTarget(null); loadFiles(); onUpdated() }}
+          onDone={() => { setMoveCopyTarget(null); onSelectionChange(new Set()); loadFiles(); onUpdated() }}
+        />
+      )}
+
+      {/* ── Reindex confirmation — friendly heads-up that this uses the AI
+          search balance, so a stray click doesn't quietly burn credits.
+          Offers "remaining" (cheap, only new/unindexed photos) vs "all"
+          (redoes everything from scratch — e.g. after a quality/settings
+          improvement, or if matches have been looking off). */}
+      {showReindexConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="text-center space-y-2">
+              <div className="text-3xl">✨</div>
+              <p className="text-sm font-bold text-text-primary">Reindex photos for AI?</p>
+              <p className="text-xs text-muted">
+                This scans your gallery for faces so you can search and group photos — it uses a bit of your AI search balance each time. It only ever runs when you tap this, never automatically.
+              </p>
+            </div>
+            <div className="border-t border-border pt-3">
+              <AccuracySlider value={accuracyLevel} onChange={handleAccuracyChange} />
+            </div>
+            <div className="space-y-2">
+              {(faceStatus?.pendingPhotos ?? 0) > 0 && (
+                <button onClick={() => { setShowReindexConfirm(false); triggerFaceIndexing(false) }}
+                  className="w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 transition-colors">
+                  Reindex remaining {faceStatus?.pendingPhotos} photo{faceStatus?.pendingPhotos !== 1 ? 's' : ''}
+                </button>
+              )}
+              <button onClick={() => { setShowReindexConfirm(false); triggerFaceIndexing(true) }}
+                className={(faceStatus?.pendingPhotos ?? 0) > 0
+                  ? 'w-full text-sm border border-accent/40 text-accent font-semibold py-2.5 rounded-xl hover:bg-accent/10 transition-colors'
+                  : 'w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 transition-colors'}>
+                Reindex all {faceStatus?.totalPhotos ?? 0} photos from scratch
+              </button>
+              <button onClick={() => setShowReindexConfirm(false)}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Guest QR code popup — functional generate/copy/download today;
+          customization options are a placeholder for a future pass. ───── */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowQrModal(false) }}>
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div>
+                <p className="text-sm font-bold text-text-primary">Guest QR Code</p>
+                <p className="text-xs text-muted mt-0.5">Guests scan and find their photos via selfie.</p>
+              </div>
+              <button onClick={() => setShowQrModal(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
+                <select value={qrExpiry} onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
+                  className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60">
+                  <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option>
+                </select>
+                <button onClick={generateQr} disabled={qrGenerating}
+                  className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                  {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
+                </button>
+              </div>
+              {qrDataUrl && qrGuestUrl && (
+                <div className="flex flex-col items-center gap-4 pt-2">
+                  <div className="bg-white p-3 rounded-2xl shadow-md">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
+                  </div>
+                  {qrExpiresAt && <p className="text-xs text-muted">Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>}
+                  <div className="flex gap-2 w-full">
+                    <button onClick={async () => { if (!qrGuestUrl) return; await navigator.clipboard.writeText(qrGuestUrl); setQrCopied(true); setTimeout(() => setQrCopied(false), 2000) }}
+                      className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                      {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
+                    </button>
+                    <button onClick={() => { if (!qrDataUrl) return; const a = document.createElement('a'); a.href = qrDataUrl; a.download = `guest-qr-${project.projectId}.png`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+                      className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                      ⬇ Download QR
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Placeholder — QR look/customization options land here later */}
+              <div className="border border-dashed border-border rounded-xl px-4 py-3 text-center">
+                <p className="text-[11px] text-muted">QR customization options coming soon</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Start Sorting picker — pick from the already-loaded AI-enabled
+          photos and save the selection as a group. No selfie, no local
+          upload — just the photo references already in memory. ───────── */}
+      {startSortingOpen && (
+        <StartSortingModal
+          files={files.filter(f => f.faceIndexed)}
+          onClose={() => setStartSortingOpen(false)}
+          onGrouped={(group) => {
+            setFaceGroups(prev => [...(prev ?? []), group].sort((a, b) => b.photoCount - a.photoCount))
+            setStartSortingOpen(false)
+          }}
+          onCreateGroup={async (photoIds) => {
+            const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ photoIds }),
+            }).then(r => r.json())
+            return res.success ? (res.data as StudioFace) : null
+          }}
+          onFindSimilar={async (fileId, faceId) => {
+            const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/similar`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileId, ...(faceId ? { faceId } : {}), accuracyLevel }),
+            }).then(r => r.json())
+            if (!res.success) return null
+            return res.data as FindSimilarResult
+          }}
+          accuracyLevel={accuracyLevel}
+          onAccuracyChange={handleAccuracyChange}
         />
       )}
 
@@ -1469,34 +1678,44 @@ export default function EventSection({
                     activeTab === 'photos' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
                   }`}
                 >
-                  {activeTab === 'photos' ? PHOTO_SCOPE_LABEL[viewFilter] : 'All Photos'}
+                  {activeTab !== 'photos' || viewFilters.size === 0
+                    ? 'All Photos'
+                    : viewFilters.size === 1
+                      ? PHOTO_SCOPE_LABEL[Array.from(viewFilters)[0]]
+                      : `${viewFilters.size} filters`}
                   <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
               }
               actions={PHOTO_SCOPE_ORDER.map(scope => ({
-                label: viewFilter === scope ? `${PHOTO_SCOPE_LABEL[scope]}  ✓` : PHOTO_SCOPE_LABEL[scope],
-                icon: <PhotoScopeIcon scope={scope} />,
-                onClick: () => { switchTab('photos'); setFilter(scope) },
+                label: PHOTO_SCOPE_LABEL[scope],
+                icon: <PhotoScopeIcon scope={scope} className="w-2.5 h-2.5" />,
+                checked: scope === 'ALL' ? viewFilters.size === 0 : viewFilters.has(scope),
+                onClick: () => { switchTab('photos'); toggleFilterScope(scope) },
               }))}
             />
             {(['faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => switchTab(tab)}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                className={`flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
                   activeTab === tab ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
                 }`}
               >
-                {tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
+                {tab === 'faces' && (
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                  </svg>
+                )}
+                {tab === 'faces' ? 'AI Face' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
               </button>
             ))}
           </div>
 
           {/* Filename search — client-side filter over already-loaded photos */}
-          {activeTab === 'photos' && (
-            <div className="flex-1 min-w-[100px] max-w-xs relative hidden sm:block">
+          {(activeTab === 'photos' || activeTab === 'faces') && (
+            <div className="flex-1 min-w-[100px] max-w-[180px] relative hidden sm:block">
               <svg className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
               </svg>
@@ -1509,8 +1728,9 @@ export default function EventSection({
             </div>
           )}
 
+
           <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-            {activeTab === 'photos' && (
+            {(activeTab === 'photos' || activeTab === 'faces') && (
               <>
                 <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
                   title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
@@ -1550,18 +1770,12 @@ export default function EventSection({
                 />
               </>
             )}
-            {/* AI Face — shortcut into the Face Index tab, same feature just surfaced here too */}
-            <button onClick={() => switchTab('faces')} title="AI Face Index"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
-              </svg>
-            </button>
             <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              className="h-7 px-2.5 flex items-center gap-1.5 rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors flex-shrink-0">
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
+              <span className="text-xs font-semibold whitespace-nowrap">Add Media</span>
             </button>
             <button onClick={loadFiles} title="Refresh photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
@@ -1582,78 +1796,6 @@ export default function EventSection({
               }
             </button>
 
-            {/* Notifications — recently completed jobs for this project */}
-            <div className="relative" ref={notifRef}>
-              <button onClick={() => setShowNotif(v => !v)} title="Notifications"
-                className="relative w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                </svg>
-                {notifications.length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 flex items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold">
-                    {notifications.length}
-                  </span>
-                )}
-              </button>
-              {showNotif && (
-                <div className="absolute right-0 top-full mt-1.5 w-64 bg-card border border-border rounded-xl shadow-2xl py-1.5 z-30">
-                  {notifications.length === 0 ? (
-                    <p className="text-xs text-muted px-3 py-2">No recent activity</p>
-                  ) : (
-                    notifications.map(n => (
-                      <div key={n.jobId} className="px-3 py-2 text-xs">
-                        <div className="font-semibold text-text-primary">
-                          {n.jobType === 'INDEX_FACES' ? 'Face indexing complete' : n.jobType.replace(/_/g, ' ')}
-                        </div>
-                        <div className="text-[10px] text-muted mt-0.5">
-                          {new Date(n.completedAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Project actions — same actions already available from the
-                sidebar's per-event "⋯", surfaced here too when a project is open */}
-            {(onEditProject || onQuickShare || onAISort || onDeleteProject) && (
-              <PhotoActionsMenu
-                align="right"
-                trigger={
-                  <span title="Project options"
-                    className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors cursor-pointer">
-                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
-                    </svg>
-                  </span>
-                }
-                actions={[
-                  ...(onEditProject ? [{
-                    label: 'Edit project',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>,
-                    onClick: () => onEditProject(project),
-                  }] : []),
-                  ...(onQuickShare ? [{
-                    label: 'Quick Share',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
-                    onClick: () => onQuickShare([project]),
-                  }] : []),
-                  ...(onAISort ? [{
-                    label: 'AI Sorting / Search',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" /></svg>,
-                    onClick: () => onAISort([project]),
-                  }] : []),
-                  ...(onDeleteProject ? [{
-                    label: 'Delete',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" /></svg>,
-                    onClick: () => onDeleteProject([project]),
-                    danger: true,
-                  }] : []),
-                ]}
-              />
-            )}
-
             {/* Close — clears the sidebar selection, replacing the old
                 separate "clientName + Clear" bar above the grid so the
                 grid itself gets that vertical space back. */}
@@ -1668,6 +1810,279 @@ export default function EventSection({
           </div>
         </div>
 
+        {/* ── Selection / filter status bar — small, icon-based, sits right
+            below the header. Empty (not rendered) when nothing is selected
+            and no filter is active. Two mutually exclusive contents: filter
+            chips only (a lifecycle filter is active but nothing individually
+            selected) or the full bulk action set (the moment any photo gets
+            selected — filter chips step aside since Star/Delete/More now
+            apply only to the selection, not the filtered set). */}
+        {((activeTab === 'photos' && (selectedCount > 0 || viewFilters.size > 0)) ||
+          (activeTab === 'faces' && (selectedCount > 0 || !!faceGroupFilter))) && (
+          <div className="px-5 pt-2">
+            <div className="inline-flex items-center gap-1.5 px-1.5 py-1 rounded-xl bg-gradient-to-b from-accent to-accent/85 shadow-[0_3px_10px_-3px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.25)]">
+              {selectedCount === 0 ? (
+                activeTab === 'faces' ? (
+                  <>
+                    <span className="flex items-center gap-1 bg-white/15 text-white rounded-lg px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap ml-1">
+                      Group photos
+                    </span>
+                    <span title="Photos in this group" className="text-[10px] font-semibold text-white/85 px-1.5 whitespace-nowrap">
+                      {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}
+                    </span>
+                    <button onClick={() => setFaceGroupFilter(null)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-white px-2 py-1 rounded-lg hover:bg-white/15 transition-colors">
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                      </svg>
+                      Back to groups
+                    </button>
+                  </>
+                ) : (
+                <>
+                  <div className="flex items-center gap-1 flex-wrap pl-1">
+                    {Array.from(viewFilters).map(scope => (
+                      <span key={scope} title={PHOTO_SCOPE_LABEL[scope]}
+                        className="flex items-center gap-1 bg-white/15 text-white rounded-lg px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap">
+                        <PhotoScopeIcon scope={scope} className="w-2.5 h-2.5 flex-shrink-0" />
+                        {PHOTO_SCOPE_LABEL[scope]}
+                      </span>
+                    ))}
+                  </div>
+                  <span title="Photos matching the active filter" className="text-[10px] font-semibold text-white/85 px-1.5 whitespace-nowrap">
+                    {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}
+                  </span>
+                  <Tooltip label="Clear filter">
+                    <button onClick={() => setViewFilters(new Set())}
+                      className="w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+                </>
+                )
+              ) : (
+                <>
+                  <Tooltip label="Clear selection">
+                    <button onClick={() => onSelectionChange(new Set())}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  <PhotoActionsMenu
+                    align="left"
+                    trigger={
+                      <Tooltip label="Select all">
+                        <span className="flex items-center gap-1 pl-1 pr-1.5 py-1 rounded-lg text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          <span className="text-[11px] font-bold whitespace-nowrap">{selectedCount} selected</span>
+                          <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                          </svg>
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      { label: 'Select all',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
+                        onClick: () => onSelectionChange(new Set(sortedDisplayFiles.map(f => f.fileId))) },
+                      ...(viewFilters.size > 1 ? Array.from(viewFilters).map(scope => ({
+                        label: `Select all ${PHOTO_SCOPE_LABEL[scope]}`,
+                        icon: <PhotoScopeIcon scope={scope} />,
+                        onClick: () => {
+                          const selections = clientSelections?.map(s => s.selection) ?? []
+                          const ids = new Set(resolveScopeFileIds(scope, sortedDisplayFiles, selections, project) ?? [])
+                          onSelectionChange(new Set(sortedDisplayFiles.filter(f => ids.has(f.fileId)).map(f => f.fileId)))
+                        },
+                      })) : []),
+                      ...(isMultiSource ? activeSourceProjects.map(p => ({
+                        label: `Select all — ${(p.eventType ?? '').replace(/_/g, ' ')}`,
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
+                        onClick: () => onSelectionChange(new Set(sortedDisplayFiles.filter(f => f.projectId === p.projectId).map(f => f.fileId))),
+                      })) : []),
+                    ]}
+                  />
+
+                  <div className="w-px h-4 bg-white/25 mx-0.5 flex-shrink-0" />
+
+                  {/* Star / unstar — selection only */}
+                  <Tooltip label={allSelectedStarred ? 'Unstar selected' : 'Star selected'}>
+                    <button onClick={bulkToggleStar}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* AI Sorting / Search — selection only */}
+                  <Tooltip label={bulkAISorting ? 'Starting AI Sorting…' : 'AI Sorting / Search'}>
+                    <button onClick={bulkAISort}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      {bulkAISorting
+                        ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                          </svg>}
+                    </button>
+                  </Tooltip>
+
+                  {/* Quick Share — selection only */}
+                  <Tooltip label="Quick Share selected">
+                    <button onClick={() => setShowShareSetup(true)}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* Preview — selection only */}
+                  <Tooltip label="Preview selected">
+                    <button onClick={() => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) }}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* Watermark — selection only, own dropdown for apply/remove */}
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <Tooltip label="Watermark selected">
+                        <span className="w-6 h-6 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          {bulkWatermarking
+                            ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>}
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      { label: 'Apply Watermark',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+                        onClick: () => bulkApplyWatermark(true) },
+                      { label: 'Remove Watermark',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
+                        onClick: () => bulkApplyWatermark(false) },
+                    ]}
+                  />
+
+                  {/* Delete — selection only */}
+                  <Tooltip label="Delete selected">
+                    <button onClick={() => setDeleteMode('selected')}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-red-500/40 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* More — everything else: copy/move to event, download */}
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <Tooltip label="More options">
+                        <span className="w-6 h-6 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                            <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                          </svg>
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      ...(activeTab === 'faces' ? [{
+                        label: savingGroup ? 'Saving…' : 'Save as Group',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>,
+                        onClick: handleSaveGroup,
+                      }] : []),
+                      { label: 'Copy to event…',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>,
+                        onClick: () => setMoveCopyTarget({ mode: 'copy', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
+                      { label: 'Move to event…',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>,
+                        onClick: () => setMoveCopyTarget({ mode: 'move', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
+                      { label: 'Download selected',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
+                        onClick: bulkDownloadSelected },
+                    ]}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── AI Face status row — one slim row, same family as the
+            selection/filter bar. Always shown on this tab (unless the
+            feature is off): requested/AI-enabled counts, a thin progress
+            fill only while a run is active, a small re-check icon, and one
+            QR icon that opens the (placeholder-for-now) QR popup. */}
+        {activeTab === 'faces' && !faceFeatureOff && (
+          <div className="px-5 pt-2">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-border bg-card">
+              <span className="text-[11px] font-semibold text-muted whitespace-nowrap">
+                {faceStatus?.totalPhotos ?? 0} photos requested
+              </span>
+              <span className="text-[11px] font-bold text-text-primary whitespace-nowrap">
+                {faceStatus?.indexedPhotos ?? 0} AI enabled
+              </span>
+              {isIndexing && (
+                <div className="w-20 h-1.5 rounded-full bg-border overflow-hidden flex-shrink-0">
+                  <div
+                    className="h-full bg-accent rounded-full transition-all"
+                    style={{ width: `${faceStatus && faceStatus.totalPhotos > 0 ? Math.round((faceStatus.indexedPhotos / faceStatus.totalPhotos) * 100) : 0}%` }}
+                  />
+                </div>
+              )}
+              <Tooltip label="Guest QR code">
+                <button onClick={() => setShowQrModal(true)}
+                  className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5h4.5v4.5h-4.5v-4.5zM15.75 4.5h4.5v4.5h-4.5v-4.5zM3.75 15h4.5v4.5h-4.5V15zM15.75 15h1.5v1.5h-1.5V15zM19.5 15h.75v.75h-.75V15zM15.75 18h.75v.75h-.75V18zM18 18.75h.75v.75H18v-.75zM6 6.75h1.5v1.5H6v-1.5zM18 6.75h1.5v1.5H18v-1.5zM6 17.25h1.5v1.5H6v-1.5z" />
+                  </svg>
+                </button>
+              </Tooltip>
+              {/* Reindex — kept right next to Start Grouping since they're
+                  the two "do something" actions on this tab. Always confirms
+                  first (uses AI search balance) so a stray click can't
+                  trigger a run by accident. */}
+              <Tooltip label={neverRun ? 'Enable AI for all photos' : 'Check for new photos'}>
+                <button onClick={() => setShowReindexConfirm(true)} disabled={faceTriggering || isIndexing}
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0 disabled:opacity-50">
+                  {isIndexing || faceTriggering
+                    ? <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    : <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>}
+                  <span className="text-[11px] font-semibold whitespace-nowrap">{isIndexing ? 'Reindexing…' : 'Reindex'}</span>
+                </button>
+              </Tooltip>
+              {!faceGroupFilter && (
+                <button onClick={() => setStartSortingOpen(true)}
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold whitespace-nowrap">Start Grouping</span>
+                </button>
+              )}
+            </div>
+            {faceError && (
+              <div className="flex items-center gap-2 px-3 py-2 mt-2 rounded-xl text-xs font-semibold bg-red-500/10 text-red-500">
+                {faceError}
+                <button onClick={() => setFaceError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Share setup panel ─────────────────────────────────── */}
         {showShareSetup && (
@@ -1790,13 +2205,16 @@ export default function EventSection({
 
         {/* ══ TAB CONTENT ══════════════════════════════════════════ */}
 
-        {/* ── All Photos tab ────────────────────────────────────── */}
-        {activeTab === 'photos' && (
+        {/* ── All Photos / AI Face tab — the AI Face tab reuses this exact
+            same grid+bar, scoped to faceIndexed files via displayFiles. ── */}
+        {(activeTab === 'photos' || activeTab === 'faces') && (
           <div className={`px-5 pb-5 ${expanded ? 'max-w-7xl mx-auto' : ''}`}>
             {loading ? (
               <div className="flex justify-center py-8">
                 <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
               </div>
+            ) : activeTab === 'faces' && !faceGroupFilter && displayFiles.length === 0 ? (
+              <p className="text-xs text-muted text-center py-6">No AI-enabled photos yet — tap the refresh icon above first.</p>
             ) : files.length === 0 ? (
               <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
             ) : (
@@ -1807,12 +2225,69 @@ export default function EventSection({
                     <button onClick={() => setDeleteError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
                   </div>
                 )}
-                {viewFilter !== 'ALL' && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3 bg-accent/10 text-accent">
-                    <PhotoScopeIcon scope={viewFilter} className="w-3.5 h-3.5 flex-shrink-0" />
-                    {PHOTO_SCOPE_LABEL[viewFilter]}
-                    <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
-                    <button onClick={() => setViewFilter('ALL')} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Clear ×</button>
+
+
+                {/* Face groups strip — floating photo-stack cards. AI Face tab
+                    only, hidden once drilled into a specific group. */}
+                {activeTab === 'faces' && !faceGroupFilter && faceGroups && faceGroups.length > 0 && (
+                  <div className="flex items-center gap-4 overflow-x-auto pb-3 mb-3 border-b border-border">
+                    {faceGroups.map(group => {
+                      const groupPhotos = group.photoIds
+                        .map(id => files.find(f => f.fileId === id))
+                        .filter((f): f is MediaFile => !!f)
+                      const stack = pickStableRandom(groupPhotos, group.faceId, 4)
+                      // If some of this group's saved photoIds aren't in the
+                      // currently loaded files (rare — e.g. deleted since),
+                      // the stack will show fewer than photoCount; the count
+                      // label below always reflects the real saved total.
+                      const missing = group.photoIds.length - groupPhotos.length
+                      return (
+                        <div key={group.faceId} className="relative flex-shrink-0 group/gc">
+                          <button
+                            onClick={() => setFaceGroupFilter({ faceId: group.faceId, fileIds: new Set(group.photoIds) })}
+                            className="relative w-28 h-24 flex-shrink-0"
+                          >
+                            {stack.length === 0 ? (
+                              <div className="absolute inset-0 w-20 h-20 mx-auto rounded-xl border-2 border-dashed border-border flex items-center justify-center text-[10px] text-muted text-center px-1">
+                                Photos not loaded
+                              </div>
+                            ) : stack.map((f, i) => (
+                              <div
+                                key={f.fileId}
+                                className="absolute top-0 left-1/2 w-20 h-20 rounded-xl overflow-hidden border-2 border-card shadow-[0_8px_20px_-6px_rgba(0,0,0,0.45)] transition-transform group-hover/gc:-translate-y-1.5"
+                                style={{
+                                  transform: `translateX(-50%) rotate(${(i - (stack.length - 1) / 2) * 12}deg) translateX(${(i - (stack.length - 1) / 2) * 20}px)`,
+                                  zIndex: i,
+                                }}
+                              >
+                                {f.r2PreviewUrl
+                                  ? <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                                  : <div className="w-full h-full bg-border/40" />}
+                              </div>
+                            ))}
+                            {group.photoCount > stack.length && (
+                              <span className="absolute -top-1.5 -right-1 z-10 w-5 h-5 flex items-center justify-center rounded-full bg-accent text-white text-[9px] font-bold shadow">
+                                +{group.photoCount - stack.length}
+                              </span>
+                            )}
+                          </button>
+                          <div className="flex items-center justify-center gap-1 mt-1">
+                            <span className="text-[10px] font-semibold text-muted whitespace-nowrap">
+                              {group.photoCount} photo{group.photoCount !== 1 ? 's' : ''}
+                            </span>
+                            {missing > 0 && (
+                              <span title={`${missing} of this group's photos aren't currently loaded`} className="text-[9px] text-yellow-500 font-bold">⚠</span>
+                            )}
+                            <button onClick={() => handleDeleteGroup(group.faceId)} title="Delete group"
+                              className="w-3.5 h-3.5 flex items-center justify-center rounded text-muted/60 hover:text-red-500 transition-colors">
+                              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -1831,10 +2306,12 @@ export default function EventSection({
                       <div className="space-y-1 pt-[14px] pl-[14px] pr-[14px]">
                         {sortedDisplayFiles.map((f, idx) => {
                           const isSelected = selectedIds.has(f.fileId)
+                          const isBeingIndexed = isIndexing && !f.faceIndexed
                           return (
-                            <div key={f.fileId} onClick={() => togglePhoto(f.fileId)}
-                              onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
-                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
+                            <div key={f.fileId}
+                              onClick={() => { if (!isBeingIndexed) togglePhoto(f.fileId) }}
+                              onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl transition-colors ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'} ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
                               <div className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors
                                 ${isSelected ? 'bg-accent border-accent text-bg' : 'border-muted'}`}>
                                 {isSelected && (
@@ -1843,10 +2320,16 @@ export default function EventSection({
                                   </svg>
                                 )}
                               </div>
-                              <div className="w-11 h-11 rounded-lg overflow-hidden bg-border/40 flex-shrink-0">
+                              <div className="relative w-11 h-11 rounded-lg overflow-hidden bg-border/40 flex-shrink-0">
                                 {f.r2PreviewUrl
-                                  ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                                  ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
+                                      className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
                                   : <div className="w-full h-full flex items-center justify-center text-muted text-sm">📄</div>}
+                                {isBeingIndexed && (
+                                  <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
+                                    <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  </div>
+                                )}
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm text-text-primary truncate">{f.originalFilename}</div>
@@ -1914,11 +2397,19 @@ export default function EventSection({
                         && (Date.now() - new Date(f.uploadedAt).getTime()) > STALE_UPLOAD_MS
                       const isGenuineFailure = f.processingStatus === 'FAILED'
                       const isFailed    = isGenuineFailure || isStaleUpload
+                      // A (re)index run marks every not-yet-indexed photo as
+                      // faceIndexed:false until the Lambda gets to it — while
+                      // a run is active, show those specific photos as busy
+                      // (blurred + spinner, not clickable) anywhere they
+                      // appear in the gallery, not just the AI Face tab.
+                      const isBeingIndexed = isIndexing && !f.faceIndexed
                       const editComment = editCommentMap.get(f.fileId)
                       return (
-                        <div key={f.fileId} data-fileid={f.fileId} onClick={() => handleTileClick(f.fileId)}
-                          onDoubleClick={e => { e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
-                          className={`group rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-150 shadow-md hover:shadow-xl hover:-translate-y-0.5
+                        <div key={f.fileId} data-fileid={f.fileId}
+                          onClick={() => { if (!isBeingIndexed) handleTileClick(f.fileId) }}
+                          onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                          className={`group rounded-lg overflow-hidden bg-card border transition-all duration-150 shadow-md hover:shadow-xl hover:-translate-y-0.5
+                            ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'}
                             ${isSelected ? 'border-accent ring-2 ring-accent/40' : 'border-border hover:border-border/80'}`}>
                           {/* Frame's top strip — real space above the photo, not overlaid on it */}
                           {!isFailed && (
@@ -1952,7 +2443,8 @@ export default function EventSection({
                           <div className="p-1 pt-0">
                             <div className="relative aspect-square rounded overflow-hidden bg-bg">
                               {f.r2PreviewUrl
-                                ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
+                                ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
+                                    className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
                                 : <div className="w-full h-full flex items-center justify-center">
                                     {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
                                       ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
@@ -1996,6 +2488,12 @@ export default function EventSection({
                                   )}
                                 </div>
                               )}
+                              {isBeingIndexed && !isFailed && (
+                                <div className="absolute inset-0 bg-bg/50 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1">
+                                  <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  <span className="text-[8px] text-muted font-semibold">AI processing…</span>
+                                </div>
+                              )}
                               {/* Always-visible checkbox (not just on hover/selected) — a reliable,
                                   drag-free way to build a multi-selection: just click each photo
                                   you want, one at a time. No need to hunt for empty space to drag. */}
@@ -2035,130 +2533,6 @@ export default function EventSection({
                   </div>
                 </div>
 
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Face Index tab ────────────────────────────────────── */}
-        {activeTab === 'faces' && (
-          <div className="px-5 py-5 space-y-5">
-            {faceLoading ? (
-              <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
-            ) : faceFeatureOff ? (
-              <div className="text-center py-10 space-y-3">
-                <div className="text-5xl">🔒</div>
-                <p className="text-sm font-bold text-text-primary">AI Face Search</p>
-                <p className="text-xs text-muted">This feature is not enabled on your plan.</p>
-              </div>
-            ) : (
-              <>
-                {/* Trigger button */}
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-bold text-text-primary">Face Index</p>
-                    <p className="text-xs text-muted mt-0.5">Index faces so guests can find their photos by selfie.</p>
-                  </div>
-                  {!isIndexing && (
-                    <button onClick={triggerFaceIndexing} disabled={faceTriggering}
-                      className="flex items-center gap-2 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors flex-shrink-0">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
-                      </svg>
-                      {neverRun ? 'Generate Face Index' : faceTriggering ? 'Starting…' : 'Re-index'}
-                    </button>
-                  )}
-                </div>
-
-                {faceError && <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{faceError}</div>}
-
-                {isIndexing && (
-                  <div className="bg-accent/10 border border-accent/30 rounded-xl px-5 py-4 flex items-center gap-4">
-                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-text-primary">{faceStatus?.activeJob?.status === 'PENDING' ? 'Queued…' : 'Indexing faces…'}</p>
-                      <p className="text-xs text-muted mt-0.5">This runs in the background.</p>
-                    </div>
-                  </div>
-                )}
-
-                {faceStatus && (
-                  <div className="border border-border rounded-2xl divide-y divide-border overflow-hidden">
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <span className="text-sm text-muted">Photos indexed</span>
-                      <span className="text-sm font-bold text-text-primary">{faceStatus.indexedPhotos} / {faceStatus.totalPhotos}</span>
-                    </div>
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <span className="text-sm text-muted">Status</span>
-                      <span className={`text-sm font-bold ${isIndexing ? 'text-accent' : isReady ? 'text-success' : hasPartial ? 'text-yellow-400' : 'text-muted'}`}>
-                        {isIndexing ? 'Indexing…' : isReady ? '✓ Ready for guest search' : hasPartial ? `${faceStatus.pendingPhotos} pending` : 'Not indexed yet'}
-                      </span>
-                    </div>
-                    {faceStatus.lastCompletedAt && (
-                      <div className="px-5 py-3 flex items-center justify-between">
-                        <span className="text-sm text-muted">Last indexed</span>
-                        <span className="text-sm text-text-primary">{new Date(faceStatus.lastCompletedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {neverRun && !faceError && !faceLoading && (
-                  <div className="border border-dashed border-border rounded-2xl p-8 text-center space-y-3">
-                    <div className="text-4xl">🔍</div>
-                    <p className="text-sm font-bold text-text-primary">No faces indexed yet</p>
-                    <p className="text-xs text-muted">Guests can upload a selfie to find their photos once you run the index.</p>
-                  </div>
-                )}
-
-                {isReady && (
-                  <div className="bg-success/5 border border-success/20 rounded-2xl px-5 py-4 space-y-1">
-                    <p className="text-sm font-bold text-success">✓ Face index ready</p>
-                    <p className="text-xs text-muted">Guests can now tap <strong className="text-text-primary">Find My Photos</strong> in the gallery.</p>
-                  </div>
-                )}
-
-                {/* QR code generator */}
-                {(isReady || hasPartial) && (
-                  <div className="border border-border rounded-2xl overflow-hidden">
-                    <div className="px-5 py-4 border-b border-border bg-border/10">
-                      <p className="text-sm font-bold text-text-primary">Guest QR Code</p>
-                      <p className="text-xs text-muted mt-0.5">Guests scan and find their photos via selfie.</p>
-                    </div>
-                    <div className="px-5 py-4 space-y-4">
-                      <div className="flex items-center gap-3">
-                        <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
-                        <select value={qrExpiry} onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
-                          className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60">
-                          <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option>
-                        </select>
-                        <button onClick={generateQr} disabled={qrGenerating}
-                          className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors">
-                          {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
-                        </button>
-                      </div>
-                      {qrDataUrl && qrGuestUrl && (
-                        <div className="flex flex-col items-center gap-4 pt-2">
-                          <div className="bg-white p-3 rounded-2xl shadow-md">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
-                          </div>
-                          {qrExpiresAt && <p className="text-xs text-muted">Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>}
-                          <div className="flex gap-2 w-full">
-                            <button onClick={async () => { if (!qrGuestUrl) return; await navigator.clipboard.writeText(qrGuestUrl); setQrCopied(true); setTimeout(() => setQrCopied(false), 2000) }}
-                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
-                              {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
-                            </button>
-                            <button onClick={() => { if (!qrDataUrl) return; const a = document.createElement('a'); a.href = qrDataUrl; a.download = `guest-qr-${project.projectId}.png`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
-                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
-                              ⬇ Download QR
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -2423,119 +2797,6 @@ export default function EventSection({
 
       </div>{/* end card */}
 
-      {/* ── Floating selection pill (admin grid) ──────────────── */}
-      {selectedCount > 0 && activeTab === 'photos' && !hidePill && (
-        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
-          <div className="bg-accent shadow-[0_10px_30px_-6px_rgba(0,0,0,0.45)] rounded-2xl overflow-hidden w-full max-w-md">
-            <div className="flex items-center gap-0.5 px-2 py-2">
-
-              {/* × clear */}
-              <button onClick={() => onSelectionChange(new Set())}
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors" aria-label="Clear selection">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-
-              {/* Count + select-all dropdown — compact trigger with a
-                  spacer after it so the gap before the star icon isn't
-                  itself one giant clickable "select all" button */}
-              <PhotoActionsMenu
-                align="left"
-                direction="up"
-                trigger={
-                  <span title="Select all" className="flex items-center gap-1 pl-1 pr-2 py-1.5 rounded-xl text-white hover:bg-white/15 transition-colors cursor-pointer">
-                    <span className="text-xs font-bold whitespace-nowrap">{selectedCount} selected</span>
-                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-                    </svg>
-                  </span>
-                }
-                actions={[
-                  { label: 'Select all', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>, onClick: () => onSelectionChange(new Set(sortedDisplayFiles.map(f => f.fileId))) },
-                  ...(isMultiSource ? activeSourceProjects.map(p => ({
-                    label: `Select all — ${p.clientName} (${(p.eventType ?? '').replace(/_/g, ' ')})`,
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
-                    onClick: () => onSelectionChange(new Set(sortedDisplayFiles.filter(f => f.projectId === p.projectId).map(f => f.fileId))),
-                  })) : []),
-                ]}
-              />
-              <div className="flex-1" />
-
-              {/* ★ Star (bulk toggle) */}
-              <button onClick={bulkToggleStar} title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                </svg>
-              </button>
-
-              {/* 🄫 Watermark (bulk) */}
-              <PhotoActionsMenu
-                align="right"
-                direction="up"
-                trigger={
-                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="Watermark options">
-                    {bulkWatermarking
-                      ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>}
-                  </span>
-                }
-                actions={[
-                  { label: 'Apply Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, onClick: () => bulkApplyWatermark(true) },
-                  { label: 'Remove Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>, onClick: () => bulkApplyWatermark(false) },
-                ]}
-              />
-
-              {/* ✨ AI Sorting/Search (bulk) */}
-              <button onClick={bulkAISort} title="Run AI Sorting on selected photos"
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
-                {bulkAISorting
-                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
-                    </svg>}
-              </button>
-
-              {/* 📤 Quick Share (opens share setup) */}
-              <button onClick={() => { setShowShareSetup(true) }} title="Quick Share selected photos"
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                </svg>
-              </button>
-
-              {/* ⋯ More — everything else from the per-photo/per-event menus
-                  that still makes sense in bulk */}
-              <PhotoActionsMenu
-                align="right"
-                direction="up"
-                trigger={
-                  <span className="flex items-center gap-0.5 w-8 h-8 flex-shrink-0 justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="More options">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
-                    </svg>
-                  </span>
-                }
-                actions={[
-                  { label: 'Preview selected',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
-                    onClick: () => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) } },
-                  { label: 'Download selected',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
-                    onClick: bulkDownloadSelected },
-                  { label: 'Delete selected', danger: true,
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>,
-                    onClick: () => setDeleteMode('selected') },
-                ]}
-              />
-
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

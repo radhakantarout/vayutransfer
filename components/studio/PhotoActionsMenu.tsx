@@ -108,7 +108,7 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', di
               className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-left transition-colors
                 ${action.danger ? 'text-red-400 hover:bg-red-500/10' : 'text-text-primary hover:bg-border/50'}`}
             >
-              {action.checked !== undefined ? (
+              {action.checked !== undefined && (
                 <span className={`w-3.5 h-3.5 flex-shrink-0 rounded border flex items-center justify-center transition-colors
                   ${action.checked ? 'bg-accent border-accent text-white' : 'border-muted'}`}>
                   {action.checked && (
@@ -117,7 +117,8 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', di
                     </svg>
                   )}
                 </span>
-              ) : (
+              )}
+              {action.icon && (
                 <span className="w-4 h-4 flex-shrink-0">{action.icon}</span>
               )}
               {action.label}

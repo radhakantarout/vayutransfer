@@ -185,15 +185,10 @@ function FlatProjectRow({
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
       <div className="min-w-0 flex-1">
         <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
-          {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')}
+          {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')}{p.totalFiles > 0 ? ` (${p.totalFiles})` : ''}
         </div>
         <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
       </div>
-      {p.totalFiles > 0 && (
-        <span className="text-[9px] text-muted bg-border/60 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
-          {p.totalFiles}
-        </span>
-      )}
       <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
         <PhotoActionsMenu
           align="right"
@@ -379,7 +374,7 @@ function ClientBranch({
                 {/* Event info */}
                 <div className="min-w-0 flex-1">
                   <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
-                    {(p.eventType ?? '').replace(/_/g, ' ')}
+                    {(p.eventType ?? '').replace(/_/g, ' ')}{p.totalFiles > 0 ? ` (${p.totalFiles})` : ''}
                   </div>
                   <div className="text-[10px] text-muted leading-tight">
                     {fmtDate(p.eventDate)} · <span className="text-[8px] uppercase tracking-wide">{STATUS_LABEL[p.status] ?? p.status}</span>
@@ -392,13 +387,6 @@ function ClientBranch({
                     className="flex items-center gap-0.5 text-[9px] font-semibold text-yellow-500 bg-yellow-500/10 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
                     <span className="w-2.5 h-2.5"><ClockIcon /></span>
                     {daysUntil(p.scheduledDeleteAt)}d
-                  </span>
-                )}
-
-                {/* File count badge */}
-                {p.totalFiles > 0 && (
-                  <span className="text-[9px] text-muted bg-border/60 rounded px-1 py-0.5 flex-shrink-0 leading-tight">
-                    {p.totalFiles}
                   </span>
                 )}
 
@@ -476,7 +464,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
-  const [bulkAISorting, setBulkAISorting] = useState(false)
   // Dispatched to EventSection so its own `files` state updates instantly
   // (no full reload) when the global pill's star toggle fires — see
   // EventSection's externalCurationUpdate prop.
@@ -500,15 +487,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [sidebarCollapsed])
   const [projectFiles, setProjectFiles]       = useState<Map<string, MediaFile[]>>(new Map())
   const [refreshTriggers, setRefreshTriggers] = useState<Map<string, number>>(new Map())
-  // Global pill modals
-  const [showGlobalPreview, setShowGlobalPreview] = useState(false)
-  const [globalPreviewIdx, setGlobalPreviewIdx]   = useState(0)
-  const [showGlobalDelete, setShowGlobalDelete]   = useState(false)
-  const [globalDeleting, setGlobalDeleting]       = useState(false)
   const [shareTargetProjectId, setShareTargetProjectId] = useState<string | null>(null)
-  const [shareError, setShareError]             = useState<string | null>(null)
-  const [shareSuccess, setShareSuccess]         = useState<string | null>(null)
-  const [sharing, setSharing]                   = useState(false)
   const zoomTrackRef                            = useRef<HTMLDivElement>(null)
 
   // Drag the zoom bar's dot up/down the track to set zoom directly, instead
@@ -738,11 +717,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const totalPhotoSelected = Array.from(photoSelections.values()).reduce((acc, s) => acc + s.size, 0)
 
-  // All selected photos flattened in order (for global preview)
-  const allSelectedPhotos = Array.from(photoSelections.entries()).flatMap(([pid, ids]) =>
-    (projectFiles.get(pid) ?? []).filter(f => ids.has(f.fileId))
-  )
-
   // Moved here from EventSection's header — same routes, just triggered from
   // the sidebar's project card now instead of an always-visible toolbar
   // button (one less button cluttering the gallery header). Targets whatever
@@ -789,144 +763,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })
   }
 
-  // "Select all" dropdown — a master checkbox plus one per currently open
-  // event, all togglable independently without closing the menu, so the
-  // admin can select everything then deselect just one event's photos.
-  const isProjectFullySelected = (projectId: string) => {
-    const total = (projectFiles.get(projectId) ?? []).length
-    const sel = photoSelections.get(projectId)?.size ?? 0
-    return total > 0 && sel === total
-  }
-
-  // Global selection pill's star toggle — standard "star-all" UX, same as
-  // the single-photo star button: if every selected photo is already
-  // starred, clicking clears all of them; otherwise it stars every one
-  // that isn't already. Updates the UI instantly (both projectFiles here —
-  // so a rapid second click sees the correct state — and each open
-  // EventSection's own files via externalCurationUpdate) and fires the
-  // backend PATCHes in the background, instead of waiting on them plus a
-  // full reload before anything visibly changes.
-  const allSelectedStarred = allSelectedPhotos.length > 0 && allSelectedPhotos.every(f => !!f.curationStatus)
-  const handleGlobalToggleStar = () => {
-    const willStar = !allSelectedStarred
-    const nextForUi: CurationStatus | undefined = willStar ? 'STARRED' : undefined
-    const nextForApi: CurationStatus | null = willStar ? 'STARRED' : null
-    const fileIds = allSelectedPhotos.map(f => f.fileId)
-    if (fileIds.length === 0) return
-
-    setProjectFiles(prev => {
-      const next = new Map(prev)
-      photoSelections.forEach((ids, pid) => {
-        const filesForP = next.get(pid)
-        if (!filesForP) return
-        next.set(pid, filesForP.map(f => ids.has(f.fileId) ? { ...f, curationStatus: nextForUi } : f))
-      })
-      return next
-    })
-    setCurationUpdateSignal({ fileIds, curationStatus: nextForUi, token: Date.now() })
-    setToast(`${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} ${willStar ? 'starred' : 'unstarred'}`)
-
-    Promise.all(
-      allSelectedPhotos.map(f =>
-        fetch(`/studio/api/admin/projects/${f.projectId}/files/${f.fileId}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ curationStatus: nextForApi }),
-        }).catch(() => {})
-      )
-    )
-  }
-
-  // Same fileIds-scoped face-indexing route the sidebar's per-event "⋯"
-  // menu already uses, grouped per-project for a selection spanning
-  // multiple merged events.
-  const handleGlobalAISort = async () => {
-    setBulkAISorting(true)
-    await Promise.all(
-      Array.from(photoSelections.entries()).map(([pid, ids]) =>
-        fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileIds: Array.from(ids) }),
-        }).catch(() => {})
-      )
-    )
-    setBulkAISorting(false)
-  }
-
-  // Sequential with a stagger — opening every selected photo's download tab
-  // at once via Promise.all gets most of them blocked by the browser's
-  // popup blocker (only the first synchronous window.open per user gesture
-  // is reliably allowed).
-  const handleGlobalDownload = async () => {
-    for (const f of allSelectedPhotos) {
-      const res = await fetch(`/studio/api/admin/projects/${f.projectId}/files/${f.fileId}/download`).then(r => r.json()).catch(() => null)
-      if (res?.success) window.open(res.data.url, '_blank')
-      await new Promise(r => setTimeout(r, 150))
-    }
-  }
-
-  const deleteAllSelected = async () => {
-    setGlobalDeleting(true)
-    await Promise.all(
-      Array.from(photoSelections.entries()).flatMap(([pid, ids]) =>
-        Array.from(ids).map(fid =>
-          fetch(`/studio/api/admin/projects/${pid}/files/${fid}`, { method: 'DELETE' })
-        )
-      )
-    )
-    // Bump refreshTrigger for every affected project so EventSections reload
-    setRefreshTriggers(prev => {
-      const next = new Map(prev)
-      Array.from(photoSelections.keys()).forEach(pid => next.set(pid, (next.get(pid) ?? 0) + 1))
-      return next
-    })
-    setPhotoSelections(new Map())
-    setShowGlobalDelete(false)
-    setGlobalDeleting(false)
-    fetchProjects()
-  }
-
-  const handleGlobalShare = async () => {
-    const pids = Array.from(photoSelections.keys())
-    if (pids.length === 0) return
-
-    // Validate all selected events belong to the same client
-    const selectedEventsForShare = pids.map(pid => selectedProjects.find(p => p.projectId === pid)).filter(Boolean) as StudioProject[]
-    const emails = Array.from(new Set(selectedEventsForShare.map(p => p.clientEmail)))
-    if (emails.length > 1) {
-      setShareError('Selected events belong to different clients. Please select events for one client at a time before sharing.')
-      return
-    }
-
-    setShareError(null)
-    setSharing(true)
-
-    // Generate share tokens for all selected events in parallel
-    const results = await Promise.all(
-      pids.map(async (pid) => {
-        const selIds = photoSelections.get(pid)
-        const includedFileIds = selIds ? Array.from(selIds) : []
-        const res = await fetch(`/studio/api/admin/projects/${pid}/share-link`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ expiryDays: 30, includedFileIds }),
-        }).then(r => r.json())
-        return { pid, res }
-      })
-    )
-
-    setSharing(false)
-    const failed = results.filter(r => !r.res.success)
-    if (failed.length > 0) {
-      setShareError(failed[0].res.message ?? 'Failed to generate share link. Please try again.')
-      return
-    }
-
-    // Use the first event's share URL (client opens overview and sees all events)
-    const firstUrl = results[0]?.res?.data?.shareUrl ?? ''
-    setShareSuccess(firstUrl)
-    fetchProjects()
-  }
-
   const clientGroups = (() => {
     const map = new Map<string, StudioProject[]>()
     for (const p of projects) {
@@ -950,32 +786,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
     .filter((p): p is StudioProject => !!p)
-
-  const allOpenFullySelected = selectedProjects.length > 0 && selectedProjects.every(p => isProjectFullySelected(p.projectId))
-  const toggleSelectAllMaster = () => {
-    if (allOpenFullySelected) {
-      setPhotoSelections(new Map())
-      return
-    }
-    const next = new Map<string, Set<string>>()
-    selectedProjects.forEach(p => {
-      const filesForP = projectFiles.get(p.projectId) ?? []
-      if (filesForP.length > 0) next.set(p.projectId, new Set(filesForP.map(f => f.fileId)))
-    })
-    setPhotoSelections(next)
-  }
-  const toggleProjectFullSelection = (projectId: string) => {
-    setPhotoSelections(prev => {
-      const next = new Map(prev)
-      if (isProjectFullySelected(projectId)) {
-        next.delete(projectId)
-      } else {
-        const filesForP = projectFiles.get(projectId) ?? []
-        if (filesForP.length > 0) next.set(projectId, new Set(filesForP.map(f => f.fileId)))
-      }
-      return next
-    })
-  }
 
   // Which product is active — drives the sidebar's simplified shape (the
   // Projects tree only makes sense in Gallery mode; Settings/Storage/AI-usage/
@@ -1504,16 +1314,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onSelectionChange={handleSelectionChange(selectedProjects[0].projectId)}
                 onFilesLoaded={handleFilesLoaded(selectedProjects[0].projectId)}
                 refreshTrigger={refreshTriggers.get(selectedProjects[0].projectId) ?? 0}
-                hidePill={true}
                 triggerShare={shareTargetProjectId === selectedProjects[0].projectId}
                 onShareTriggered={() => setShareTargetProjectId(null)}
                 zoomLevel={zoomLevel}
                 viewMode={gridViewMode}
                 onViewModeChange={setGridViewMode}
-                onEditProject={setEditProject}
-                onQuickShare={setShareModalProjects}
-                onAISort={setAiModalProjects}
-                onDeleteProject={setDeleteModalProjects}
                 onClose={() => { clearSelection(); router.push('/studio/dashboard/overview') }}
                 photoSourceProjects={selectedProjects}
                 photoSelectionsMap={photoSelections}
@@ -1652,205 +1457,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       )}
 
-      {/* ── Global selection pill (all events combined) ──────── */}
-      {totalPhotoSelected > 0 && (
-        <div className="fixed bottom-5 inset-x-4 z-40 flex justify-center">
-          <div className="bg-accent shadow-[0_10px_30px_-6px_rgba(0,0,0,0.45)] rounded-2xl overflow-hidden w-full max-w-md">
-            <div className="flex items-center gap-0.5 px-2 py-2">
-
-              {/* × clear */}
-              <button onClick={() => setPhotoSelections(new Map())}
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors" aria-label="Clear selection">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-
-              {/* Count + select-all dropdown — compact trigger (not a
-                  flex-1 button, which used to make the whole gap between
-                  it and the star icon clickable) with a spacer after it to
-                  push the remaining icons to the right */}
-              <PhotoActionsMenu
-                align="left"
-                direction="up"
-                trigger={
-                  <span title="Select all" className="flex items-center gap-1 pl-1 pr-2 py-1.5 rounded-xl text-white hover:bg-white/15 transition-colors cursor-pointer">
-                    <span className="text-xs font-bold whitespace-nowrap">
-                      {totalPhotoSelected} selected{photoSelections.size > 1 ? ` · ${photoSelections.size} events` : ''}
-                    </span>
-                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-                    </svg>
-                  </span>
-                }
-                actions={[
-                  { label: 'Select all', checked: allOpenFullySelected, onClick: toggleSelectAllMaster },
-                  ...(selectedProjects.length > 1 ? selectedProjects.map(p => ({
-                    label: (p.eventType ?? '').replace(/_/g, ' '),
-                    checked: isProjectFullySelected(p.projectId),
-                    onClick: () => toggleProjectFullSelection(p.projectId),
-                  })) : []),
-                ]}
-              />
-              <div className="flex-1" />
-
-              {/* ★ Star (bulk toggle) */}
-              <button onClick={handleGlobalToggleStar} title={allSelectedStarred ? 'Unstar selected' : 'Star selected'}
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                </svg>
-              </button>
-
-              {/* 🄫 Watermark (bulk) */}
-              <PhotoActionsMenu
-                align="right"
-                direction="up"
-                trigger={
-                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="Watermark options">
-                    {bulkWatermarking
-                      ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>}
-                  </span>
-                }
-                actions={[
-                  { label: 'Apply Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, onClick: () => handleBulkWatermark(true) },
-                  { label: 'Remove Watermark', icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>, onClick: () => handleBulkWatermark(false) },
-                ]}
-              />
-
-              {/* ✨ AI Sorting/Search (bulk) */}
-              <button onClick={handleGlobalAISort} title="Run AI Sorting on selected photos"
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors">
-                {bulkAISorting
-                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
-                    </svg>}
-              </button>
-
-              {/* 📤 Quick Share */}
-              <button
-                onClick={handleGlobalShare}
-                disabled={sharing}
-                title="Quick Share selected photos"
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors disabled:opacity-50">
-                {sharing
-                  ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                    </svg>
-                }
-              </button>
-
-              {/* ⋯ More — everything else that still makes sense in bulk */}
-              <PhotoActionsMenu
-                align="right"
-                direction="up"
-                trigger={
-                  <span className="w-8 h-8 flex items-center justify-center rounded-xl text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer" aria-label="More options">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
-                    </svg>
-                  </span>
-                }
-                actions={[
-                  { label: 'Preview selected',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
-                    onClick: () => { setGlobalPreviewIdx(0); setShowGlobalPreview(true) } },
-                  { label: 'Download selected',
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
-                    onClick: handleGlobalDownload },
-                  { label: 'Delete selected', danger: true,
-                    icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>,
-                    onClick: () => setShowGlobalDelete(true) },
-                ]}
-              />
-
-            </div>
-
-            {/* Share error */}
-            {shareError && (
-              <div className="px-3 pb-2.5 flex items-start gap-2">
-                <svg className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
-                <p className="text-[11px] text-red-500 leading-snug">{shareError}</p>
-                <button onClick={() => setShareError(null)} className="ml-auto text-muted hover:text-text-primary flex-shrink-0">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-            )}
-
-            {/* Share success */}
-            {shareSuccess && (
-              <div className="px-3 pb-2.5 flex items-center gap-2">
-                <svg className="w-3.5 h-3.5 text-success flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <p className="text-[11px] text-success font-semibold flex-1 truncate">Shared! Client can view all events</p>
-                <button onClick={async () => { await navigator.clipboard.writeText(shareSuccess); setShareSuccess(null) }}
-                  className="text-[11px] text-accent font-semibold hover:underline flex-shrink-0">Copy link</button>
-                <button onClick={() => setShareSuccess(null)} className="text-muted hover:text-text-primary flex-shrink-0">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-            )}
-
-          </div>
-        </div>
-      )}
-
-      {/* ── Global preview lightbox ───────────────────────────── */}
-      {showGlobalPreview && allSelectedPhotos.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={() => setShowGlobalPreview(false)}>
-          <div className="flex items-center justify-between px-4 py-3" onClick={e => e.stopPropagation()}>
-            <span className="text-white/70 text-sm">{globalPreviewIdx + 1} / {allSelectedPhotos.length}</span>
-            <button onClick={() => setShowGlobalPreview(false)} className="text-white/70 hover:text-white">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div className="flex-1 flex items-center justify-center relative" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setGlobalPreviewIdx(i => Math.max(0, i - 1))}
-              className="absolute left-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <img
-              src={allSelectedPhotos[globalPreviewIdx]?.r2PreviewUrl ?? ''}
-              alt={allSelectedPhotos[globalPreviewIdx]?.originalFilename}
-              className="max-h-[80vh] max-w-[85vw] object-contain rounded-lg"
-            />
-            <button onClick={() => setGlobalPreviewIdx(i => Math.min(allSelectedPhotos.length - 1, i + 1))}
-              className="absolute right-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Global delete confirm ─────────────────────────────── */}
-      {showGlobalDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="bg-card rounded-2xl border border-border shadow-2xl p-6 w-full max-w-sm space-y-4">
-            <h3 className="text-base font-bold text-text-primary">Delete {totalPhotoSelected} photo{totalPhotoSelected !== 1 ? 's' : ''}?</h3>
-            <p className="text-sm text-muted">This will permanently delete the selected photos{photoSelections.size > 1 ? ` across ${photoSelections.size} events` : ''}. This cannot be undone.</p>
-            <div className="flex gap-2">
-              <button onClick={() => setShowGlobalDelete(false)} disabled={globalDeleting}
-                className="flex-1 text-sm border border-border py-2 rounded-xl hover:bg-border/40 transition-colors text-muted disabled:opacity-50">
-                Cancel
-              </button>
-              <button onClick={deleteAllSelected} disabled={globalDeleting}
-                className="flex-1 text-sm bg-red-500 text-white font-bold py-2 rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50">
-                {globalDeleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

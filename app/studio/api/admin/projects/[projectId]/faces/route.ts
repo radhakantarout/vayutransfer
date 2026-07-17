@@ -25,18 +25,29 @@ export async function GET(
     const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
     if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
-    // Job status — latest active or completed job for this project
+    // Job status — latest active or completed job for this project. The
+    // projectId-status-index GSI has no jobType in its key, so a PENDING/
+    // PROCESSING job of a *different* type (e.g. a stale ZIP_DOWNLOAD job
+    // that never got marked READY/FAILED) could otherwise be picked up as
+    // this project's "active face-indexing job" — which made the frontend
+    // poll forever, believing indexing was still running when it wasn't.
+    // Fetch a small batch per status and filter to INDEX_FACES in code
+    // instead of relying on Limit:1 alone.
     const [pendingJobs, processingJobs, readyJobs] = await Promise.all([
       studioQueryByIndex<StudioJob>(TABLES.jobs, 'projectId-status-index',
-        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'PENDING' }, { '#s': 'status' }, 1),
+        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'PENDING' }, { '#s': 'status' }, 25),
       studioQueryByIndex<StudioJob>(TABLES.jobs, 'projectId-status-index',
-        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'PROCESSING' }, { '#s': 'status' }, 1),
+        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'PROCESSING' }, { '#s': 'status' }, 25),
       studioQueryByIndex<StudioJob>(TABLES.jobs, 'projectId-status-index',
-        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'READY' }, { '#s': 'status' }, 1),
+        'projectId = :pid AND #s = :s', { ':pid': projectId, ':s': 'READY' }, { '#s': 'status' }, 25),
     ])
 
-    const activeJob  = processingJobs[0] ?? pendingJobs[0] ?? null
-    const lastReady  = readyJobs[0] ?? null
+    const activeJob = processingJobs.find(j => j.jobType === 'INDEX_FACES')
+      ?? pendingJobs.find(j => j.jobType === 'INDEX_FACES')
+      ?? null
+    const lastReady = readyJobs
+      .filter(j => j.jobType === 'INDEX_FACES')
+      .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''))[0] ?? null
 
     // Count unindexed photos — projectId is the table's own PK, no GSI needed
     const pendingRes = await ddb.send(new DocQueryCommand({

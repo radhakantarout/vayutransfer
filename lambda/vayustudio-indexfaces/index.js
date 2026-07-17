@@ -1,6 +1,6 @@
 'use strict'
 
-const { RekognitionClient, CreateCollectionCommand, IndexFacesCommand } = require('@aws-sdk/client-rekognition')
+const { RekognitionClient, CreateCollectionCommand, DeleteCollectionCommand, IndexFacesCommand } = require('@aws-sdk/client-rekognition')
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, GetCommand, UpdateCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb')
@@ -53,7 +53,7 @@ async function updateJob(jobId, patch) {
 
 // ─── index one file — returns face count detected ───────────────────────────
 
-async function indexFileFaces(projectId, file) {
+async function indexFileFaces(projectId, file, qualityFilter) {
   // A single project's photos can span both backends mid-migration — each
   // file is read from wherever it actually lives, keyed off its own record.
   const useR2 = file.storageBackend === 'R2' && file.r2Key
@@ -62,9 +62,16 @@ async function indexFileFaces(projectId, file) {
     : await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: file.s3Key }))
   const originalBuffer = await streamToBuffer(obj.Body)
 
-  // Resize to 1200px max — well under 5 MB limit, good enough for detection
+  // Resize to 1920px max (was 1200px) — still comfortably under the 5MB
+  // Image.Bytes limit at JPEG q85, but keeps far more detail for small/
+  // distant faces in wide group shots. At 1200px, a face that's only ~5% of
+  // the frame (typical in a big group photo) shrank to a handful of pixels
+  // across — not enough detail for Rekognition to produce a reliably
+  // distinctive embedding, which is what caused high-confidence WRONG
+  // matches later (low-quality embeddings don't fail loudly, they just
+  // match generically).
   const rekBuffer = await sharp(originalBuffer)
-    .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 85 })
     .toBuffer()
 
@@ -73,8 +80,14 @@ async function indexFileFaces(projectId, file) {
       CollectionId: `vayustudio-${projectId}`,
       Image: { Bytes: rekBuffer },
       ExternalImageId: file.fileId,   // stored in collection — lets SearchFacesByImage return fileIds directly
-      MaxFaces: 20,
-      QualityFilter: 'LOW',
+      // Big Indian wedding/event group shots can have 20-50+ people in one
+      // frame — 20 was already a real ceiling.
+      MaxFaces: 50,
+      // Resolved from the admin's Accuracy slider (lib/studio/faceAccuracy.ts
+      // on the Next.js side maps 0-100 -> NONE/LOW/AUTO/MEDIUM/HIGH) and
+      // passed in via the invocation payload — defaults to AUTO, Rekognition's
+      // own recommended balance, if the caller didn't specify one.
+      QualityFilter: qualityFilter || 'AUTO',
       DetectionAttributes: ['DEFAULT'],
     }))
     return result.FaceRecords?.length ?? 0
@@ -87,8 +100,8 @@ async function indexFileFaces(projectId, file) {
 // ─── Lambda handler ──────────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
-  const { projectId, studioId, jobId, fileIds } = event
-  console.log(`[indexfaces] START projectId=${projectId} jobId=${jobId}${fileIds ? ` scoped=${fileIds.length}` : ''}`)
+  const { projectId, studioId, jobId, fileIds, forceAll, qualityFilter } = event
+  console.log(`[indexfaces] START projectId=${projectId} jobId=${jobId}${fileIds ? ` scoped=${fileIds.length}` : ''}${forceAll ? ' forceAll=true' : ''}`)
 
   await updateJob(jobId, { status: 'PROCESSING', updatedAt: new Date().toISOString() })
 
@@ -100,6 +113,20 @@ exports.handler = async (event) => {
       return { statusCode: 403, body: 'Feature flag disabled' }
     }
 
+    // forceAll = redo every photo from scratch, not just the unindexed ones.
+    // Delete the collection first so re-indexing doesn't just pile new faces
+    // on top of the old ones for photos that were already indexed — that
+    // would double up (and never remove) the very low-quality faces a
+    // forced reindex is usually run to get rid of. CreateCollection below
+    // then rebuilds it fresh, empty.
+    if (forceAll) {
+      try {
+        await rek.send(new DeleteCollectionCommand({ CollectionId: `vayustudio-${projectId}` }))
+      } catch (err) {
+        if (err.name !== 'ResourceNotFoundException') throw err
+      }
+    }
+
     // Create Rekognition collection (idempotent)
     try {
       await rek.send(new CreateCollectionCommand({ CollectionId: `vayustudio-${projectId}` }))
@@ -107,16 +134,20 @@ exports.handler = async (event) => {
       if (err.name !== 'ResourceAlreadyExistsException') throw err
     }
 
-    // Query READY images not yet indexed — projectId is the table PK, no GSI needed
+    // Query READY images — forceAll processes every one regardless of
+    // current faceIndexed status; otherwise only the not-yet-indexed ones.
+    // projectId is the table PK, no GSI needed.
     const filesRes = await ddb.send(new QueryCommand({
       TableName: MEDIAFILES_TABLE,
       KeyConditionExpression: 'projectId = :pid',
-      FilterExpression: 'processingStatus = :ready AND fileType = :img AND (attribute_not_exists(faceIndexed) OR faceIndexed = :false)',
+      FilterExpression: forceAll
+        ? 'processingStatus = :ready AND fileType = :img'
+        : 'processingStatus = :ready AND fileType = :img AND (attribute_not_exists(faceIndexed) OR faceIndexed = :false)',
       ExpressionAttributeValues: {
         ':pid':   projectId,
         ':ready': 'READY',
         ':img':   'IMAGE',
-        ':false': false,
+        ...(forceAll ? {} : { ':false': false }),
       },
     }))
 
@@ -127,12 +158,27 @@ exports.handler = async (event) => {
     }
     console.log(`[indexfaces] ${files.length} images to index`)
 
+    if (forceAll && files.length > 0) {
+      // Reset every targeted photo back to "not yet indexed" up front so the
+      // status endpoint (and the app's live blur/spinner per photo tile)
+      // accurately shows a fresh pass in progress, instead of still
+      // reporting the old "all done" the whole time this job runs.
+      await Promise.all(files.map((file) =>
+        ddb.send(new UpdateCommand({
+          TableName: MEDIAFILES_TABLE,
+          Key: { projectId, fileId: file.fileId },
+          UpdateExpression: 'SET faceIndexed = :f, faceCount = :z REMOVE faceIndexedAt',
+          ExpressionAttributeValues: { ':f': false, ':z': 0 },
+        })).catch(() => {})
+      ))
+    }
+
     let indexed = 0
     const now = new Date().toISOString()
 
     for (const file of files) {
       try {
-        const faceCount = await indexFileFaces(projectId, file)
+        const faceCount = await indexFileFaces(projectId, file, qualityFilter)
         await ddb.send(new UpdateCommand({
           TableName: MEDIAFILES_TABLE,
           Key: { projectId, fileId: file.fileId },
