@@ -1066,15 +1066,29 @@ export default function EventSection({
     if (!fileIds.length) return
     setDeleting(true)
     setDeleteError(null)
-    const results = await Promise.all(fileIds.map(fid =>
-      fetch(`/studio/api/admin/projects/${projectIdOf(fid)}/files/${fid}`, { method: 'DELETE' })
-        .then(async (res) => ({ fid, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
-        .catch(() => ({ fid, ok: false }))
+    // One bulk request per project touched (not one per photo) — a
+    // multi-event selection still spans at most a couple of requests, and
+    // each one lands as exactly one audit log entry server-side instead of
+    // a flood of single-photo entries.
+    const byProject = new Map<string, string[]>()
+    for (const fid of fileIds) {
+      const pid = projectIdOf(fid)
+      byProject.set(pid, [...(byProject.get(pid) ?? []), fid])
+    }
+    const results = await Promise.all(Array.from(byProject.entries()).map(([pid, ids]) =>
+      fetch(`/studio/api/admin/projects/${pid}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds: ids }),
+      })
+        .then(async (res) => ({ pid, count: ids.length, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
+        .catch(() => ({ pid, count: ids.length, ok: false }))
     ))
     const failed = results.filter(r => !r.ok)
     setDeleteMode(null); onSelectionChange(new Set()); setDeleting(false)
     if (failed.length > 0) {
-      setDeleteError(`Could not delete ${failed.length} of ${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} — please try again.`)
+      const failedCount = failed.reduce((sum, r) => sum + r.count, 0)
+      setDeleteError(`Could not delete ${failedCount} of ${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} — please try again.`)
     }
     await loadFiles(); onUpdated()
   }

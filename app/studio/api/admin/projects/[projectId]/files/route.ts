@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioGetItem, studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { getMediaPreviewUrl } from '@/lib/studio/storage'
+import { studioGetItem, studioQueryByPK, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
+import { getMediaPreviewUrl, deleteMediaObjects } from '@/lib/studio/storage'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import type { MediaFile, StudioProject } from '@/types/studio'
 
 export async function GET(
@@ -80,6 +81,89 @@ export async function GET(
     return NextResponse.json({ success: true, data: enriched })
   } catch (err) {
     console.error('[files GET]', err)
+    return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
+  }
+}
+
+// DELETE — bulk-remove multiple photos from this project in one request.
+// Replaces the old pattern of firing one DELETE per fileId from the client
+// (EventSection.tsx's deleteFiles()) — besides being one network round trip
+// instead of N, a 40-photo delete now produces exactly ONE audit log entry
+// with the full batch's photoCount/bytes, not 40 separate ones.
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { projectId: string } }
+) {
+  try {
+    const auth = await verifyStudioJWT(req)
+    if (!auth || !['ADMIN', 'OWNER'].includes(auth.role)) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+
+    const { projectId } = params
+    const { fileIds } = await req.json().catch(() => ({})) as { fileIds?: string[] }
+    if (!Array.isArray(fileIds) || fileIds.length === 0) {
+      return NextResponse.json({ success: false, error: 'NO_FILE_IDS' }, { status: 400 })
+    }
+
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: auth.studioId, projectId })
+    if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+    const files = (await Promise.all(
+      fileIds.map((fileId) => studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId }))
+    )).filter((f): f is MediaFile => !!f && f.studioId === auth.studioId)
+
+    if (files.length === 0) {
+      return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+    }
+
+    await Promise.all(files.map((f) => deleteMediaObjects(f)))
+    await Promise.all([
+      ...files.map((f) => studioDeleteItem(TABLES.mediafiles, { projectId, fileId: f.fileId })),
+      ...files.map((f) => studioDeleteItem(TABLES.selections, { projectId, fileId: f.fileId }).catch(() => {})),
+    ])
+
+    const now = new Date().toISOString()
+    const totalBytes = files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
+
+    await studioUpdateItem(
+      TABLES.projects,
+      { studioId: auth.studioId, projectId },
+      'ADD totalFiles :neg SET updatedAt = :now',
+      { ':neg': -files.length, ':now': now },
+      undefined,
+      'attribute_exists(studioId)'
+    ).catch(() => {})
+    // billableStorageBytes decrement — storageUsedBytes (Total Upload Size)
+    // intentionally left untouched, it's the historical/lifetime figure.
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId: auth.studioId },
+      'ADD billableStorageBytes :negSize SET updatedAt = :now',
+      { ':negSize': -totalBytes, ':now': now }
+    )
+
+    logAuditEvent({
+      studioId: auth.studioId!,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      action: 'DELETE_PHOTOS',
+      targetType: 'PHOTO_BATCH',
+      targetId: projectId,
+      metadata: {
+        photoCount: files.length,
+        totalBytes,
+        projectId,
+        clientName: project.clientName,
+        eventType: project.eventType,
+        requestedCount: fileIds.length,
+        notFoundCount: fileIds.length - files.length,
+      },
+    })
+
+    return NextResponse.json({ success: true, data: { deletedCount: files.length } })
+  } catch (err) {
+    console.error('[files bulk DELETE]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
   }
 }

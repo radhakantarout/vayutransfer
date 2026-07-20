@@ -203,6 +203,21 @@ exports.handler = async (event) => {
       },
     }))
 
+    // Persisted, increment-only — this is the only place indexing actually
+    // happens, so it's the only place this needs incrementing. Deliberately
+    // never decremented anywhere else (not on photo/project delete): the
+    // Rekognition cost was already paid the moment this ran, so deleting
+    // the photo afterward must not make the studio's AI-search usage look
+    // smaller than what was actually billed.
+    if (indexed > 0) {
+      await ddb.send(new UpdateCommand({
+        TableName: STUDIOS_TABLE,
+        Key: { studioId },
+        UpdateExpression: 'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+        ExpressionAttributeValues: { ':n': indexed, ':now': new Date().toISOString() },
+      })).catch((err) => console.error('[indexfaces] aiSearchCreditsUsed increment failed:', err.message))
+    }
+
     console.log(`[indexfaces] DONE — indexed ${indexed}/${files.length}`)
     return { statusCode: 200, body: `Indexed ${indexed}/${files.length}` }
   } catch (err) {

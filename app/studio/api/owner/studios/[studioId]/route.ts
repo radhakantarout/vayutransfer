@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioSuspendedEmail, sendStudioReactivatedEmail, sendStudioDeletedEmail } from '@/lib/aws/ses'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import type { Studio, StudioUser, StudioProject, MediaFile, Selection } from '@/types/studio'
 
 export async function GET(
@@ -64,6 +65,11 @@ export async function PATCH(
         { ':val': featureFlag.value, ':now': now },
         { '#flag': featureFlag.key }
       )
+      logAuditEvent({
+        studioId, actorId: auth.userId, actorRole: auth.role,
+        action: 'TOGGLE_AI_FLAG', targetType: 'STUDIO', targetId: studioId,
+        metadata: { flagKey: featureFlag.key, newValue: featureFlag.value, studioName: studio.name },
+      })
       return NextResponse.json({ success: true, data: { studioId, featureFlag } })
     }
 
@@ -103,6 +109,12 @@ export async function PATCH(
           : sendStudioReactivatedEmail(u.email!, studio.name)
         send.catch((err) => console.error('[studio status email]', err))
       })
+      logAuditEvent({
+        studioId, actorId: auth.userId, actorRole: auth.role,
+        action: status === 'SUSPENDED' ? 'SUSPEND_STUDIO' : 'REACTIVATE_STUDIO',
+        targetType: 'STUDIO', targetId: studioId,
+        metadata: { studioName: studio.name, reason, previousStatus: studio.status },
+      })
     }
 
     return NextResponse.json({ success: true, data: { studioId, status } })
@@ -135,7 +147,11 @@ export async function DELETE(
       studioQueryByIndex<StudioUser>(TABLES.users, 'linkedStudioId-index', 'linkedStudioId = :sid', { ':sid': studioId }).catch(() => [] as StudioUser[]),
     ])
 
-    // For each project, delete mediafiles + selections
+    // For each project, delete mediafiles + selections — tallied for the
+    // audit entry below, since this is the single most consequential action
+    // an owner can take and needs the fullest possible record.
+    let photoCount = 0
+    let totalBytes = 0
     for (const project of projects) {
       const [mediafiles, selections] = await Promise.all([
         studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId),
@@ -145,6 +161,8 @@ export async function DELETE(
         ...mediafiles.map((f) => studioDeleteItem(TABLES.mediafiles, { projectId: project.projectId, fileId: f.fileId })),
         ...selections.map((s) => studioDeleteItem(TABLES.selections, { projectId: project.projectId, fileId: s.fileId })),
       ])
+      photoCount += mediafiles.length
+      totalBytes += mediafiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
     }
 
     // Delete projects, users, studio in parallel
@@ -153,6 +171,18 @@ export async function DELETE(
       ...users.map((u) => studioDeleteItem(TABLES.users, { userId: u.userId })),
     ])
     await studioDeleteItem(TABLES.studios, { studioId })
+
+    logAuditEvent({
+      studioId, actorId: auth.userId, actorRole: auth.role,
+      action: 'DELETE_STUDIO', targetType: 'STUDIO', targetId: studioId,
+      metadata: {
+        studioName: studio.name, reason,
+        projectCount: projects.length,
+        clientCount: new Set(projects.map((p) => p.clientName)).size,
+        userCount: users.length,
+        photoCount, totalBytes,
+      },
+    })
 
     // Notify former admins async (fire-and-forget) — captured emails before the cascade delete above
     users

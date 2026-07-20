@@ -3,7 +3,8 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
-import type { MediaFile, CurationStatus } from '@/types/studio'
+import { logAuditEvent } from '@/lib/studio/auditLog'
+import type { MediaFile, StudioProject, CurationStatus } from '@/types/studio'
 
 const CURATION_STATUSES: CurationStatus[] = ['STARRED', 'FAVORITE', 'FINAL']
 
@@ -138,6 +139,23 @@ export async function DELETE(
       'ADD billableStorageBytes :negSize SET updatedAt = :now',
       { ':negSize': -file.sizeBytes, ':now': now }
     )
+
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: file.studioId, projectId }).catch(() => null)
+    logAuditEvent({
+      studioId: file.studioId,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      action: 'DELETE_PHOTOS',
+      targetType: 'PHOTO_BATCH',
+      targetId: projectId,
+      metadata: {
+        photoCount: 1,
+        totalBytes: file.sizeBytes,
+        projectId,
+        clientName: project?.clientName,
+        eventType: project?.eventType,
+      },
+    })
 
     return NextResponse.json({ success: true })
   } catch (err) {

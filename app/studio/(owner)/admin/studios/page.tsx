@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import type { Studio, StudioPlan } from '@/types/studio'
 
 const PLANS: StudioPlan[] = ['STARTER', 'PRO', 'STUDIO', 'ENTERPRISE']
@@ -54,6 +55,9 @@ export default function OwnerStudiosPage() {
   const [deleting, setDeleting]           = useState<string | null>(null)
   const [confirmSuspend, setConfirmSuspend] = useState<string | null>(null)
   const [reasonDrafts, setReasonDrafts]     = useState<Record<string, string>>({})
+  const [search, setSearch]     = useState('')
+  const [sortKey, setSortKey]   = useState<'name' | 'storage' | 'createdAt'>('createdAt')
+  const [sortDir, setSortDir]   = useState<'asc' | 'desc'>('desc')
 
   const [form, setForm]         = useState<FormState>(EMPTY_FORM)
   const [touched, setTouched]   = useState<Partial<Record<keyof FormState, boolean>>>({})
@@ -72,6 +76,27 @@ export default function OwnerStudiosPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  const toggleSort = (key: 'name' | 'storage' | 'createdAt') => {
+    if (sortKey === key) { setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); return }
+    setSortKey(key)
+    // Storage/date read most-naturally newest/largest-first on first click;
+    // name reads most-naturally A→Z first.
+    setSortDir(key === 'name' ? 'asc' : 'desc')
+  }
+
+  const visibleStudios = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = q ? studios.filter((s) => s.name.toLowerCase().includes(q)) : studios
+    const sorted = [...filtered].sort((a, b) => {
+      let cmp = 0
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name)
+      else if (sortKey === 'storage') cmp = (a.billableStorageBytes ?? 0) - (b.billableStorageBytes ?? 0)
+      else cmp = (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [studios, search, sortKey, sortDir])
 
   const setField = (k: keyof FormState, v: string) => setForm((f) => ({ ...f, [k]: v }))
   const touch = (k: keyof FormState) => setTouched((t) => ({ ...t, [k]: true }))
@@ -343,6 +368,48 @@ export default function OwnerStudiosPage() {
         </form>
       )}
 
+      {/* Search + sort toolbar */}
+      {!loading && studios.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative w-64 flex-shrink-0">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search studios…"
+              className="w-full bg-card border border-border rounded-xl pl-9 pr-8 py-2 text-sm text-text-primary placeholder:text-muted/60 focus:outline-none focus:border-accent/60 transition-colors"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-muted">Sort:</span>
+            {([['name', 'Name'], ['storage', 'Storage'], ['createdAt', 'Created']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => toggleSort(key)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border font-semibold transition-colors ${
+                  sortKey === key ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border text-muted hover:text-text-primary'
+                }`}>
+                {label}
+                {sortKey === key && (
+                  <svg className={`w-3 h-3 transition-transform ${sortDir === 'asc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Studios list */}
       {loading ? (
         <div className="flex justify-center py-16">
@@ -350,9 +417,11 @@ export default function OwnerStudiosPage() {
         </div>
       ) : studios.length === 0 ? (
         <div className="text-center py-16 text-muted">No studios yet. Create the first one above.</div>
+      ) : visibleStudios.length === 0 ? (
+        <div className="text-center py-16 text-muted">No studios match &quot;{search}&quot;.</div>
       ) : (
         <div className="space-y-2">
-          {studios.map((s) => (
+          {visibleStudios.map((s) => (
             <div key={s.studioId} className="bg-card border border-border rounded-2xl px-5 py-4 space-y-3">
               <div className="flex items-center gap-4">
                 <div className="flex-1 min-w-0">
@@ -360,16 +429,25 @@ export default function OwnerStudiosPage() {
                   <div className="text-xs text-muted mt-0.5 flex gap-3 flex-wrap">
                     <span>{s.plan}</span>
                     <span>·</span>
-                    <span>{s.projectCount} projects</span>
+                    <span>{s.projectCount} events</span>
                     <span>·</span>
                     <span>{stats?.clientsPerStudio?.[s.studioId] ?? 0} clients</span>
                     <span>·</span>
-                    <span>{formatBytes(s.storageUsedBytes ?? 0)}</span>
+                    <span title="Live storage — decreases as photos are deleted">{formatBytes(Math.max(0, s.billableStorageBytes ?? 0))}</span>
+                    <span>·</span>
+                    <span title="Cumulative photos ever indexed — never decreases">{s.aiSearchCreditsUsed ?? 0} AI indexed</span>
                     <span>·</span>
                     <span>Created {new Date(s.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0 relative z-20">
+                  <Link
+                    href={`/studio/admin/studios/${s.studioId}/performance`}
+                    className="text-xs border border-border text-muted hover:text-accent hover:border-accent/40 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                    title="View performance — deletes, uploads, downloads, clients, events"
+                  >
+                    Performance
+                  </Link>
                   <button
                     onClick={() => toggleAI(s)}
                     disabled={togglingAI === s.studioId}

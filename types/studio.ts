@@ -47,11 +47,16 @@ export interface Studio {
   billableStorageBytes: number
   storageGrants: StorageGrant[]
   // Total AI-search (face-indexing) credits ever granted — free baseline +
-  // every top-up, cumulative, never decrements. "Used" is computed live by
-  // summing indexed-photo counts across the studio's projects, not stored
-  // here. Undefined on studios created before this field existed — treat as
-  // just the free baseline (see FREE_AI_SEARCH_CREDITS).
+  // every top-up, cumulative, never decrements. Undefined on studios created
+  // before this field existed — treat as just the free baseline (see
+  // FREE_AI_SEARCH_CREDITS).
   aiSearchCreditsTotal?: number
+  // Cumulative photos ever successfully indexed by Rekognition — incremented
+  // only by the indexing Lambda, right after a batch completes. Deliberately
+  // NEVER decremented on photo/project delete: the Rekognition cost was
+  // already incurred and is non-refundable, so deleting the photo later must
+  // not make it look like that AI-search credit was never spent.
+  aiSearchCreditsUsed?: number
   dataRetentionGraceDays: number
   storageOverageStartedAt?: string
   storageReminderCount?: number
@@ -247,16 +252,28 @@ export interface Selection {
   updatedAt: string
 }
 
+// One row per admin-initiated *action*, not per underlying record — a bulk
+// delete of 40 photos is one row with metadata.photoCount = 40, never 40
+// rows. This is the platform's only record of who deleted/suspended/changed
+// what and how much, for resolving future claims/disputes — see
+// lib/studio/auditLog.ts for the write helper, never write to this table
+// directly.
+export type AuditAction =
+  | 'DELETE_PHOTOS' | 'DELETE_PROJECT' | 'DELETE_CLIENT' | 'DELETE_STUDIO'
+  | 'SUSPEND_STUDIO' | 'REACTIVATE_STUDIO' | 'TOGGLE_AI_FLAG'
+export type AuditTargetType = 'PHOTO_BATCH' | 'PROJECT' | 'CLIENT' | 'STUDIO'
+
 export interface AuditLog {
+  auditId: string
+  studioId: string
+  createdAt: string
   actorId: string
-  timestamp: string
-  actorRole: StudioRole
-  action: string
-  targetId: string
-  targetType: 'USER' | 'PROJECT' | 'STUDIO' | 'TOKEN'
-  metadata?: Record<string, unknown>
-  ipAddress?: string
-  userAgent?: string
+  actorEmail?: string
+  actorRole: StudioRole | 'SYSTEM'
+  action: AuditAction
+  targetType: AuditTargetType
+  targetId?: string
+  metadata: Record<string, unknown>
 }
 
 // ── Website Builder ────────────────────────────────────────────────────────────

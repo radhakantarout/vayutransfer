@@ -6,6 +6,7 @@ import {
   TABLES,
 } from '@/lib/studio/dynamodb'
 import { deleteProjectCascade } from '@/lib/studio/projectDelete'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 // PATCH /studio/api/admin/projects/[projectId] — edit project details, or
@@ -158,7 +159,23 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
-    await deleteProjectCascade(auth.studioId!, projectId)
+    const { photoCount, totalBytes } = await deleteProjectCascade(auth.studioId!, projectId)
+
+    logAuditEvent({
+      studioId: auth.studioId!,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      action: 'DELETE_PROJECT',
+      targetType: 'PROJECT',
+      targetId: projectId,
+      metadata: {
+        clientName: project.clientName,
+        eventType: project.eventType,
+        eventDate: project.eventDate,
+        photoCount,
+        totalBytes,
+      },
+    })
 
     return NextResponse.json({ success: true, data: { projectId } })
   } catch (err) {

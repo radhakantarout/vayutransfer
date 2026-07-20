@@ -7,6 +7,7 @@ import { deleteStudioR2Object } from '@/lib/studio/r2'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota } from '@/lib/studio/usage'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
 
@@ -28,13 +29,14 @@ function isAuthorized(req: NextRequest): boolean {
 // at-or-under its active storage grant. Mirrors the cascade already used by
 // DELETE /studio/api/admin/projects/[projectId] (S3 + mediafiles + selections
 // + project record + billableStorageBytes decrement).
-async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<number> {
+async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<{ deletedBytes: number; deletedProjects: { projectId: string; clientName: string; eventType: string; photoCount: number; bytes: number }[] }> {
   const projects = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', studio.studioId)
   projects.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
 
   const grant = activeStorageGrantBytes(studio)
   let remaining = currentStorageBytes(studio)
   let deletedBytes = 0
+  const deletedProjects: { projectId: string; clientName: string; eventType: string; photoCount: number; bytes: number }[] = []
 
   for (const project of projects) {
     if (remaining <= grant) break
@@ -54,9 +56,13 @@ async function deleteOldestProjectsUntilUnderQuota(studio: Studio): Promise<numb
     const projectBytes = mediafiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
     remaining -= projectBytes
     deletedBytes += projectBytes
+    deletedProjects.push({
+      projectId: project.projectId, clientName: project.clientName, eventType: project.eventType,
+      photoCount: mediafiles.length, bytes: projectBytes,
+    })
   }
 
-  return deletedBytes
+  return { deletedBytes, deletedProjects }
 }
 
 // Raw File Transfers store large objects outside the mediafiles/selections
@@ -177,7 +183,7 @@ export async function GET(req: NextRequest) {
       // Grace period over — delete the minimum needed, oldest projects first,
       // then oldest non-imported transfers if projects alone weren't enough
       // (transfers can be large enough on their own to drive the overage).
-      const deletedFromProjects = await deleteOldestProjectsUntilUnderQuota(studio)
+      const { deletedBytes: deletedFromProjects, deletedProjects } = await deleteOldestProjectsUntilUnderQuota(studio)
       const grant = activeStorageGrantBytes(studio)
       let remaining = currentStorageBytes(studio) - deletedFromProjects
       let deletedFromTransfers = 0
@@ -194,6 +200,24 @@ export async function GET(req: NextRequest) {
           'ADD billableStorageBytes :neg REMOVE storageOverageStartedAt, storageReminderCount SET updatedAt = :now',
           { ':neg': -deleted, ':now': new Date().toISOString() }
         )
+        if (deletedProjects.length > 0) {
+          logAuditEvent({
+            studioId: studio.studioId,
+            actorId: 'system-cron',
+            actorRole: 'SYSTEM',
+            action: 'DELETE_PROJECT',
+            targetType: 'PROJECT',
+            metadata: {
+              trigger: 'storage-overage-cron',
+              reason: 'Studio exceeded its storage grant past the grace period',
+              projectCount: deletedProjects.length,
+              photoCount: deletedProjects.reduce((s, p) => s + p.photoCount, 0),
+              totalBytes: deletedFromProjects,
+              deletedTransferBytes: deletedFromTransfers,
+              deletedProjects,
+            },
+          })
+        }
         deletedFrom++
       }
       continue

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { studioScanTable, TABLES } from '@/lib/studio/dynamodb'
 import { deleteProjectCascade } from '@/lib/studio/projectDelete'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import type { StudioProject } from '@/types/studio'
 
 // Same auth pattern as cron/storage-check — Vercel sends
@@ -29,7 +30,24 @@ export async function GET(req: NextRequest) {
   const failed: string[] = []
   for (const project of dueProjects) {
     try {
-      await deleteProjectCascade(project.studioId, project.projectId)
+      const { photoCount, totalBytes } = await deleteProjectCascade(project.studioId, project.projectId)
+      logAuditEvent({
+        studioId: project.studioId,
+        actorId: 'system-cron',
+        actorRole: 'SYSTEM',
+        action: 'DELETE_PROJECT',
+        targetType: 'PROJECT',
+        targetId: project.projectId,
+        metadata: {
+          clientName: project.clientName,
+          eventType: project.eventType,
+          eventDate: project.eventDate,
+          photoCount,
+          totalBytes,
+          scheduledDeleteAt: project.scheduledDeleteAt,
+          trigger: 'scheduled-deletes-cron',
+        },
+      })
       deleted++
     } catch (err) {
       console.error('[scheduled-deletes] failed to delete', project.projectId, err)
