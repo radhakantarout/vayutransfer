@@ -155,63 +155,6 @@ function readStudioUiCookie(): { role?: string; name?: string; email?: string } 
   }
 }
 
-// Flat (non-client-grouped) row for the Recent/Starred sidebar views — same
-// visual language as ClientBranch's own event row, just standalone with the
-// client name inline instead of a group header.
-function FlatProjectRow({
-  project, selectedIds, onToggle, onEditEvent, onDeleteEvents, onQuickShare, onAISort, onCancelSchedule,
-}: {
-  project: StudioProject
-  selectedIds: string[]
-  onToggle: (id: string) => void
-  onEditEvent: (p: StudioProject) => void
-  onDeleteEvents: (projects: StudioProject[]) => void
-  onQuickShare: (projects: StudioProject[]) => void
-  onAISort: (projects: StudioProject[]) => void
-  onCancelSchedule: (p: StudioProject) => void
-}) {
-  const p = project
-  const selected = selectedIds.includes(p.projectId)
-  return (
-    <div
-      onClick={() => onToggle(p.projectId)}
-      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors group/event
-        ${selected ? 'bg-accent/15' : 'hover:bg-border/50'}`}
-    >
-      <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors
-        ${selected ? 'bg-accent border-accent text-bg' : 'border-muted group-hover/event:border-text-primary'}`}>
-        {selected && <CheckIcon />}
-      </div>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? 'bg-muted'}`} />
-      <div className="min-w-0 flex-1">
-        <div className={`text-xs truncate leading-tight font-medium ${selected ? 'text-accent' : 'text-muted group-hover/event:text-text-primary'}`}>
-          {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')}{p.totalFiles > 0 ? ` (${p.totalFiles})` : ''}
-        </div>
-        <div className="text-[10px] text-muted leading-tight">{fmtDate(p.eventDate)}</div>
-      </div>
-      <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
-        <PhotoActionsMenu
-          align="right"
-          trigger={
-            <button title="Event options" className="w-4 h-4 flex items-center justify-center rounded text-muted hover:text-accent hover:bg-accent/10 transition-all">
-              <DotsIcon />
-            </button>
-          }
-          actions={[
-            { label: 'Edit project',    icon: <EditIcon />,  onClick: () => onEditEvent(p) },
-            { label: 'Quick Share',     icon: <ShareIcon />, onClick: () => onQuickShare([p]) },
-            { label: 'AI Sorting / Search', icon: <AIIcon />, onClick: () => onAISort([p]) },
-            ...(p.scheduledDeleteAt
-              ? [{ label: 'Cancel scheduled deletion', icon: <ClockIcon />, onClick: () => onCancelSchedule(p) }]
-              : []),
-            { label: 'Delete', icon: <TrashIcon />, onClick: () => onDeleteEvents([p]), danger: true },
-          ]}
-        />
-      </div>
-    </div>
-  )
-}
-
 function ClientBranch({
   clientName, projects, coverUrl, selectedIds, onToggle, onAddEvent, onEditEvent,
   onDeleteEvents, onQuickShare, onAISort, onEditClient, onCancelSchedule, onReorder,
@@ -461,6 +404,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // per-event, to avoid stacking duplicate fixed-position widgets.
   const [zoomLevel, setZoomLevel] = useState(6)
   const [gridViewMode, setGridViewMode] = useState<'grid' | 'list'>('grid')
+  // One-shot signal for EventSection's initial tab — narrowing from the AI
+  // Face "select one event" popup changes which project is the host, which
+  // remounts EventSection (its key is the host's projectId) and would
+  // otherwise default back to the Photos tab. Set right before narrowing,
+  // self-clears after the next render so it can never leak into an
+  // unrelated later remount.
+  const [pendingActiveTab, setPendingActiveTab] = useState<'faces' | null>(null)
+  useEffect(() => { if (pendingActiveTab) setPendingActiveTab(null) }, [pendingActiveTab])
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
@@ -777,12 +728,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })
   })()
 
-  const recentProjects = projects
-    .filter(p => !p.isPlaceholder)
-    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-    .slice(0, 10)
-  const starredProjects = projects.filter(p => p.isStarred && !p.isPlaceholder)
-
   const selectedProjects = selectedIds
     .map(id => projects.find(p => p.projectId === id))
     .filter((p): p is StudioProject => !!p)
@@ -972,10 +917,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {(['recent', 'starred', 'projects'] as const).map(view => (
                   <button key={view} onClick={() => {
                     setSidebarView(view)
-                    // "Projects" also opens the My Projects cover-card
-                    // overview in the main content area — same destination
-                    // as picking "Client Gallery" from the dropdown above.
-                    if (view === 'projects') { clearSelection(); router.push('/studio/dashboard/projects') }
+                    // All three tabs open the My Projects cover-card overview
+                    // in the main content area — same page, Recent/Starred
+                    // just pre-filtered via ?filter= — instead of any of
+                    // them rendering their own list inside the sidebar.
+                    clearSelection()
+                    if (view === 'projects') router.push('/studio/dashboard/projects')
+                    else router.push(`/studio/dashboard/projects?filter=${view}`)
                   }}
                     className={`flex-1 flex items-center justify-center gap-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
                       // Once a project card is drilled into, this no longer
@@ -1033,46 +981,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onBulkWatermark={handleBulkWatermark}
                       bulkWatermarking={bulkWatermarking}
                       selectedPhotoCount={totalPhotoSelected}
-                    />
-                  ))
-                )
-              )}
-
-              {sidebarView === 'recent' && (
-                recentProjects.length === 0 ? (
-                  <p className="text-[11px] text-muted px-3 py-2">No projects yet</p>
-                ) : (
-                  recentProjects.map(p => (
-                    <FlatProjectRow
-                      key={p.projectId}
-                      project={p}
-                      selectedIds={selectedIds}
-                      onToggle={toggleSelect}
-                      onEditEvent={setEditProject}
-                      onDeleteEvents={setDeleteModalProjects}
-                      onQuickShare={setShareModalProjects}
-                      onAISort={setAiModalProjects}
-                      onCancelSchedule={handleCancelSchedule}
-                    />
-                  ))
-                )
-              )}
-
-              {sidebarView === 'starred' && (
-                starredProjects.length === 0 ? (
-                  <p className="text-[11px] text-muted px-3 py-2">No starred projects yet</p>
-                ) : (
-                  starredProjects.map(p => (
-                    <FlatProjectRow
-                      key={p.projectId}
-                      project={p}
-                      selectedIds={selectedIds}
-                      onToggle={toggleSelect}
-                      onEditEvent={setEditProject}
-                      onDeleteEvents={setDeleteModalProjects}
-                      onQuickShare={setShareModalProjects}
-                      onAISort={setAiModalProjects}
-                      onCancelSchedule={handleCancelSchedule}
                     />
                   ))
                 )
@@ -1226,7 +1134,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
               </svg>
             </Link>
-            <button onClick={() => setSidebarView('recent')} title="Recent"
+            <button onClick={() => { setSidebarView('recent'); clearSelection(); router.push('/studio/dashboard/projects?filter=recent') }} title="Recent"
               className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
                 sidebarView === 'recent' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
               }`}>
@@ -1234,7 +1142,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </button>
-            <button onClick={() => setSidebarView('starred')} title="Starred"
+            <button onClick={() => { setSidebarView('starred'); clearSelection(); router.push('/studio/dashboard/projects?filter=starred') }} title="Starred"
               className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
                 sidebarView === 'starred' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
               }`}>
@@ -1325,6 +1233,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onPhotoSelectionChange={handleSelectionChange}
                 onFilesLoadedFor={handleFilesLoaded}
                 externalCurationUpdate={curationUpdateSignal}
+                onNarrowSelection={(projectId) => { setPendingActiveTab('faces'); setSelectedIds([projectId]) }}
+                initialTab={pendingActiveTab ?? undefined}
               />
             )}
           </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import type { StudioProject, ProjectStatus } from '@/types/studio'
 import AddEventModal from '../AddEventModal'
 import ChangeClientCoverModal from '@/components/studio/ChangeClientCoverModal'
@@ -58,6 +59,8 @@ function StarIcon({ filled }: { filled: boolean }) {
 }
 
 export default function MyProjectsPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [projects, setProjects]   = useState<ProjectWithCover[]>([])
   const [loading, setLoading]     = useState(true)
   const [view, setView]           = useState<'grid' | 'list'>('grid')
@@ -67,6 +70,9 @@ export default function MyProjectsPage() {
   const [dateFilter, setDateFilter]     = useState<DateFilter>('ALL')
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('ALL')
   const [starredOnly, setStarredOnly]   = useState(false)
+  // Newest-10 view, reached from the sidebar's "Recent" tab — see ?filter=
+  // below. Applied as a post-filter slice, same pipeline as everything else.
+  const [recentOnly, setRecentOnly]     = useState(false)
   const [addEventClient, setAddEventClient] = useState<string | null>(null)
   const [coverPickerClient, setCoverPickerClient] = useState<string | null>(null)
 
@@ -78,10 +84,48 @@ export default function MyProjectsPage() {
 
   useEffect(() => { loadProjects() }, [])
 
+  // Sidebar Recent/Starred tabs land here with ?filter=recent|starred instead
+  // of rendering their own list in the sidebar — same card page, just
+  // pre-filtered. Depends on searchParams (not just mount): navigating here
+  // from Recent to Starred (or back) is a same-route query-string-only
+  // transition, so the component never remounts — an empty dep array would
+  // only apply the filter on first load and silently miss every click after
+  // that until a hard refresh forced a fresh mount.
+  useEffect(() => {
+    const filter = searchParams.get('filter')
+    setRecentOnly(filter === 'recent')
+    setStarredOnly(filter === 'starred')
+  }, [searchParams])
+
+  // A client card represents every event for that client, so starring it
+  // stars/unstars all of them together — matches how the card's own
+  // isStarred badge already collapses `events.some(e => e.isStarred)` down
+  // to one boolean. Instant local update, PATCHes fire in the background
+  // (same pattern as the dashboard sidebar's own star-all pill).
+  const toggleClientStar = (g: ClientGroup, e?: React.MouseEvent) => {
+    e?.preventDefault(); e?.stopPropagation()
+    const next = !g.isStarred
+    const ids = new Set(g.events.map(ev => ev.projectId))
+    setProjects(prev => prev.map(p => ids.has(p.projectId) ? { ...p, isStarred: next } : p))
+    g.events.forEach(ev => {
+      fetch(`/studio/api/admin/projects/${ev.projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isStarred: next }),
+      }).catch(() => {})
+    })
+  }
+
+  const clearActiveFilter = () => {
+    setRecentOnly(false)
+    setStarredOnly(false)
+    router.replace('/studio/dashboard/projects')
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     const now = Date.now()
-    return projects.filter(p => {
+    const base = projects.filter(p => {
       if (q) {
         const haystack = `${p.clientName} ${p.eventType} ${p.eventLocation ?? ''}`.toLowerCase()
         if (!haystack.includes(q)) return false
@@ -97,7 +141,16 @@ export default function MyProjectsPage() {
       if (expiryFilter !== 'ALL' && expiryState(p) !== expiryFilter) return false
       return true
     })
-  }, [projects, search, statusFilter, dateFilter, expiryFilter, starredOnly])
+    if (!recentOnly) return base
+    // Newest-10 by creation date. Placeholders (a client created but with
+    // no event added yet) are included — that's exactly what a brand-new
+    // project looks like right after creation, and it should show up here
+    // immediately, same as it already does in the unfiltered "My Projects"
+    // view.
+    return [...base]
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+      .slice(0, 10)
+  }, [projects, search, statusFilter, dateFilter, expiryFilter, starredOnly, recentOnly])
 
   // One project (client) can have multiple events — group here so the
   // overview shows a single card per client, not one per event.
@@ -141,7 +194,20 @@ export default function MyProjectsPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold text-text-primary">My Projects</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-extrabold text-text-primary">
+              {recentOnly ? 'Recent Projects' : starredOnly ? 'Starred Projects' : 'My Projects'}
+            </h1>
+            {(recentOnly || starredOnly) && (
+              <button onClick={clearActiveFilter}
+                className="flex items-center gap-1 text-[11px] font-semibold text-muted hover:text-text-primary bg-border/50 hover:bg-border/70 rounded-full px-2.5 py-1 transition-colors">
+                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Clear filter
+              </button>
+            )}
+          </div>
           <p className="text-sm text-muted mt-0.5">{clientGroups.length} of {new Set(projects.map(p => p.clientName)).size} project{new Set(projects.map(p => p.clientName)).size !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -258,17 +324,27 @@ export default function MyProjectsPage() {
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-muted text-3xl">📷</div>
                 )}
-                {g.isStarred && (
-                  <div className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full bg-yellow-400/90 text-bg backdrop-blur-sm">
-                    <StarIcon filled />
-                  </div>
-                )}
                 {g.events.length > 0 && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCoverPickerClient(g.clientName) }}
                     className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/40 opacity-0 group-hover:opacity-100 transition-all text-white text-xs font-bold"
                   >
                     {g.coverUrl ? 'Change cover' : 'Set cover'}
+                  </button>
+                )}
+                {/* Rendered after the cover-picker overlay so it stacks on
+                    top and stays clickable in that same corner. */}
+                {g.events.length > 0 && (
+                  <button
+                    onClick={(e) => toggleClientStar(g, e)}
+                    title={g.isStarred ? 'Unstar' : 'Star'}
+                    className={`absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full backdrop-blur-sm transition-colors ${
+                      g.isStarred
+                        ? 'bg-yellow-400/90 text-bg'
+                        : 'bg-black/30 text-white/70 opacity-0 group-hover:opacity-100 hover:text-yellow-300'
+                    }`}
+                  >
+                    <StarIcon filled={g.isStarred} />
                   </button>
                 )}
               </div>
@@ -315,7 +391,15 @@ export default function MyProjectsPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  {g.isStarred && <span className="text-yellow-400 flex-shrink-0"><StarIcon filled /></span>}
+                  {g.events.length > 0 && (
+                    <button
+                      onClick={(e) => toggleClientStar(g, e)}
+                      title={g.isStarred ? 'Unstar' : 'Star'}
+                      className={`flex-shrink-0 transition-colors ${g.isStarred ? 'text-yellow-400' : 'text-muted/50 hover:text-yellow-400'}`}
+                    >
+                      <StarIcon filled={g.isStarred} />
+                    </button>
+                  )}
                   <span className="text-sm font-semibold text-text-primary truncate">{g.clientName}</span>
                 </div>
                 <div className="text-xs text-muted">

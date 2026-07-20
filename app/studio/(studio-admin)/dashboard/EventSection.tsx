@@ -172,6 +172,15 @@ interface Props {
   photoSelectionsMap?: Map<string, Set<string>>
   onPhotoSelectionChange?: (projectId: string) => (ids: Set<string>) => void
   onFilesLoadedFor?: (projectId: string) => (files: MediaFile[]) => void
+  // AI Face only works against one project's own Rekognition collection —
+  // when multiple events are checked, its "pick one event" popup uses this
+  // to narrow the sidebar's selection straight down to a single project.
+  onNarrowSelection?: (projectId: string) => void
+  // Narrowing to a different (non-host) event remounts this component (its
+  // key is the host's projectId) — without this, the fresh mount's own tab
+  // initializer would fall back to Photos, undoing the very tab the admin
+  // was just trying to reach via the AI Face popup.
+  initialTab?: ActiveTab
   // Lets a parent-level bulk action (the global selection pill's star
   // toggle) patch curationStatus straight into this component's own `files`
   // state instantly, instead of waiting on a full loadFiles() re-fetch —
@@ -186,7 +195,7 @@ export default function EventSection({
   zoomLevel, viewMode, onViewModeChange: setViewMode,
   onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
-  externalCurationUpdate,
+  externalCurationUpdate, onNarrowSelection, initialTab,
 }: Props) {
   const pathname = usePathname()
 
@@ -237,6 +246,7 @@ export default function EventSection({
 
   // ── Tabs ─────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    if (initialTab) return initialTab
     if (pathname.endsWith('/faces'))      return 'faces'
     if (pathname.endsWith('/selections')) return 'selections'
     if (pathname.endsWith('/transfers'))  return 'transfers'
@@ -259,6 +269,9 @@ export default function EventSection({
   const [startSortingOpen, setStartSortingOpen] = useState(false)
   const [showQrModal, setShowQrModal]           = useState(false)
   const [showReindexConfirm, setShowReindexConfirm] = useState(false)
+  // AI Face's "pick one event" popup dropdown — defaults to the host, reset
+  // whenever the checked events change so a stale id can't linger selected.
+  const [narrowEventId, setNarrowEventId] = useState(project.projectId)
   // Single 0-100 dial the admin controls — persisted to localStorage so it
   // carries across sessions/projects, not tied to any one project's data.
   const [accuracyLevel, setAccuracyLevel] = useState(85)
@@ -324,6 +337,7 @@ export default function EventSection({
   // client-side tagging — actions just read f.projectId instead of assuming
   // the host project.
   const activeSourceProjectIds = activeSourceProjects.map(p => p.projectId).join(',')
+  useEffect(() => { setNarrowEventId(project.projectId) }, [activeSourceProjectIds, project.projectId])
   const loadFiles = useCallback(async () => {
     const sources = isMultiSource ? activeSourceProjects : [project]
     const results = await Promise.all(
@@ -1188,6 +1202,20 @@ export default function EventSection({
     if (tab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
   }
 
+  // Mounting directly onto a non-default tab (e.g. via initialTab, or a
+  // pathname ending in /faces) skips the click-driven loads above entirely
+  // — without this, the AI Face status row shows "0 requested / 0 AI
+  // enabled" even though the grid below it (backed by `files`, loaded
+  // separately) correctly shows the already-indexed photos.
+  useEffect(() => {
+    if (activeTab === 'faces') {
+      if (!faceStatus && !faceLoading) loadFaceStatus()
+      if (faceGroups === null && !faceGroupsLoading) loadFaceGroups()
+    }
+    if (activeTab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Derived values ────────────────────────────────────────
   // The "AI Face" tab reuses this exact same grid/selection-bar pipeline,
   // just scoped to faceIndexed files (and further to one saved group, once
@@ -1289,6 +1317,52 @@ export default function EventSection({
           onClose={() => setMoveCopyTarget(null)}
           onDone={() => { setMoveCopyTarget(null); onSelectionChange(new Set()); loadFiles(); onUpdated() }}
         />
+      )}
+
+      {/* ── AI Face works against one event's own Rekognition collection at
+          a time — when multiple events are checked in the sidebar, this
+          popup asks the admin to pick just one to continue with, with a
+          dropdown to jump straight to any of the currently checked events
+          instead of going back to the sidebar to uncheck the rest by hand. */}
+      {activeTab === 'faces' && !faceFeatureOff && isMultiSource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5">
+            <div className="text-center space-y-2">
+              <div className="text-4xl">🖼️</div>
+              <p className="text-sm font-bold text-text-primary">Select just one event for AI Face</p>
+              <p className="text-xs text-muted leading-relaxed">
+                AI Face indexing, search, and grouping work on one event at a time. Please uncheck the other events in the sidebar and keep just one selected to continue.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-muted uppercase tracking-wide">Continue with</label>
+              <select
+                value={narrowEventId}
+                onChange={e => setNarrowEventId(e.target.value)}
+                className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors"
+              >
+                {activeSourceProjects.map(p => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')} — {fmtDate(p.eventDate)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => onNarrowSelection?.(narrowEventId)}
+                disabled={!onNarrowSelection}
+                className="w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                Continue with this event
+              </button>
+              <button onClick={() => setActiveTab('photos')}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Reindex confirmation — friendly heads-up that this uses the AI
@@ -1471,7 +1545,7 @@ export default function EventSection({
               </div>
               <button onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }} title="Close"
                 className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
-                <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -1714,7 +1788,7 @@ export default function EventSection({
           </div>
 
           {/* Filename search — client-side filter over already-loaded photos */}
-          {(activeTab === 'photos' || activeTab === 'faces') && (
+          {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
             <div className="flex-1 min-w-[100px] max-w-[180px] relative hidden sm:block">
               <svg className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -1730,7 +1804,7 @@ export default function EventSection({
 
 
           <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
-            {(activeTab === 'photos' || activeTab === 'faces') && (
+            {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
               <>
                 <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
                   title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
@@ -2020,12 +2094,21 @@ export default function EventSection({
           </div>
         )}
 
+        {/* ── AI Face works against one event's own Rekognition collection
+            at a time — indexing, search, and grouping all silently missed
+            a second/third checked event when this tab was used with
+            multiple sidebar events selected. Rather than fan every AI call
+            out across events (tried it — slow, and the UX for cross-event
+            results got messy), a popup (rendered with the other modals,
+            below) asks the admin to pick one to continue with — the tab
+            body itself just stays blank underneath it. */}
+
         {/* ── AI Face status row — one slim row, same family as the
             selection/filter bar. Always shown on this tab (unless the
             feature is off): requested/AI-enabled counts, a thin progress
             fill only while a run is active, a small re-check icon, and one
             QR icon that opens the (placeholder-for-now) QR popup. */}
-        {activeTab === 'faces' && !faceFeatureOff && (
+        {activeTab === 'faces' && !faceFeatureOff && !isMultiSource && (
           <div className="px-5 pt-2">
             <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-border bg-card">
               <span className="text-[11px] font-semibold text-muted whitespace-nowrap">
@@ -2207,7 +2290,7 @@ export default function EventSection({
 
         {/* ── All Photos / AI Face tab — the AI Face tab reuses this exact
             same grid+bar, scoped to faceIndexed files via displayFiles. ── */}
-        {(activeTab === 'photos' || activeTab === 'faces') && (
+        {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
           <div className={`px-5 pb-5 ${expanded ? 'max-w-7xl mx-auto' : ''}`}>
             {loading ? (
               <div className="flex justify-center py-8">
