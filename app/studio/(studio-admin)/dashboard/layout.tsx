@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import type { StudioProject, MediaFile, CurationStatus } from '@/types/studio'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
-import EventSection from './EventSection'
+import EventSection, { type ActiveTab } from './EventSection'
 import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
@@ -26,6 +26,16 @@ interface NotificationItem {
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'vayu_studio_sidebar_collapsed'
+// Which gallery/tab was open, restored on a refresh for the rest of the
+// browser session — sessionStorage (not localStorage) so it never leaks
+// into a later, unrelated session, and is cleared on logout below anyway.
+const LAST_LOCATION_KEY = 'vayu_studio_last_location'
+interface LastLocation {
+  selectedIds: string[]
+  sidebarView: 'dashboard' | 'recent' | 'starred' | 'projects'
+  focusedClient: string | null
+  activeTab: ActiveTab
+}
 
 const STATUS_DOT: Record<string, string> = {
   DRAFT:              'bg-muted',
@@ -404,14 +414,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // per-event, to avoid stacking duplicate fixed-position widgets.
   const [zoomLevel, setZoomLevel] = useState(6)
   const [gridViewMode, setGridViewMode] = useState<'grid' | 'list'>('grid')
-  // One-shot signal for EventSection's initial tab — narrowing from the AI
-  // Face "select one event" popup changes which project is the host, which
-  // remounts EventSection (its key is the host's projectId) and would
-  // otherwise default back to the Photos tab. Set right before narrowing,
-  // self-clears after the next render so it can never leak into an
-  // unrelated later remount.
-  const [pendingActiveTab, setPendingActiveTab] = useState<'faces' | null>(null)
+  // One-shot signal for EventSection's initial tab. Two callers: (1) the AI
+  // Face "select one event" popup, which changes which project is the host
+  // and so remounts EventSection (its key is the host's projectId) — without
+  // this it'd default back to the Photos tab; (2) the last-location restore
+  // effect below, seeding whichever tab the admin was on before a refresh.
+  // Set right before narrowing/restoring, self-clears after the next render
+  // so it can never leak into an unrelated later remount.
+  const [pendingActiveTab, setPendingActiveTab] = useState<ActiveTab | null>(null)
   useEffect(() => { if (pendingActiveTab) setPendingActiveTab(null) }, [pendingActiveTab])
+  // Mirrors whatever tab EventSection is actually showing right now (fed by
+  // its onActiveTabChange prop) — this, not pendingActiveTab, is what gets
+  // persisted to sessionStorage on every change, further down.
+  const [currentActiveTab, setCurrentActiveTab] = useState<ActiveTab>('photos')
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
@@ -546,6 +561,66 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
+  // Same idea for the My Projects page's own tabs: clicking Recent/Starred/
+  // Projects there already sets sidebarView directly (the click handlers),
+  // but landing on /projects?filter=... fresh (a refresh, or a bookmark)
+  // never did — the sidebar just kept whatever sidebarView happened to
+  // default to. No router.replace strips this param (unlike ?clientSelect=
+  // above), so re-running on searchParams changes is safe here.
+  useEffect(() => {
+    if (pathname !== '/studio/dashboard/projects') return
+    const filter = searchParams.get('filter')
+    setSidebarView(filter === 'recent' ? 'recent' : filter === 'starred' ? 'starred' : 'projects')
+  }, [pathname, searchParams])
+
+  // Restore whichever gallery/tab was open before a browser refresh, for the
+  // rest of this session — see LAST_LOCATION_KEY above. One-shot (ref-
+  // guarded): depends on projects.length rather than pathname/searchParams
+  // so it fires exactly once, the first time projects finish loading after
+  // this layout mounts — never again for later client-side navigations
+  // within the app (e.g. clicking "Dashboard" to intentionally clear the
+  // selection must not have this silently repopulate it). Runs after
+  // projects load (needed to validate restored ids still exist) — by then
+  // it's necessarily a later commit than the mount-time effects above, so
+  // its setSidebarView/setSelectedIds calls aren't fighting them for
+  // "last write wins" within the same render.
+  const restoredLocationRef = useRef(false)
+  useEffect(() => {
+    if (restoredLocationRef.current) return
+    if (projects.length === 0) return
+    restoredLocationRef.current = true
+    if (pathname !== '/studio/dashboard/overview') return
+    if (searchParams.get('clientSelect')) return
+    try {
+      const raw = sessionStorage.getItem(LAST_LOCATION_KEY)
+      if (!raw) return
+      const saved = JSON.parse(raw) as LastLocation
+      const validIds = saved.selectedIds.filter(id => projects.some(p => p.projectId === id))
+      if (validIds.length === 0) return
+      setSelectedIds(validIds)
+      setFocusedClient(saved.focusedClient)
+      setSidebarView(saved.sidebarView)
+      setPendingActiveTab(saved.activeTab)
+    } catch {
+      // Malformed/stale blob — ignore, land on the normal blank Dashboard.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects.length])
+
+  // Keep that same blob current on every change, so the *next* refresh
+  // restores whatever's true right now (including "nothing open" if the
+  // admin explicitly closed the gallery). Gated on the restore attempt
+  // above having already run: this effect's own dependencies are already
+  // at their fresh-mount defaults on the very first render (before the
+  // async projects fetch resolves) — writing unconditionally would
+  // overwrite the previous session's real blob with that empty default
+  // moments before the restore effect ever gets to read it back.
+  useEffect(() => {
+    if (!restoredLocationRef.current) return
+    const loc: LastLocation = { selectedIds, sidebarView, focusedClient, activeTab: currentActiveTab }
+    sessionStorage.setItem(LAST_LOCATION_KEY, JSON.stringify(loc))
+  }, [selectedIds, sidebarView, focusedClient, currentActiveTab])
+
   // Auto-hide the top navbar to give an open gallery more room, and re-hide
   // it any time the actual selection changes (a fresh "select event" action)
   // — the admin can still peek at it via the SHOW tab (rendered by
@@ -558,6 +633,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleLogout = async () => {
     localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
+    sessionStorage.removeItem(LAST_LOCATION_KEY)
     await fetch('/studio/api/auth/logout', { method: 'POST' })
     router.push('/studio/login')
   }
@@ -1235,6 +1311,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 externalCurationUpdate={curationUpdateSignal}
                 onNarrowSelection={(projectId) => { setPendingActiveTab('faces'); setSelectedIds([projectId]) }}
                 initialTab={pendingActiveTab ?? undefined}
+                onActiveTabChange={setCurrentActiveTab}
               />
             )}
           </div>

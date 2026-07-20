@@ -221,8 +221,16 @@ export default function MyProjectsPage() {
               onChange={e => setSearch(e.target.value)}
               placeholder="Search projects…"
               title="Search projects by client, event type, location"
-              className="w-full bg-card border border-border rounded-xl pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-muted/60 focus:outline-none focus:border-accent/60 transition-colors"
+              className="w-full bg-card border border-border rounded-xl pl-9 pr-8 py-2 text-sm text-text-primary placeholder:text-muted/60 focus:outline-none focus:border-accent/60 transition-colors"
             />
+            {search && (
+              <button onClick={() => setSearch('')} title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
           <Link href="/studio/dashboard/projects/new"
             className="bg-accent text-bg text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-accent/90 transition-colors flex-shrink-0">

@@ -126,7 +126,7 @@ function sortFiles(files: MediaFile[], mode: SortMode): MediaFile[] {
 }
 
 type DeleteMode = 'selected' | 'all' | null
-type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
+export type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
 
 interface FaceStatus {
   totalPhotos: number; indexedPhotos: number; pendingPhotos: number
@@ -181,6 +181,10 @@ interface Props {
   // initializer would fall back to Photos, undoing the very tab the admin
   // was just trying to reach via the AI Face popup.
   initialTab?: ActiveTab
+  // Reports every active-tab change (mount + manual switches) up to the
+  // parent, which persists it to sessionStorage so a browser refresh can
+  // restore the admin to the same tab via initialTab above.
+  onActiveTabChange?: (tab: ActiveTab) => void
   // Lets a parent-level bulk action (the global selection pill's star
   // toggle) patch curationStatus straight into this component's own `files`
   // state instantly, instead of waiting on a full loadFiles() re-fetch —
@@ -195,7 +199,7 @@ export default function EventSection({
   zoomLevel, viewMode, onViewModeChange: setViewMode,
   onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
-  externalCurationUpdate, onNarrowSelection, initialTab,
+  externalCurationUpdate, onNarrowSelection, initialTab, onActiveTabChange,
 }: Props) {
   const pathname = usePathname()
 
@@ -252,6 +256,10 @@ export default function EventSection({
     if (pathname.endsWith('/transfers'))  return 'transfers'
     return 'photos'
   })
+  // Reports on mount too (not just switches) so the parent's persisted
+  // "last location" always reflects the tab actually being viewed, even if
+  // it just got here via initialTab rather than a manual click.
+  useEffect(() => { onActiveTabChange?.(activeTab) }, [activeTab, onActiveTabChange])
 
   // ── Face Index tab ────────────────────────────────────────
   const [faceStatus, setFaceStatus]         = useState<FaceStatus | null>(null)
@@ -1797,8 +1805,16 @@ export default function EventSection({
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search photos..."
-                className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-border bg-bg text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
+                className="w-full pl-8 pr-6 py-1.5 text-xs rounded-lg border border-border bg-bg text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
               />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} title="Clear search"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
 
