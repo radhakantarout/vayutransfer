@@ -3,6 +3,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, studioQueryByIndex, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { sendStudioSuspendedEmail, sendStudioReactivatedEmail, sendStudioDeletedEmail } from '@/lib/aws/ses'
 import { logAuditEvent } from '@/lib/studio/auditLog'
+import { deleteMediaObjects } from '@/lib/studio/storage'
 import type { Studio, StudioUser, StudioProject, MediaFile, Selection } from '@/types/studio'
 
 export async function GET(
@@ -147,9 +148,13 @@ export async function DELETE(
       studioQueryByIndex<StudioUser>(TABLES.users, 'linkedStudioId-index', 'linkedStudioId = :sid', { ':sid': studioId }).catch(() => [] as StudioUser[]),
     ])
 
-    // For each project, delete mediafiles + selections — tallied for the
-    // audit entry below, since this is the single most consequential action
-    // an owner can take and needs the fullest possible record.
+    // For each project, delete R2/S3 objects + mediafiles + selections —
+    // tallied for the audit entry below, since this is the single most
+    // consequential action an owner can take and needs the fullest possible
+    // record. R2 cleanup here matters just as much as the single-project
+    // delete path (lib/studio/projectDelete.ts) — without it, deleting a
+    // whole studio silently leaks every one of its photos into storage
+    // forever, same bug, same fix.
     let photoCount = 0
     let totalBytes = 0
     for (const project of projects) {
@@ -157,6 +162,7 @@ export async function DELETE(
         studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', project.projectId),
         studioQueryByPK<Selection>(TABLES.selections, 'projectId', project.projectId),
       ])
+      await Promise.all(mediafiles.map((f) => deleteMediaObjects(f).catch((err) => console.error('[owner studio DELETE] R2 delete failed', f.fileId, err))))
       await Promise.all([
         ...mediafiles.map((f) => studioDeleteItem(TABLES.mediafiles, { projectId: project.projectId, fileId: f.fileId })),
         ...selections.map((s) => studioDeleteItem(TABLES.selections, { projectId: project.projectId, fileId: s.fileId })),
