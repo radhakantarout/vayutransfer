@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || auth.role !== 'CLIENT') {
+    if (!auth) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
@@ -24,7 +24,12 @@ export async function GET(
       { ':token': token }
     )
     const entry = entryProjects[0]
-    if (!entry || auth.projectId !== entry.projectId) {
+    // Either the client (JWT scoped to this exact share token) or the owning
+    // studio's own staff previewing what the client will see (no password/
+    // OTP gate for studio staff — see /studio/api/client/gallery/[token]).
+    const isClient = auth.role === 'CLIENT' && auth.projectId === entry?.projectId
+    const isStudioPreview = !!entry && ['ADMIN', 'OWNER'].includes(auth.role) && auth.studioId === entry.studioId
+    if (!entry || (!isClient && !isStudioPreview)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
     if (!entry.clientShareExpiresAt || new Date(entry.clientShareExpiresAt) < new Date()) {

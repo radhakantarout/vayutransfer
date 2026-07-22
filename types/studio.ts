@@ -92,6 +92,13 @@ export interface StudioProject {
   selectionMax?: number
   clientShareToken?: string
   clientShareExpiresAt?: string
+  // Optional gate on clientShareToken access — off by default (direct access,
+  // no code needed). When on, sharePassword is a static code generated at
+  // share-link creation time, shown to the admin to hand out separately from
+  // the link itself (e.g. by phone/WhatsApp) — distinct from the at-access-
+  // time emailed OTP the existing client-otp-request/verify flow already does.
+  sharePasswordProtected?: boolean
+  sharePassword?: string
   printShareToken?: string
   printShareExpiresAt?: string
   selectionSubmittedAt?: string

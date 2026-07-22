@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || auth.role !== 'CLIENT') {
+    if (!auth) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
@@ -30,7 +30,13 @@ export async function GET(
     if (!entry.clientShareExpiresAt || new Date(entry.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
-    if (auth.projectId !== entry.projectId) {
+    // Either the client themselves (JWT scoped to this exact share token) or
+    // the owning studio's own staff previewing what the client will see —
+    // studio staff never need the password/OTP gate, they're already
+    // authenticated as themselves.
+    const isClient = auth.role === 'CLIENT' && auth.projectId === entry.projectId
+    const isStudioPreview = ['ADMIN', 'OWNER'].includes(auth.role) && auth.studioId === entry.studioId
+    if (!isClient && !isStudioPreview) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 

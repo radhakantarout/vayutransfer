@@ -10,6 +10,7 @@ import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLim
 import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/PhotoActionsMenu'
 import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
 import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
+import QuickShareModal from '@/components/studio/QuickShareModal'
 import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
 import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
@@ -215,13 +216,13 @@ export default function EventSection({
   const [files, setFiles]           = useState<MediaFile[]>([])
   const [loading, setLoading]       = useState(true)
   const [uploads, setUploads]       = useState<UploadItem[]>([])
-  const [shareUrl, setShareUrl]     = useState<string | null>(null)
-  const [sharing, setSharing]       = useState(false)
-  const [copied, setCopied]         = useState(false)
-  const [showShareSetup, setShowShareSetup] = useState(false)
-  const [shareError, setShareError] = useState<string | null>(null)
-  const [selMin, setSelMin]         = useState(project.selectionMin ?? 0)
-  const [selMax, setSelMax]         = useState(project.selectionMax ?? 0)
+  // Quick Share — the unified popup (components/studio/QuickShareModal.tsx)
+  // handles its own scope/expiry/password/email state; this component only
+  // needs to resolve which fileIds-per-project to hand it.
+  const [showQuickShare, setShowQuickShare] = useState(false)
+  const [quickShareProjects, setQuickShareProjects] = useState<StudioProject[]>([])
+  const [quickShareFileIdsByProject, setQuickShareFileIdsByProject] = useState<Map<string, string[]>>(new Map())
+  const [quickShareError, setQuickShareError] = useState<string | null>(null)
   const [uploadOpen, setUploadOpen]       = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
@@ -290,6 +291,7 @@ export default function EventSection({
   useEffect(() => { setAccuracyLevel(loadAccuracyLevel()) }, [])
   const handleAccuracyChange = (level: number) => { setAccuracyLevel(level); saveAccuracyLevel(level) }
   const [qrExpiry, setQrExpiry]           = useState<12 | 24 | 48>(24)
+  const [qrAllowOriginal, setQrAllowOriginal] = useState(false)
   const [qrGenerating, setQrGenerating]   = useState(false)
   const [qrDataUrl, setQrDataUrl]         = useState<string | null>(null)
   const [qrGuestUrl, setQrGuestUrl]       = useState<string | null>(null)
@@ -417,9 +419,10 @@ export default function EventSection({
   }
   useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
 
-  // Open share setup when triggered from global pill
+  // Open Quick Share when triggered from global pill — shares the current
+  // photo selection (if any), same as the selection-bar Quick Share icon.
   useEffect(() => {
-    if (triggerShare) { setShowShareSetup(true); onShareTriggered?.() }
+    if (triggerShare) { openQuickShare(); onShareTriggered?.() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerShare])
 
@@ -607,7 +610,7 @@ export default function EventSection({
     setQrGenerating(true)
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/guest-token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiryHours: qrExpiry }),
+      body: JSON.stringify({ expiryHours: qrExpiry, allowOriginalDownload: qrAllowOriginal }),
     }).then(r => r.json())
     setQrGenerating(false)
     if (!res.success) { setFaceError(res.message ?? 'Could not generate QR code'); return }
@@ -1143,37 +1146,18 @@ export default function EventSection({
     runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
   }
 
-  const generateShareLink = async () => {
-    if (selectedIds.size === 0) {
-      setShareError('Please select at least one photo to share')
+  // Opens the unified Quick Share popup (components/studio/QuickShareModal.tsx)
+  // for a given fileId set (or the current grid selection when omitted),
+  // grouping by project and blocking the cross-client edge case up front —
+  // the modal itself assumes every project it's given belongs to one client.
+  const openQuickShare = (fileIds?: Set<string>) => {
+    const source = fileIds ?? selectedIds
+    if (source.size === 0) {
+      setQuickShareError('Please select at least one photo to share')
       return
     }
-
-    // Single project (the common case) — unchanged, including the
-    // selection min/max range option (a per-project setting, meaningless
-    // when spanning multiple events).
-    if (activeSourceProjects.length <= 1) {
-      setShareError(null)
-      setSharing(true)
-      const hasRange = selMax > 0
-      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          expiryDays: 30,
-          ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
-          includedFileIds: Array.from(selectedIds),
-        }),
-      }).then(r => r.json())
-      setSharing(false); setShowShareSetup(false)
-      if (res.success) setShareUrl(res.data.shareUrl)
-      else setShareError(res.message ?? 'Failed to generate link')
-      return
-    }
-
-    // Multi-event — one share link per project the current selection
-    // touches. All involved projects must belong to the same client.
     const byProject = new Map<string, string[]>()
-    selectedIds.forEach(fid => {
+    source.forEach(fid => {
       const pid = projectIdOf(fid)
       if (!byProject.has(pid)) byProject.set(pid, [])
       byProject.get(pid)!.push(fid)
@@ -1181,42 +1165,21 @@ export default function EventSection({
     const involvedProjects = activeSourceProjects.filter(p => byProject.has(p.projectId))
     const emails = Array.from(new Set(involvedProjects.map(p => p.clientEmail)))
     if (emails.length > 1) {
-      setShareError('Selected photos belong to different clients. Narrow the event dropdown to one client\'s events before sharing.')
+      setQuickShareError('Selected photos belong to different clients. Narrow the event dropdown to one client\'s events before sharing.')
       return
     }
-
-    setShareError(null)
-    setSharing(true)
-    const results = await Promise.all(
-      involvedProjects.map(p =>
-        fetch(`/studio/api/admin/projects/${p.projectId}/share-link`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ expiryDays: 30, includedFileIds: byProject.get(p.projectId) }),
-        }).then(r => r.json())
-      )
-    )
-    setSharing(false); setShowShareSetup(false)
-    const failed = results.find(r => !r.success)
-    if (failed) {
-      setShareError(failed.message ?? 'Failed to generate link')
-      return
-    }
-    setShareUrl(results[0]?.data?.shareUrl ?? '')
+    setQuickShareError(null)
+    setQuickShareProjects(involvedProjects)
+    setQuickShareFileIdsByProject(byProject)
+    setShowQuickShare(true)
   }
 
-  const copyLink = async () => {
-    if (!shareUrl) return
-    await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2000)
-  }
-
-  // Lightbox "quick share" — selects just this one photo and opens the
-  // existing share setup panel, reusing its safety behavior (explicit
-  // "Generate & Share" click required, never auto-mints/emails on its own).
+  // Lightbox "quick share" — shares just this one photo, independent of
+  // whatever's selected in the grid.
   const quickSharePhoto = (fileId: string) => {
-    onSelectionChange(new Set([fileId]))
     setShowAdminPreview(false)
     setShowPhotoInfo(false)
-    setShowShareSetup(true)
+    openQuickShare(new Set([fileId]))
   }
 
   // ── Tab switch ────────────────────────────────────────────
@@ -1510,10 +1473,22 @@ export default function EventSection({
                   </div>
                 </div>
               )}
-              {/* Placeholder — QR look/customization options land here later */}
-              <div className="border border-dashed border-border rounded-xl px-4 py-3 text-center">
-                <p className="text-[11px] text-muted">QR customization options coming soon</p>
-              </div>
+              {/* Allow-original-download toggle — signed into the QR token
+                  itself, so flipping this and regenerating re-signs a fresh
+                  token with the new value (same as changing expiry). */}
+              <label className="flex items-center justify-between gap-3 border border-border rounded-xl px-4 py-3 cursor-pointer">
+                <div>
+                  <p className="text-xs font-semibold text-text-primary">Allow original download</p>
+                  <p className="text-[11px] text-muted mt-0.5">Guests can download the unedited original, not just the final photo</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setQrAllowOriginal(v => !v); setQrDataUrl(null) }}
+                  className={`relative flex-shrink-0 w-10 h-6 rounded-full transition-colors ${qrAllowOriginal ? 'bg-accent' : 'bg-border'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${qrAllowOriginal ? 'translate-x-4' : ''}`} />
+                </button>
+              </label>
             </div>
           </div>
         </div>
@@ -1548,10 +1523,13 @@ export default function EventSection({
             }
             return group
           }}
-          onFindSimilar={async ({ fileId, faceId, secondFaceId, matchMode }) => {
+          onFindSimilar={async ({ fileId, faceId, secondFaceId, matchMode, coupleExclusive }) => {
             const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/similar`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ fileId, ...(faceId ? { faceId } : {}), ...(secondFaceId ? { secondFaceId } : {}), matchMode, accuracyLevel }),
+              body: JSON.stringify({
+                fileId, ...(faceId ? { faceId } : {}), ...(secondFaceId ? { secondFaceId } : {}),
+                matchMode, accuracyLevel, ...(coupleExclusive !== undefined ? { coupleExclusive } : {}),
+              }),
             }).then(r => r.json())
             if (!res.success) return null
             return res.data as FindSimilarResult
@@ -2081,7 +2059,7 @@ export default function EventSection({
 
                   {/* Quick Share — selection only */}
                   <Tooltip label="Quick Share selected">
-                    <button onClick={() => setShowShareSetup(true)}
+                    <button onClick={() => openQuickShare()}
                       className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
@@ -2243,59 +2221,20 @@ export default function EventSection({
           </div>
         )}
 
-        {/* ── Share setup panel ─────────────────────────────────── */}
-        {showShareSetup && (
-          <div className="px-5 py-4 border-b border-border bg-border/10 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-text-primary">Set selection target <span className="font-normal text-muted">(optional)</span></p>
-              <button onClick={() => setShowShareSetup(false)} className="text-muted hover:text-text-primary">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-muted">Min</label>
-                <input type="number" min={0} max={1000} value={selMin}
-                  onChange={e => { const v = Math.min(1000, Math.max(0, Number(e.target.value))); setSelMin(v); if (selMax > 0 && v > selMax) setSelMax(v) }}
-                  className="w-20 bg-bg border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60" />
-              </div>
-              <span className="text-muted text-sm">–</span>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-muted">Max</label>
-                <input type="number" min={0} max={1000} value={selMax}
-                  onChange={e => { const v = Math.min(1000, Math.max(0, Number(e.target.value))); setSelMax(v); if (selMin > v && v > 0) setSelMin(v) }}
-                  className="w-20 bg-bg border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60" />
-              </div>
-              <span className="text-xs text-muted">photos</span>
-            </div>
-            {selectedIds.size > 0 ? (
-              <p className="text-[11px] text-accent font-medium">{selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''} selected — client will only see these</p>
-            ) : (
-              <p className="text-[11px] text-yellow-500">Select photos in the grid first to share specific photos with the client</p>
-            )}
-            {shareError && <p className="text-[11px] text-red-500">{shareError}</p>}
-            <div className="flex gap-2">
-              <button onClick={() => { setSelMin(0); setSelMax(0); generateShareLink() }} disabled={sharing}
-                className="text-xs text-muted border border-border px-3 py-1.5 rounded-lg hover:bg-border/40 transition-colors disabled:opacity-50">
-                Skip target
-              </button>
-              <button onClick={generateShareLink} disabled={sharing}
-                className="flex-1 text-xs bg-accent text-bg font-bold py-1.5 rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50">
-                {sharing ? 'Generating…' : selMax > 0 ? `Generate & Share (${selMin}–${selMax})` : 'Generate & Share'}
-              </button>
-            </div>
+        {/* ── Quick Share — unified popup, replaces the old inline panel ── */}
+        {quickShareError && (
+          <div className="px-5 py-2.5 border-b border-border bg-danger/10 flex items-center gap-2">
+            <p className="flex-1 text-[11px] text-danger">{quickShareError}</p>
+            <button onClick={() => setQuickShareError(null)} className="text-danger/70 hover:text-danger text-xs font-semibold flex-shrink-0">Dismiss ×</button>
           </div>
         )}
-
-        {shareUrl && (
-          <div className="px-5 py-3 border-b border-border bg-success/5 flex items-center gap-3">
-            <div className="flex-1 text-xs text-success font-mono truncate">{shareUrl}</div>
-            <button onClick={copyLink} className="text-xs bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0">
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
+        {showQuickShare && (
+          <QuickShareModal
+            projects={quickShareProjects}
+            explicitFileIdsByProject={quickShareFileIdsByProject}
+            showSelectionRange
+            onClose={() => setShowQuickShare(false)}
+          />
         )}
 
         {/* ── Upload zone ───────────────────────────────────────── */}

@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { sendGalleryShareEmail } from '@/lib/aws/ses'
-import type { StudioProject, Studio } from '@/types/studio'
+import type { StudioProject } from '@/types/studio'
+
+const PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I — avoids read-aloud ambiguity
+function generateSharePassword(): string {
+  const bytes = randomBytes(6)
+  return Array.from(bytes, (b) => PASSWORD_CHARS[b % PASSWORD_CHARS.length]).join('')
+}
 
 export async function POST(
   req: NextRequest,
@@ -15,14 +20,11 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { expiryDays = 30, selectionMin, selectionMax, includedFileIds } = await req.json().catch(() => ({}))
+    const { expiryDays = 1, selectionMin, selectionMax, includedFileIds, passwordProtected } = await req.json().catch(() => ({}))
     const { projectId } = params
     const studioId = auth.studioId!
 
-    const [project, studio] = await Promise.all([
-      studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId }),
-      studioGetItem<Studio>(TABLES.studios, { studioId }),
-    ])
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
 
     if (!project) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -48,37 +50,34 @@ export async function POST(
     const now = new Date().toISOString()
 
     const hasRange = typeof selectionMin === 'number' && typeof selectionMax === 'number' && selectionMax > 0
+    const isProtected = passwordProtected === true
+    const sharePassword = isProtected ? generateSharePassword() : undefined
 
-    let updateExpr = 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active'
-    const exprValues: Record<string, unknown> = { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE' }
-    if (hasRange)   { updateExpr += ', selectionMin = :smin, selectionMax = :smax'; exprValues[':smin'] = selectionMin; exprValues[':smax'] = selectionMax }
-    if (hasFilter)  { updateExpr += ', sharedFileIds = :sfids'; exprValues[':sfids'] = includedFileIds }
+    let updateExpr = 'SET clientShareToken = :token, clientShareExpiresAt = :exp, updatedAt = :now, #s = :active, sharePasswordProtected = :prot'
+    const exprValues: Record<string, unknown> = { ':token': token, ':exp': expiresAt, ':now': now, ':active': 'ACTIVE', ':prot': isProtected }
+    if (hasRange)     { updateExpr += ', selectionMin = :smin, selectionMax = :smax'; exprValues[':smin'] = selectionMin; exprValues[':smax'] = selectionMax }
+    if (hasFilter)    { updateExpr += ', sharedFileIds = :sfids'; exprValues[':sfids'] = includedFileIds }
+    if (sharePassword) { updateExpr += ', sharePassword = :pwd'; exprValues[':pwd'] = sharePassword }
 
     // Re-sharing always clears the prior submission lock — the client should see a fresh,
     // submittable gallery (their previous heart/edit selections still load from the
     // Selection table and appear pre-checked; only the submit lock resets).
     const removeAttrs = ['selectionSubmittedAt']
     if (!hasFilter) removeAttrs.push('sharedFileIds')
+    if (!sharePassword) removeAttrs.push('sharePassword')
     updateExpr += ` REMOVE ${removeAttrs.join(', ')}`
 
     await studioUpdateItem(TABLES.projects, { studioId, projectId }, updateExpr, exprValues, { '#s': 'status' })
 
     const shareUrl = `${req.nextUrl.origin}/studio/gallery/${token}`
 
-    // Send email to client
-    if (project.clientEmail) {
-      sendGalleryShareEmail(
-        project.clientEmail,
-        project.clientName,
-        studio?.name ?? 'Your photographer',
-        project.eventType,
-        project.eventDate,
-        shareUrl,
-        expiryDays
-      ).catch((err) => console.error('[share-link] email send failed', err))
-    }
-
-    return NextResponse.json({ success: true, data: { shareUrl, expiresAt } })
+    // Sending to the client is now a separate, explicit action (see
+    // share-link/email) — never a side effect of generating/regenerating
+    // the link itself.
+    return NextResponse.json({
+      success: true,
+      data: { shareUrl, expiresAt, ...(sharePassword ? { sharePassword } : {}) },
+    })
   } catch (err) {
     console.error('[share-link]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
