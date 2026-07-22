@@ -11,6 +11,7 @@ import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/Phot
 import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
 import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
+import UploadModal from '@/components/studio/UploadModal'
 import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
 import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
@@ -31,6 +32,10 @@ const STALE_UPLOAD_MS = 15 * 60 * 1000
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
+  // Which project this file is headed to — defaults to the currently-open
+  // project, but the Upload popup lets the admin target a different (or
+  // brand-new) event without navigating away from this one.
+  projectId: string
 }
 
 // Deterministic "random-looking" pick — used for the AI Face group cards'
@@ -223,7 +228,7 @@ export default function EventSection({
   const [quickShareProjects, setQuickShareProjects] = useState<StudioProject[]>([])
   const [quickShareFileIdsByProject, setQuickShareFileIdsByProject] = useState<Map<string, string[]>>(new Map())
   const [quickShareError, setQuickShareError] = useState<string | null>(null)
-  const [uploadOpen, setUploadOpen]       = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
   const [sortMode, setSortMode]         = useState<SortMode>('DEFAULT')
@@ -333,7 +338,6 @@ export default function EventSection({
   const [previewImgDims, setPreviewImgDims]     = useState<{ width: number; height: number } | null>(null)
   const adminTouchStartX = useRef<number>(0)
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
@@ -417,7 +421,7 @@ export default function EventSection({
     removed.forEach(fid => { byProject.get(projectIdOf(fid))?.delete(fid) })
     byProject.forEach((set, pid) => onPhotoSelectionChange(pid)(set))
   }
-  useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
+  useEffect(() => { if (!loading && files.length === 0) setShowUploadModal(true) }, [loading, files.length])
 
   // Open Quick Share when triggered from global pill — shares the current
   // photo selection (if any), same as the selection-bar Quick Share icon.
@@ -1108,7 +1112,7 @@ export default function EventSection({
     await loadFiles()
   }
 
-  const uploadFile = async (file: File, itemId: string) => {
+  const uploadFile = async (file: File, itemId: string, targetProjectId: string) => {
     const update = (patch: Partial<UploadItem>) =>
       setUploads(prev => prev.map(u => u.id === itemId ? { ...u, ...patch } : u))
     update({ status: 'uploading', progress: 0 })
@@ -1116,18 +1120,20 @@ export default function EventSection({
     try {
       // Resumes from a previous attempt if the same file was seen before
       // and the server still has that upload alive.
-      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(project.projectId, file, partCount)
+      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(targetProjectId, file, partCount)
       const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, completedParts, (uploadedBytes, partsDone) => {
         update({ progress: Math.round((partsDone / partCount) * 100), uploadedBytes })
       })
-      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
+      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${targetProjectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
       }).then(r => r.json())
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
-      clearUploadResume(project.projectId, file.name, file.size, file.lastModified)
+      clearUploadResume(targetProjectId, file.name, file.size, file.lastModified)
       update({ status: 'done', progress: 100, uploadedBytes: file.size })
-      loadFiles(); onUpdated()
+      // Only the currently-open project's grid needs refreshing — an
+      // upload targeting a different event has nothing to show here.
+      if (targetProjectId === project.projectId) { loadFiles(); onUpdated() }
     } catch (err) {
       update({
         status: 'error',
@@ -1136,14 +1142,16 @@ export default function EventSection({
     }
   }
 
-  const handleFiles = (selected: FileList | null) => {
+  const handleFiles = (selected: FileList | null, targetProjectId: string = project.projectId) => {
     if (!selected) return
-    const items: UploadItem[] = Array.from(selected).map(f => ({ id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0 }))
+    const items: UploadItem[] = Array.from(selected).map(f => ({
+      id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0, projectId: targetProjectId,
+    }))
     setUploads(prev => [...prev, ...items])
     // Bounded concurrency — selecting hundreds/thousands of files and firing
     // them all at once is what caused large batches to silently stall past a
     // few hundred files (see MAX_CONCURRENT_UPLOADS comment above).
-    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
+    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id, item.projectId))
   }
 
   // Opens the unified Quick Share popup (components/studio/QuickShareModal.tsx)
@@ -1897,12 +1905,12 @@ export default function EventSection({
                 />
               </>
             )}
-            <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
-              className="h-7 px-2.5 flex items-center gap-1.5 rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors flex-shrink-0">
+            <button onClick={() => setShowUploadModal(true)} title="Upload photos"
+              className="h-7 px-2.5 flex items-center gap-1.5 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors flex-shrink-0">
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
               </svg>
-              <span className="text-xs font-semibold whitespace-nowrap">Add Media</span>
+              <span className="text-xs font-semibold whitespace-nowrap">Upload</span>
             </button>
             <button onClick={loadFiles} title="Refresh photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
@@ -2237,17 +2245,13 @@ export default function EventSection({
           />
         )}
 
-        {/* ── Upload zone ───────────────────────────────────────── */}
-        {uploadOpen && activeTab === 'photos' && (
-          <div className="mx-5 my-4 border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-accent/50 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files) }}>
-            <div className="text-3xl mb-2">📸</div>
-            <div className="text-sm font-semibold text-text-primary">Drop photos here or click to upload</div>
-            <div className="text-xs text-muted mt-1">JPG, PNG, WEBP, MP4 · Max 10GB per file</div>
-            <input ref={fileInputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => handleFiles(e.target.files)} />
-          </div>
+        {/* ── Upload popup ──────────────────────────────────────── */}
+        {showUploadModal && (
+          <UploadModal
+            currentProject={project}
+            onClose={() => setShowUploadModal(false)}
+            onFilesChosen={(files, targetProjectId) => handleFiles(files, targetProjectId)}
+          />
         )}
 
         {/* ── Upload progress ───────────────────────────────────── */}
