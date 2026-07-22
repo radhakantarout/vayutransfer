@@ -115,7 +115,10 @@ export async function POST(
           getMediaPreviewUrl(f).then(u => u ?? ''),
           getMediaDownloadUrl(f, f.originalFilename).catch(() => ''),
         ])
-        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
+        return {
+          fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl,
+          isEdited: !!(f.editedS3Key || f.editedR2Key), sizeBytes: f.sizeBytes,
+        }
       })
     )
 

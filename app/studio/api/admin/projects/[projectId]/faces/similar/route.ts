@@ -43,7 +43,7 @@ export async function POST(
 
     const {
       fileId, faceId: chosenFaceId, secondFaceId, accuracyLevel,
-      matchMode,
+      matchMode, coupleExclusive,
     } = await req.json().catch(() => ({}))
     if (typeof fileId !== 'string' || !fileId) {
       return NextResponse.json({ success: false, error: 'NO_FILE_ID' }, { status: 400 })
@@ -132,7 +132,14 @@ export async function POST(
       const [setA, setB] = await Promise.all([searchOne(targetFaceId), searchOne(secondFaceId)])
       const intersection = new Set(Array.from(setA).filter(id => setB.has(id)))
       intersection.add(fileId)
-      return NextResponse.json({ success: true, data: { fileIds: Array.from(intersection) } })
+      // "Only these two" — same free faceCountByFileId map solo mode uses,
+      // just checking for exactly 2 (these two people, no one else) instead
+      // of exactly 1. Applies uniformly, including the reference photo
+      // itself, so a 3-person reference shot is excluded too when exclusive.
+      const fileIds = coupleExclusive === true
+        ? Array.from(intersection).filter(id => (faceCountByFileId.get(id) ?? 0) === 2)
+        : Array.from(intersection)
+      return NextResponse.json({ success: true, data: { fileIds } })
     }
 
     const matchedIds = await searchOne(targetFaceId)

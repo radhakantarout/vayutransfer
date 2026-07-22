@@ -10,7 +10,7 @@ export type FindSimilarResult =
   | { needsSelection: true; faces: FaceBox[] }
 export type MatchMode = 'solo' | 'group' | 'couple'
 
-interface FindSimilarParams { fileId: string; faceId?: string; secondFaceId?: string; matchMode: MatchMode }
+interface FindSimilarParams { fileId: string; faceId?: string; secondFaceId?: string; matchMode: MatchMode; coupleExclusive?: boolean }
 
 interface Props {
   files: MediaFile[]  // already AI-enabled photos, passed in from EventSection's own loaded list
@@ -58,6 +58,10 @@ export default function StartSortingModal({ files, onClose, onGrouped, onCreateG
   const [faceChoice, setFaceChoice] = useState<{ fileId: string; faces: FaceBox[] } | null>(null)
   // Couple mode only — up to 2 toggled face ids from the picker above.
   const [coupleSelection, setCoupleSelection] = useState<Set<string>>(new Set())
+  // Couple mode only — "with others" (default, matches the original couple
+  // behavior: both present, anyone else may be too) vs "only these two"
+  // (exclusive: reject any match where a third indexed face is present).
+  const [coupleExclusive, setCoupleExclusive] = useState(false)
   // Couple mode was requested but the reference photo only has one face —
   // nothing to pair against.
   const [coupleWarning, setCoupleWarning] = useState(false)
@@ -76,6 +80,7 @@ export default function StartSortingModal({ files, onClose, onGrouped, onCreateG
     setSelected(new Set())
     setFaceChoice(null)
     setCoupleSelection(new Set())
+    setCoupleExclusive(false)
     setCoupleWarning(false)
     setError('')
     setNameOption('')
@@ -128,7 +133,7 @@ export default function StartSortingModal({ files, onClose, onGrouped, onCreateG
     const [faceId, secondFaceId] = Array.from(coupleSelection)
     const fileId = faceChoice.fileId
     setFinding(true); setError('')
-    const result = await onFindSimilar({ fileId, faceId, secondFaceId, matchMode: 'couple' })
+    const result = await onFindSimilar({ fileId, faceId, secondFaceId, matchMode: 'couple', coupleExclusive })
     setFinding(false)
     setFaceChoice(null)
     setCoupleSelection(new Set())
@@ -210,6 +215,24 @@ export default function StartSortingModal({ files, onClose, onGrouped, onCreateG
                   ? `Tap the two faces to pair (${coupleSelection.size}/2 selected)`
                   : `This photo has ${faceChoice.faces.length} faces — tap the one you want to find`}
               </p>
+              {matchMode === 'couple' && (
+                <div className="flex items-center justify-center gap-1 bg-bg border border-border rounded-full p-1 w-fit mx-auto">
+                  <button type="button" onClick={() => setCoupleExclusive(false)}
+                    title="Both people appear — anyone else may also be in the photo"
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-colors ${
+                      !coupleExclusive ? 'bg-accent text-bg shadow-sm' : 'text-muted hover:text-text-primary'
+                    }`}>
+                    With others
+                  </button>
+                  <button type="button" onClick={() => setCoupleExclusive(true)}
+                    title="Only these two — reject any match with a third person also in frame"
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-colors ${
+                      coupleExclusive ? 'bg-accent text-bg shadow-sm' : 'text-muted hover:text-text-primary'
+                    }`}>
+                    Only these two
+                  </button>
+                </div>
+              )}
               <div className="relative mx-auto max-w-md rounded-xl overflow-hidden bg-black/10">
                 {choicePhoto?.r2PreviewUrl && (
                   // eslint-disable-next-line @next/next/no-img-element

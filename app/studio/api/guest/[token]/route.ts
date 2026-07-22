@@ -18,7 +18,9 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 401 })
     }
 
-    const { projectId, studioId } = payload as { projectId: string; studioId: string; type: string; exp: number }
+    const { projectId, studioId, allowOriginalDownload } = payload as {
+      projectId: string; studioId: string; type: string; exp: number; allowOriginalDownload?: boolean
+    }
 
     const [project, studio] = await Promise.all([
       studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId }),
@@ -39,6 +41,7 @@ export async function GET(
         eventDate: project.eventDate,
         studioName: studio?.name ?? 'Studio',
         expiresAt,
+        allowOriginalDownload: allowOriginalDownload === true,
       },
     })
   } catch (err: unknown) {

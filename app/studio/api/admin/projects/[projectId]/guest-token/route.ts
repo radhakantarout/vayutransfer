@@ -29,8 +29,13 @@ export async function POST(
     if (![12, 24, 48].includes(expiryHours)) {
       return NextResponse.json({ success: false, error: 'INVALID_EXPIRY' }, { status: 400 })
     }
+    const allowOriginalDownload = body.allowOriginalDownload === true
 
-    const token = await new SignJWT({ projectId, studioId, type: 'GUEST_QR' })
+    // Signed into the token itself (not a DB field) — this is a per-QR-link
+    // choice the admin makes at generation time, and every guest-facing route
+    // already verifies this same JWT, so the download route can trust the
+    // flag server-side without an extra DB lookup.
+    const token = await new SignJWT({ projectId, studioId, type: 'GUEST_QR', allowOriginalDownload })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime(`${expiryHours}h`)
