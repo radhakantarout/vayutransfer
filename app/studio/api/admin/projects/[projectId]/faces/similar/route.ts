@@ -20,6 +20,12 @@ const rek = new RekognitionClient({ region: process.env.AWS_REGION ?? 'ap-south-
 // of matches. Now: if the reference photo has multiple faces and the caller
 // hasn't said which one, respond with `needsSelection` + each face's
 // bounding box so the admin can pick the right one before we search.
+//
+// Three match modes (matchMode): 'solo' finds photos where the target person
+// is the ONLY indexed face — an exclusive match. 'group' is the original,
+// unrestricted behavior (target appears, regardless of who else is also in
+// frame). 'couple' takes a second face (secondFaceId) and intersects two
+// searches — only photos containing BOTH people.
 export async function POST(
   req: NextRequest,
   { params }: { params: { projectId: string } }
@@ -35,24 +41,39 @@ export async function POST(
     const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
     if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
-    const { fileId, faceId: chosenFaceId, accuracyLevel } = await req.json().catch(() => ({}))
+    const {
+      fileId, faceId: chosenFaceId, secondFaceId, accuracyLevel,
+      matchMode,
+    } = await req.json().catch(() => ({}))
     if (typeof fileId !== 'string' || !fileId) {
       return NextResponse.json({ success: false, error: 'NO_FILE_ID' }, { status: 400 })
     }
+    const mode: 'solo' | 'group' | 'couple' = ['solo', 'group', 'couple'].includes(matchMode) ? matchMode : 'group'
     const matchThreshold = accuracyToMatchThreshold(
       typeof accuracyLevel === 'number' ? accuracyLevel : DEFAULT_AI_ACCURACY
     )
 
     const collectionId = `vayustudio-${projectId}`
 
+    // One paginated scan of the whole collection does double duty: finds
+    // every face belonging to the reference photo (facesForPhoto, as
+    // before) AND — for free, same data already being paginated through —
+    // counts how many distinct faces exist per photo (faceCountByFileId),
+    // which 'solo' mode needs afterward to know whether a candidate match
+    // is genuinely a solo shot of that person or a group photo they merely
+    // appear in.
     const facesForPhoto: { FaceId?: string; BoundingBox?: { Width?: number; Height?: number; Left?: number; Top?: number } }[] = []
+    const faceCountByFileId = new Map<string, number>()
     let nextToken: string | undefined
     try {
       do {
         const listRes = await rek.send(new ListFacesCommand({
           CollectionId: collectionId, MaxResults: 4096, NextToken: nextToken,
         }))
-        facesForPhoto.push(...(listRes.Faces ?? []).filter(f => f.ExternalImageId === fileId))
+        for (const f of listRes.Faces ?? []) {
+          if (f.ExternalImageId === fileId) facesForPhoto.push(f)
+          if (f.ExternalImageId) faceCountByFileId.set(f.ExternalImageId, (faceCountByFileId.get(f.ExternalImageId) ?? 0) + 1)
+        }
         nextToken = listRes.NextToken
       } while (nextToken)
     } catch (err: unknown) {
@@ -90,22 +111,36 @@ export async function POST(
       })
     }
 
-    const searchRes = await rek.send(new SearchFacesCommand({
-      CollectionId: collectionId,
-      FaceId: targetFaceId,
-      // Admin-controlled via the Accuracy slider (lib/studio/faceAccuracy.ts)
-      // — defaults to 85, tuned from the original 70 to cut down wrong-
-      // person false positives without losing real matches on test data.
-      FaceMatchThreshold: matchThreshold,
-      MaxFaces: 4096,
-    }))
+    const searchOne = async (faceId: string) => {
+      const res = await rek.send(new SearchFacesCommand({
+        CollectionId: collectionId,
+        FaceId: faceId,
+        // Admin-controlled via the Accuracy slider (lib/studio/faceAccuracy.ts)
+        // — defaults to 85, tuned from the original 70 to cut down wrong-
+        // person false positives without losing real matches on test data.
+        FaceMatchThreshold: matchThreshold,
+        MaxFaces: 4096,
+      }))
+      return new Set((res.FaceMatches ?? []).map(m => m.Face?.ExternalImageId).filter((id): id is string => !!id))
+    }
 
-    const fileIds = Array.from(new Set([
-      fileId,
-      ...(searchRes.FaceMatches ?? [])
-        .map(m => m.Face?.ExternalImageId)
-        .filter((id): id is string => !!id),
-    ]))
+    // Couple mode: intersect two independent single-face searches within
+    // this same project's own collection — no cross-project/multi-event
+    // complexity (that was tried for a different feature and reverted for
+    // being slow and confusing; this stays scoped to one collection).
+    if (mode === 'couple' && typeof secondFaceId === 'string' && facesForPhoto.some(f => f.FaceId === secondFaceId)) {
+      const [setA, setB] = await Promise.all([searchOne(targetFaceId), searchOne(secondFaceId)])
+      const intersection = new Set(Array.from(setA).filter(id => setB.has(id)))
+      intersection.add(fileId)
+      return NextResponse.json({ success: true, data: { fileIds: Array.from(intersection) } })
+    }
+
+    const matchedIds = await searchOne(targetFaceId)
+    matchedIds.add(fileId)
+
+    const fileIds = mode === 'solo'
+      ? Array.from(matchedIds).filter(id => (faceCountByFileId.get(id) ?? 0) <= 1)
+      : Array.from(matchedIds)
 
     return NextResponse.json({ success: true, data: { fileIds } })
   } catch (err) {

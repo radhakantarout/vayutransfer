@@ -277,6 +277,10 @@ export default function EventSection({
   const [startSortingOpen, setStartSortingOpen] = useState(false)
   const [showQrModal, setShowQrModal]           = useState(false)
   const [showReindexConfirm, setShowReindexConfirm] = useState(false)
+  // Group card's × — holds the group pending confirmation, not just a
+  // boolean, since the confirm popup needs to show which group/how many
+  // photos before actually deleting.
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<StudioFace | null>(null)
   // AI Face's "pick one event" popup dropdown — defaults to the host, reset
   // whenever the checked events change so a stale id can't linger selected.
   const [narrowEventId, setNarrowEventId] = useState(project.projectId)
@@ -1427,6 +1431,36 @@ export default function EventSection({
         </div>
       )}
 
+      {/* ── Delete-group confirmation — the photos themselves are never
+          touched, only the saved "these belong together" bucket, but it's
+          still real, persisted data (DynamoDB), so a stray click shouldn't
+          be able to remove it silently. */}
+      {confirmDeleteGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="text-center space-y-2">
+              <div className="text-3xl">🗑️</div>
+              <p className="text-sm font-bold text-text-primary">
+                Delete {confirmDeleteGroup.label ? `"${confirmDeleteGroup.label}"` : 'this group'}?
+              </p>
+              <p className="text-xs text-muted">
+                This removes the saved group of {confirmDeleteGroup.photoCount} photo{confirmDeleteGroup.photoCount !== 1 ? 's' : ''} — the photos themselves stay in the gallery untouched.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <button onClick={() => { handleDeleteGroup(confirmDeleteGroup.faceId); setConfirmDeleteGroup(null) }}
+                className="w-full text-sm bg-danger text-white font-bold py-2.5 rounded-xl hover:bg-danger/90 transition-colors">
+                Delete group
+              </button>
+              <button onClick={() => setConfirmDeleteGroup(null)}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Guest QR code popup — functional generate/copy/download today;
           customization options are a placeholder for a future pass. ───── */}
       {showQrModal && (
@@ -1496,17 +1530,28 @@ export default function EventSection({
             setFaceGroups(prev => [...(prev ?? []), group].sort((a, b) => b.photoCount - a.photoCount))
             setStartSortingOpen(false)
           }}
-          onCreateGroup={async (photoIds) => {
+          onCreateGroup={async (photoIds, label) => {
             const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ photoIds }),
             }).then(r => r.json())
-            return res.success ? (res.data as StudioFace) : null
+            if (!res.success) return null
+            const group = res.data as StudioFace
+            // Reuses the pre-existing (previously unused) label PATCH route —
+            // best-effort, a failed label save shouldn't lose the group itself.
+            if (label) {
+              await fetch(`/studio/api/admin/projects/${project.projectId}/faces/${group.faceId}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label }),
+              }).catch(() => {})
+              group.label = label
+            }
+            return group
           }}
-          onFindSimilar={async (fileId, faceId) => {
+          onFindSimilar={async ({ fileId, faceId, secondFaceId, matchMode }) => {
             const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/similar`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ fileId, ...(faceId ? { faceId } : {}), accuracyLevel }),
+              body: JSON.stringify({ fileId, ...(faceId ? { faceId } : {}), ...(secondFaceId ? { secondFaceId } : {}), matchMode, accuracyLevel }),
             }).then(r => r.json())
             if (!res.success) return null
             return res.data as FindSimilarResult
@@ -2155,15 +2200,16 @@ export default function EventSection({
                   />
                 </div>
               )}
-              <Tooltip label="Guest QR code">
+              <Tooltip label="Guests scan this to find their own photos by selfie">
                 <button onClick={() => setShowQrModal(true)}
-                  className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5h4.5v4.5h-4.5v-4.5zM15.75 4.5h4.5v4.5h-4.5v-4.5zM3.75 15h4.5v4.5h-4.5V15zM15.75 15h1.5v1.5h-1.5V15zM19.5 15h.75v.75h-.75V15zM15.75 18h.75v.75h-.75V18zM18 18.75h.75v.75H18v-.75zM6 6.75h1.5v1.5H6v-1.5zM18 6.75h1.5v1.5H18v-1.5zM6 17.25h1.5v1.5H6v-1.5z" />
                   </svg>
+                  <span className="text-[11px] font-semibold whitespace-nowrap">Selfie Search Link</span>
                 </button>
               </Tooltip>
-              {/* Reindex — kept right next to Start Grouping since they're
+              {/* Reindex — kept right next to Start Sorting since they're
                   the two "do something" actions on this tab. Always confirms
                   first (uses AI search balance) so a stray click can't
                   trigger a run by accident. */}
@@ -2184,7 +2230,7 @@ export default function EventSection({
                   <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
                   </svg>
-                  <span className="text-[11px] font-semibold whitespace-nowrap">Start Grouping</span>
+                  <span className="text-[11px] font-semibold whitespace-nowrap">Start Sorting</span>
                 </button>
               )}
             </div>
@@ -2384,19 +2430,24 @@ export default function EventSection({
                               </span>
                             )}
                           </button>
-                          <div className="flex items-center justify-center gap-1 mt-1">
-                            <span className="text-[10px] font-semibold text-muted whitespace-nowrap">
-                              {group.photoCount} photo{group.photoCount !== 1 ? 's' : ''}
-                            </span>
-                            {missing > 0 && (
-                              <span title={`${missing} of this group's photos aren't currently loaded`} className="text-[9px] text-yellow-500 font-bold">⚠</span>
+                          <div className="mt-1 text-center">
+                            {group.label && (
+                              <div className="text-[11px] font-bold text-text-primary truncate px-1">{group.label}</div>
                             )}
-                            <button onClick={() => handleDeleteGroup(group.faceId)} title="Delete group"
-                              className="w-3.5 h-3.5 flex items-center justify-center rounded text-muted/60 hover:text-red-500 transition-colors">
-                              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-semibold text-muted whitespace-nowrap">
+                                {group.photoCount} photo{group.photoCount !== 1 ? 's' : ''}
+                              </span>
+                              {missing > 0 && (
+                                <span title={`${missing} of this group's photos aren't currently loaded`} className="text-[9px] text-yellow-500 font-bold">⚠</span>
+                              )}
+                              <button onClick={() => setConfirmDeleteGroup(group)} title="Delete group"
+                                className="w-3.5 h-3.5 flex items-center justify-center rounded text-muted/60 hover:text-red-500 transition-colors">
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )
