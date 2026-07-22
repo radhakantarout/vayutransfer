@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
+import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
 
 interface GuestPhoto {
   fileId:      string
@@ -32,9 +33,20 @@ export default function GuestPage() {
   const [stage, setStage]           = useState<Stage>('LOADING')
   const [project, setProject]       = useState<ProjectInfo | null>(null)
   const [photos, setPhotos]         = useState<GuestPhoto[]>([])
-  const [activePhoto, setActivePhoto] = useState<GuestPhoto | null>(null)
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [shareSheetPhoto, setShareSheetPhoto] = useState<GuestPhoto | null>(null)
   const [shareToast, setShareToast] = useState(false)
   const [errorMsg, setErrorMsg]     = useState('')
+
+  // Multi-select + rubber-band drag-select on the results grid — same pattern
+  // used in the admin dashboard's EventSection.tsx.
+  const [selected, setSelected]   = useState<Set<string>>(new Set())
+  const [dragRect, setDragRect]   = useState<{ left: number; top: number; width: number; height: number } | null>(null)
+  const gridRef                   = useRef<HTMLDivElement>(null)
+  const dragState                 = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
+    active: false, startX: 0, startY: 0, moved: false,
+  })
+  const suppressNextTileClickRef  = useRef(false)
 
   const videoRef     = useRef<HTMLVideoElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
@@ -62,6 +74,67 @@ export default function GuestPage() {
       })
       .catch(() => { setStage('ERROR'); setErrorMsg('Could not connect. Please try again.') })
   }, [token])
+
+  // Rubber-band drag select
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragState.current.active || !gridRef.current) return
+      const gr = gridRef.current.getBoundingClientRect()
+      const cx = e.clientX - gr.left; const cy = e.clientY - gr.top
+      const { startX, startY } = dragState.current
+      if (Math.abs(cx - startX) > 4 || Math.abs(cy - startY) > 4) dragState.current.moved = true
+      if (!dragState.current.moved) return
+      setDragRect({ left: Math.min(startX, cx), top: Math.min(startY, cy), width: Math.abs(cx - startX), height: Math.abs(cy - startY) })
+    }
+    const onUp = (e: MouseEvent) => {
+      if (!dragState.current.active) return
+      const { startX, startY, moved } = dragState.current
+      dragState.current.active = false; dragState.current.moved = false; setDragRect(null)
+      if (!moved || !gridRef.current) return
+      suppressNextTileClickRef.current = true
+      const gr = gridRef.current.getBoundingClientRect()
+      const ex = e.clientX - gr.left; const ey = e.clientY - gr.top
+      const selL = Math.min(startX, ex) + gr.left; const selT = Math.min(startY, ey) + gr.top
+      const selR = Math.max(startX, ex) + gr.left; const selB = Math.max(startY, ey) + gr.top
+      const toSelect = new Set<string>()
+      gridRef.current.querySelectorAll('[data-fileid]').forEach(el => {
+        const r = el.getBoundingClientRect()
+        if (r.left < selR && r.right > selL && r.top < selB && r.bottom > selT)
+          toSelect.add((el as HTMLElement).dataset.fileid!)
+      })
+      if (toSelect.size > 0) {
+        setSelected(prev => {
+          const next = new Set(prev)
+          toSelect.forEach(id => next.add(id))
+          return next
+        })
+      }
+    }
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
+  const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return
+    const gr = gridRef.current!.getBoundingClientRect()
+    dragState.current = { active: true, startX: e.clientX - gr.left, startY: e.clientY - gr.top, moved: false }
+    e.preventDefault()
+  }
+
+  const toggleSelected = (fileId: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(fileId)) next.delete(fileId); else next.add(fileId)
+      return next
+    })
+  }
+
+  const handleTileClick = (fileId: string) => {
+    if (suppressNextTileClickRef.current) { suppressNextTileClickRef.current = false; return }
+    toggleSelected(fileId)
+  }
+
+  const clearSelection = () => setSelected(new Set())
 
   const startCamera = async () => {
     setStage('CAPTURING')
@@ -124,7 +197,31 @@ export default function GuestPage() {
     }
   }
 
-  const handleShare = async (photo: GuestPhoto) => {
+  // Single hidden-anchor download — reused for both the lightbox's Download
+  // icon and bulk "Download N", so there's exactly one download mechanism.
+  const triggerDownload = (fileId: string) => {
+    const a = document.createElement('a')
+    a.href = `/studio/api/guest/${token}/download/${fileId}`
+    a.download = ''
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+
+  // Staggered so the browser doesn't silently block near-simultaneous
+  // multi-file downloads (common with 3+ triggered in the same tick).
+  const downloadSelected = () => {
+    Array.from(selected).forEach((fileId, i) => setTimeout(() => triggerDownload(fileId), i * 150))
+  }
+
+  const shareToWhatsapp = (photo: GuestPhoto) => {
+    const shareUrl = `${location.origin}/studio/api/guest/${token}/download/${photo.fileId}`
+    window.open(`https://wa.me/?text=${encodeURIComponent(shareUrl)}`, '_blank')
+    setShareSheetPhoto(null)
+  }
+
+  const shareMore = async (photo: GuestPhoto) => {
+    setShareSheetPhoto(null)
     const shareUrl = `${location.origin}/studio/api/guest/${token}/download/${photo.fileId}`
     const shareData = { title: photo.filename, url: shareUrl }
     try {
@@ -140,7 +237,11 @@ export default function GuestPage() {
     }
   }
 
-  const reset = () => { stopCamera(); setPhotos([]); setActivePhoto(null); setErrorMsg(''); setStage('IDLE') }
+  const reset = () => {
+    stopCamera(); setPhotos([]); setLightboxIdx(null); setSelected(new Set()); setErrorMsg(''); setStage('IDLE')
+  }
+
+  const lightboxPhotos: LightboxPhoto[] = photos.map(p => ({ fileId: p.fileId, previewUrl: p.previewUrl, filename: p.filename }))
 
   if (stage === 'EXPIRED') return (
     <div className="min-h-screen bg-bg flex items-center justify-center px-4">
@@ -175,93 +276,54 @@ export default function GuestPage() {
         </div>
       )}
 
-      {/* Photo detail bottom sheet */}
-      {activePhoto && (
+      {/* Photo lightbox — download + share only, no star/info (guest role) */}
+      {lightboxIdx !== null && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photos={lightboxPhotos}
+          index={lightboxIdx}
+          onIndexChange={setLightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+          role="guest"
+          onDownload={(p) => triggerDownload(p.fileId)}
+          onShare={(p) => {
+            const photo = photos.find(ph => ph.fileId === p.fileId)
+            if (photo) setShareSheetPhoto(photo)
+          }}
+        />
+      )}
+
+      {/* Share sheet — WhatsApp + native share sheet ("More") */}
+      {shareSheetPhoto && (
         <div
-          className="fixed inset-0 z-50 flex flex-col justify-end"
-          onClick={() => setActivePhoto(null)}
+          className="fixed inset-0 z-[80] flex flex-col justify-end"
+          onClick={() => setShareSheetPhoto(null)}
         >
-          <div className="absolute inset-0 bg-black/80" />
+          <div className="absolute inset-0 bg-black/70" />
           <div
-            className="relative bg-card rounded-t-3xl overflow-hidden flex flex-col"
-            style={{ maxHeight: '92vh' }}
+            className="relative bg-card rounded-t-3xl overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
-            {/* Drag handle */}
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 bg-border rounded-full" />
             </div>
-
-            {/* Close button */}
-            <button
-              onClick={() => setActivePhoto(null)}
-              className="absolute top-3 right-3 w-8 h-8 bg-black/20 hover:bg-black/40 rounded-full flex items-center justify-center transition-colors"
-              aria-label="Close"
-            >
-              <svg className="w-4 h-4 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            {/* Photo preview */}
-            <div className="bg-black flex items-center justify-center overflow-hidden" style={{ height: '55vmax', maxHeight: '62vh' }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={activePhoto.previewUrl}
-                alt={activePhoto.filename}
-                className="max-w-full max-h-full object-contain"
-                draggable={false}
-              />
-            </div>
-
-            {/* File name */}
-            <p className="px-5 pt-4 pb-2 text-sm text-muted truncate">
-              {activePhoto.filename}
-            </p>
-
-            {/* Action buttons */}
-            <div className="flex items-center justify-center gap-6 px-6 py-4 pb-safe">
-              {/* View full size */}
-              <a
-                href={activePhoto.downloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex flex-col items-center gap-2"
-              >
-                <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
-                  <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <p className="text-center text-sm font-bold text-text-primary pt-2 pb-1">Share photo</p>
+            <div className="px-5 pb-safe pb-6 pt-3 flex items-center justify-center gap-8">
+              <button onClick={() => shareToWhatsapp(shareSheetPhoto)} className="flex flex-col items-center gap-2">
+                <div className="w-16 h-16 bg-green-500/15 hover:bg-green-500/25 rounded-2xl flex items-center justify-center transition-colors">
+                  <svg className="w-7 h-7 text-green-500" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
+                    <path d="M12 2C6.477 2 2 6.477 2 12c0 1.9.525 3.68 1.438 5.2L2 22l4.938-1.396A9.94 9.94 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18.148a8.11 8.11 0 01-4.13-1.13l-.296-.176-3.05.862.833-3.037-.192-.311A8.113 8.113 0 013.89 12c0-4.478 3.632-8.11 8.11-8.11 4.477 0 8.11 3.632 8.11 8.11 0 4.477-3.633 8.148-8.11 8.148z" />
                   </svg>
                 </div>
-                <span className="text-xs text-muted font-medium">View</span>
-              </a>
-
-              {/* Download */}
-              <a
-                href={`/studio/api/guest/${token}/download/${activePhoto.fileId}`}
-                download={activePhoto.filename}
-                className="flex flex-col items-center gap-2"
-              >
-                <div className="w-16 h-16 bg-accent/15 hover:bg-accent/25 rounded-2xl flex items-center justify-center transition-colors">
-                  <svg className="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                  </svg>
-                </div>
-                <span className="text-xs text-accent font-semibold">Download</span>
-              </a>
-
-              {/* Share */}
-              <button
-                onClick={() => handleShare(activePhoto)}
-                className="flex flex-col items-center gap-2"
-              >
+                <span className="text-xs text-muted font-medium">WhatsApp</span>
+              </button>
+              <button onClick={() => shareMore(shareSheetPhoto)} className="flex flex-col items-center gap-2">
                 <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
                   <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
                   </svg>
                 </div>
-                <span className="text-xs text-muted font-medium">Share</span>
+                <span className="text-xs text-muted font-medium">More</span>
               </button>
             </div>
           </div>
@@ -384,7 +446,7 @@ export default function GuestPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-text-primary">✨ {photos.length} photos found</h2>
-                <p className="text-xs text-muted mt-0.5">Tap any photo to view, download or share</p>
+                <p className="text-xs text-muted mt-0.5">Tap to select · Double-tap or ⤢ to view</p>
               </div>
               <button
                 onClick={reset}
@@ -395,40 +457,78 @@ export default function GuestPage() {
             </div>
 
             {/* Photo grid */}
-            <div className="grid grid-cols-3 gap-1">
-              {photos.map(photo => (
-                <button
-                  key={photo.fileId}
-                  onClick={() => setActivePhoto(photo)}
-                  className="relative aspect-square bg-border/30 rounded-xl overflow-hidden group active:scale-[0.95] transition-transform"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photo.previewUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                    draggable={false}
-                  />
-                  {/* Hover/tap overlay with eye icon */}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 group-active:bg-black/30 transition-colors flex items-center justify-center">
-                    <div className="opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity">
-                      <svg className="w-6 h-6 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
+            <div ref={gridRef} className="relative" onMouseDown={handleGridMouseDown}>
+              <div className="grid grid-cols-3 gap-1">
+                {photos.map((photo, idx) => {
+                  const isSelected = selected.has(photo.fileId)
+                  return (
+                    <div
+                      key={photo.fileId}
+                      data-fileid={photo.fileId}
+                      onClick={() => handleTileClick(photo.fileId)}
+                      onDoubleClick={(e) => { e.stopPropagation(); setLightboxIdx(idx) }}
+                      className={`relative aspect-square bg-border/30 rounded-xl overflow-hidden group cursor-pointer select-none transition-all
+                        ${isSelected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-transparent'}`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={photo.previewUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        draggable={false}
+                      />
+                      {isSelected && <div className="absolute inset-0 bg-accent/20 pointer-events-none" />}
+                      {isSelected && (
+                        <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-accent flex items-center justify-center pointer-events-none">
+                          <svg className="w-3 h-3 text-bg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                        </div>
+                      )}
+                      <button
+                        data-no-drag
+                        onClick={(e) => { e.stopPropagation(); setLightboxIdx(idx) }}
+                        className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="View full size"
+                      >⤢</button>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  )
+                })}
+              </div>
+              {dragRect && (
+                <div className="absolute border-2 border-accent bg-accent/10 pointer-events-none rounded"
+                  style={{ left: dragRect.left, top: dragRect.top, width: dragRect.width, height: dragRect.height }} />
+              )}
             </div>
 
             <p className="text-[11px] text-muted/50 text-center pb-2">
-              Tap any photo · Download or share individually
+              Drag to select multiple · Tap to select one
             </p>
           </div>
         )}
       </div>
+
+      {/* Floating bulk-download bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
+          <div className="bg-card/80 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center gap-1 px-2 py-2.5">
+              <button onClick={clearSelection} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="font-bold text-sm text-text-primary">{selected.size} selected</span>
+              </div>
+              <button onClick={downloadSelected} className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">
+                Download {selected.size}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
