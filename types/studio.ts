@@ -99,6 +99,11 @@ export interface StudioProject {
   // time emailed OTP the existing client-otp-request/verify flow already does.
   sharePasswordProtected?: boolean
   sharePassword?: string
+  // Recent Transfers panel — stamped on real client visits (not admin
+  // preview) and incremented on each client download, so the studio can see
+  // whether/when a shared link was actually opened and used.
+  shareLastOpenedAt?: string
+  shareDownloadCount?: number
   printShareToken?: string
   printShareExpiresAt?: string
   selectionSubmittedAt?: string

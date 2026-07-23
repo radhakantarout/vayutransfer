@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { StudioProject } from '@/types/studio'
+import RecentTransfersModal from './RecentTransfersModal'
 
 interface Props {
   projects: StudioProject[]  // length 1 for a single event, >1 for "share all events for this client"
@@ -36,6 +37,9 @@ export default function QuickShareModal({ projects, onClose, explicitFileIdsByPr
   const [emailSending, setEmailSending]     = useState(false)
   const [emailSent, setEmailSent]           = useState(false)
 
+  const [showOverrideConfirm, setShowOverrideConfirm] = useState(false)
+  const [showRecentTransfers, setShowRecentTransfers] = useState(false)
+
   const isSingle = projects.length === 1
   const isMulti = !isSingle
   const useExplicit = !!explicitFileIdsByProject
@@ -51,6 +55,14 @@ export default function QuickShareModal({ projects, onClose, explicitFileIdsByPr
   const scopeMessage = isSingle
     ? `${totalCount} photo${totalCount !== 1 ? 's' : ''} — ${(projects[0].eventType ?? '').replace(/_/g, ' ')}`
     : `${totalCount} photo${totalCount !== 1 ? 's' : ''} across ${projects.length} events`
+
+  // Generating a fresh link silently replaces any still-active one — the
+  // client's old link stops working the moment a new token is written. Warn
+  // first, with the same "which event, expires when" detail Recent Transfers
+  // shows, rather than overriding without any notice.
+  const hasActiveLink = (p: StudioProject) =>
+    !!p.clientShareToken && !!p.clientShareExpiresAt && new Date(p.clientShareExpiresAt) > new Date()
+  const activeExisting = projects.filter(hasActiveLink)
 
   const resetResult = () => {
     setShareUrl(''); setSharePassword(null); setCopied(false); setPasswordCopied(false)
@@ -104,6 +116,16 @@ export default function QuickShareModal({ projects, onClose, explicitFileIdsByPr
       setError(firstError ? String((firstError.reason as Error)?.message ?? firstError.reason) : '')
     }
     setBusy(false)
+  }
+
+  const handleGenerateClick = () => {
+    if (activeExisting.length > 0) { setShowOverrideConfirm(true); return }
+    if (isMulti) handleShareAll(); else handleGenerate()
+  }
+
+  const confirmOverride = () => {
+    setShowOverrideConfirm(false)
+    if (isMulti) handleShareAll(); else handleGenerate()
   }
 
   const copyLink = async () => {
@@ -196,16 +218,74 @@ export default function QuickShareModal({ projects, onClose, explicitFileIdsByPr
           {/* Generate action */}
           {!shareUrl && (
             isMulti ? (
-              <button onClick={handleShareAll} disabled={busy}
+              <button onClick={handleGenerateClick} disabled={busy}
                 className="w-full py-2.5 rounded-xl bg-accent text-bg text-xs font-bold hover:bg-accent/90 disabled:opacity-60 transition-colors">
                 {busy ? 'Sharing…' : `Share all ${projects.length} events`}
               </button>
             ) : (
-              <button onClick={handleGenerate} disabled={busy}
+              <button onClick={handleGenerateClick} disabled={busy}
                 className="w-full py-2.5 rounded-xl bg-accent text-bg text-xs font-bold hover:bg-accent/90 disabled:opacity-60 transition-colors">
                 {busy ? 'Generating…' : 'Generate Link'}
               </button>
             )
+          )}
+
+          {/* Override warning — an active link already exists on at least
+              one of these projects; generating now replaces it immediately. */}
+          {showOverrideConfirm && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onClick={(e) => { if (e.target === e.currentTarget) setShowOverrideConfirm(false) }}>
+              <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3.5">
+                <div className="flex items-start gap-2.5">
+                  <span className="text-xl flex-shrink-0">⚠️</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-text-primary">
+                      {activeExisting.length > 1 ? 'Active links already exist' : 'An active link already exists'}
+                    </h3>
+                    <p className="text-xs text-muted mt-1">
+                      Generating a new link now will replace {activeExisting.length > 1 ? 'these' : 'this one'} — the client won&apos;t be able to access the old shared link anymore.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                  {activeExisting.map(p => (
+                    <div key={p.projectId} className="flex items-center justify-between gap-2 bg-bg border border-border rounded-lg px-3 py-2">
+                      <span className="text-xs font-semibold text-text-primary truncate">{(p.eventType ?? '').replace(/_/g, ' ')}</span>
+                      <span className="text-[10px] text-muted flex-shrink-0">
+                        Expires {new Date(p.clientShareExpiresAt!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={() => { setShowOverrideConfirm(false); setShowRecentTransfers(true) }}
+                  className="text-[11px] font-semibold text-accent hover:underline">
+                  Check Recent Transfers →
+                </button>
+
+                <p className="text-xs text-text-primary font-medium">Do you still want to override the existing shared link?</p>
+
+                <div className="flex gap-2">
+                  <button onClick={() => setShowOverrideConfirm(false)}
+                    className="flex-1 py-2 rounded-xl border border-border text-xs font-semibold text-muted hover:text-text-primary hover:bg-border/40 transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={confirmOverride}
+                    className="flex-1 py-2 rounded-xl bg-danger text-white text-xs font-bold hover:bg-danger/90 transition-colors">
+                    Yes, override
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showRecentTransfers && (
+            <RecentTransfersModal
+              clientName={projects[0].clientName}
+              projects={projects}
+              onClose={() => setShowRecentTransfers(false)}
+            />
           )}
 
           {/* Result — link actions */}
@@ -228,35 +308,38 @@ export default function QuickShareModal({ projects, onClose, explicitFileIdsByPr
                 </div>
               )}
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                 <button onClick={copyLink}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-xs font-semibold text-text-primary hover:bg-border/40 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  className="flex-shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-text-primary hover:bg-border/40 transition-colors">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
                   </svg>
                   {copied ? 'Copied!' : 'Copy Link'}
                 </button>
-                <button onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')} title="Preview (as admin — no password needed)"
-                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl border border-border text-muted hover:text-text-primary hover:bg-border/40 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <button onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')} title="Preview as admin — no password needed"
+                  className="flex-shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-muted hover:text-text-primary hover:bg-border/40 transition-colors">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
+                  Preview
                 </button>
                 <button onClick={shareToWhatsapp} title="Share via WhatsApp"
-                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl border border-border text-green-500 hover:bg-green-500/10 transition-colors">
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  className="flex-shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-green-500 hover:bg-green-500/10 transition-colors">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.198.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
                     <path d="M12 2C6.477 2 2 6.477 2 12c0 1.9.525 3.68 1.438 5.2L2 22l4.938-1.396A9.94 9.94 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18.148a8.11 8.11 0 01-4.13-1.13l-.296-.176-3.05.862.833-3.037-.192-.311A8.113 8.113 0 013.89 12c0-4.478 3.632-8.11 8.11-8.11 4.477 0 8.11 3.632 8.11 8.11 0 4.477-3.633 8.148-8.11 8.148z" />
                   </svg>
+                  WhatsApp
                 </button>
                 <button onClick={() => setEmailPanelOpen(v => !v)} title="Email to client"
-                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl border transition-colors ${
+                  className={`flex-shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors ${
                     emailPanelOpen ? 'border-accent/60 bg-accent/10 text-accent' : 'border-border text-muted hover:text-text-primary hover:bg-border/40'
                   }`}>
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0a2.25 2.25 0 00-2.25-2.25h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
                   </svg>
+                  Email
                 </button>
               </div>
 

@@ -11,12 +11,14 @@ import EventSection, { type ActiveTab } from './EventSection'
 import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
+import RecentTransfersModal from '@/components/studio/RecentTransfersModal'
 import AISortingModal from '@/components/studio/AISortingModal'
 import EditClientModal from '@/components/studio/EditClientModal'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
 import ProfileMenu from '@/components/studio/ProfileMenu'
 import EditProfileModal from '@/components/studio/EditProfileModal'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
+import { useChatWidget } from '@/components/studio/ChatWidgetContext'
 
 interface NotificationItem {
   jobId: string
@@ -189,6 +191,7 @@ function ClientBranch({
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [showRecentTransfers, setShowRecentTransfers] = useState(false)
 
   const sortedByDate = [...projects].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
   const dateLabel = sortedByDate[0] ? `${fmtDate(sortedByDate[0].eventDate)}${projects.length > 1 ? ' · +more' : ''}` : null
@@ -257,6 +260,26 @@ function ClientBranch({
         </div>
       </div>
 
+      {/* Recent Transfers — list of this client's Quick Share links, with
+          open/progress/download status and manage actions (extend, revoke,
+          re-notify). Only worth showing once there's at least one link. */}
+      {projects.some(p => p.clientShareToken) && (
+        <button onClick={() => setShowRecentTransfers(true)}
+          className="w-full flex items-center gap-1.5 px-2.5 py-1.5 mb-2 rounded-lg text-[11px] font-semibold text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+          </svg>
+          Recent Transfers
+        </button>
+      )}
+      {showRecentTransfers && (
+        <RecentTransfersModal
+          clientName={clientName}
+          projects={projects}
+          onClose={() => setShowRecentTransfers(false)}
+        />
+      )}
+
       {/* Watermark (moved from the gallery header — one less button up there)
           + Add Event — both plain bold text links in the app's accent color,
           same treatment as "+ Add more events" on the My Projects cards */}
@@ -288,11 +311,14 @@ function ClientBranch({
         </button>
       </div>
 
-      {/* Event rows — drag the grip handle to reorder */}
+      {/* Event rows — drag the grip handle to reorder. Scrolls internally
+          past ~4 events instead of growing unbounded, so a client with many
+          events doesn't force the whole sidebar tree to scroll just to see
+          the list end. */}
       {projects.length === 0 ? (
         <p className="text-[11px] text-muted px-2 py-1.5">No events yet</p>
       ) : (
-        <div className="space-y-px">
+        <div className={`space-y-px ${orderedProjects.length > 4 ? 'max-h-44 overflow-y-auto pr-0.5' : ''}`}>
           {orderedProjects.map((p, i) => {
             const selected = selectedIds.includes(p.projectId)
             return (
@@ -377,6 +403,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router    = useRouter()
   const searchParams = useSearchParams()
   const { setNavCollapsed } = useExpandedGrid()
+  const { setOpen: setChatOpen } = useChatWidget()
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
@@ -908,11 +935,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </div>
 
-              {/* Help — direct line to support */}
-              <a href="https://wa.me/918984769522" target="_blank" rel="noopener noreferrer" title="Help & support"
+              {/* Help — opens the chat panel (hidden-by-default floating
+                  trigger elsewhere in the admin app; this is the one way in) */}
+              <button onClick={() => setChatOpen(true)} title="Help & support"
                 className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
                 <HelpIcon />
-              </a>
+              </button>
 
               {/* Profile — same Settings/Edit profile/Billing/Logout menu,
                   now a small icon here instead of a bottom-anchored row */}
@@ -1176,10 +1204,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 )}
               </button>
             </div>
-            <a href="https://wa.me/918984769522" target="_blank" rel="noopener noreferrer" title="Help & support"
+            <button onClick={() => setChatOpen(true)} title="Help & support"
               className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-border/50 transition-colors">
               <HelpIcon />
-            </a>
+            </button>
             <PhotoActionsMenu
               align="left"
               menuClassName="w-48"

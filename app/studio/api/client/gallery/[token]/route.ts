@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioQueryByIndex, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioQueryByIndex, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { StudioProject, MediaFile, Selection, Studio } from '@/types/studio'
 
@@ -38,6 +38,18 @@ export async function GET(
     const isStudioPreview = ['ADMIN', 'OWNER'].includes(auth.role) && auth.studioId === entry.studioId
     if (!isClient && !isStudioPreview) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+
+    // Recent Transfers panel — only a real client visit counts as "opened",
+    // never the studio's own preview. Fire-and-forget, never blocks the
+    // response.
+    if (isClient) {
+      studioUpdateItem(
+        TABLES.projects,
+        { studioId: entry.studioId, projectId: entry.projectId },
+        'SET shareLastOpenedAt = :now',
+        { ':now': new Date().toISOString() }
+      ).catch((err) => console.error('[client-gallery overview] shareLastOpenedAt stamp failed', err))
     }
 
     const { studioId, clientEmail } = entry
