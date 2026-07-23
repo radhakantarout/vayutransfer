@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import type { StudioProject, MediaFile, Selection } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection, StudioFace } from '@/types/studio'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
+import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
 
 interface GalleryFile extends MediaFile {
   isSelected: boolean
@@ -24,6 +25,21 @@ interface EventOverview {
 
 type ViewMode   = 'grid' | 'lightbox'
 type ViewFilter = 'all' | 'loved' | 'edit'
+
+// Deterministic "random-looking" pick for a group card's photo stack — same
+// helper as EventSection.tsx's admin AI Face tab, so the stack looks stable
+// across re-renders instead of reshuffling on every selection/search change.
+function pickStableRandom<T>(arr: T[], seed: string, count: number): T[] {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  const copy = [...arr]
+  for (let i = copy.length - 1; i > 0; i--) {
+    h = (h * 1103515245 + 12345) >>> 0
+    const j = h % (i + 1)
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy.slice(0, count)
+}
 
 function HeartIcon({ filled, className }: { filled?: boolean; className?: string }) {
   return (
@@ -217,10 +233,19 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
   const [selectionPreviewIdx, setSelectionPreviewIdx]   = useState(0)
   const [openMenu, setOpenMenu]                 = useState<string | null>(null)
   const touchStartX                             = useRef<number>(0)
-  const [zoomLevel, setZoomLevel]       = useState(3)
+  // Same floating glass zoom bar (2-10 columns) the studio admin's own
+  // gallery grid uses — ported so client and admin zoom controls feel
+  // identical, and so it works equally well as a drag target on mobile
+  // (where most clients will actually be browsing) and desktop.
+  const [zoomLevel, setZoomLevel]       = useState(4)
+  const zoomTrackRef                    = useRef<HTMLDivElement>(null)
   const [viewFilter, setViewFilter]     = useState<ViewFilter>('all')
   const [showSelfie, setShowSelfie]     = useState(false)
   const [selfieFiles, setSelfieFiles]   = useState<MediaFile[] | null>(null)
+  // AI Face groups (Bride/Groom/Couple/etc.), mirroring the admin AI Face
+  // tab — null/empty just means no strip renders, never an error state.
+  const [faceGroups, setFaceGroups]         = useState<StudioFace[] | null>(null)
+  const [faceGroupFilter, setFaceGroupFilter] = useState<{ faceId: string; label?: string; fileIds: Set<string> } | null>(null)
   // Per-tile thumbnail load state — undefined defaults to "loading" so a fresh
   // tile shows the spinner until its <img> fires onLoad/onError.
   const [imgStatus, setImgStatus]       = useState<Record<string, 'loaded' | 'error'>>({})
@@ -244,10 +269,16 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [galleryRes, selectionsRes] = await Promise.all([
+    const [galleryRes, selectionsRes, groupsRes] = await Promise.all([
       fetch(`/studio/api/client/gallery/${token}/events/${projectId}`),
       fetch(`/studio/api/client/selections?projectId=${projectId}`),
+      // Non-fatal — a studio without AI Sorting run (or no groups saved yet)
+      // just means no group strip renders, never an error state.
+      fetch(`/studio/api/client/gallery/${token}/events/${projectId}/faces/groups`).catch(() => null),
     ])
+    if (groupsRes) {
+      groupsRes.json().then(d => { if (d.success) setFaceGroups(d.data) }).catch(() => {})
+    }
 
     if (galleryRes.status === 401 || galleryRes.status === 403) {
       router.replace(`/studio/otp?t=${token}`)
@@ -333,10 +364,47 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
     if (viewMode === 'lightbox') setViewMode('grid')
   }
 
+  // Drag the zoom bar's dot up/down the track to set zoom directly, instead
+  // of only stepping one column at a time via +/- — same handler as the
+  // admin dashboard's floating zoom bar. Handles mouse and touch alike.
+  const handleZoomTrackDrag = (e: React.MouseEvent | React.TouchEvent) => {
+    const track = zoomTrackRef.current
+    if (!track) return
+    const getClientY = (ev: MouseEvent | TouchEvent) => 'touches' in ev ? ev.touches[0].clientY : ev.clientY
+    const updateFromY = (clientY: number) => {
+      const rect = track.getBoundingClientRect()
+      const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
+      setZoomLevel(Math.round(2 + ratio * 8))
+    }
+    updateFromY('touches' in e ? e.touches[0].clientY : e.clientY)
+    const onMove = (ev: MouseEvent | TouchEvent) => { updateFromY(getClientY(ev)); ev.preventDefault() }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove as EventListener)
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchmove', onMove as EventListener)
+      window.removeEventListener('touchend', onUp)
+    }
+    window.addEventListener('mousemove', onMove as EventListener)
+    window.addEventListener('mouseup', onUp)
+    window.addEventListener('touchmove', onMove as EventListener, { passive: false })
+    window.addEventListener('touchend', onUp)
+    e.preventDefault()
+  }
+
   const openLightbox = (idx: number, e: React.MouseEvent) => {
     e.stopPropagation()
     setLightboxIdx(idx)
     setViewMode('lightbox')
+  }
+
+  // Hidden-anchor download — same pattern used by the guest gallery.
+  const triggerDownload = (fileId: string) => {
+    const a = document.createElement('a')
+    a.href = `/studio/api/client/gallery/${token}/download/${fileId}`
+    a.download = ''
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
   }
 
   const handleSubmit = async () => {
@@ -448,9 +516,13 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
     : viewFilter === 'loved' ? files.filter(f => f.isSelected)
     : files.filter(f => f.editingRequired)
 
-  const displayFiles: GalleryFile[] = selfieFiles
-    ? baseFiles.filter(f => selfieFiles.some(sf => sf.fileId === f.fileId))
+  const groupFiltered: GalleryFile[] = faceGroupFilter
+    ? baseFiles.filter(f => faceGroupFilter.fileIds.has(f.fileId))
     : baseFiles
+
+  const displayFiles: GalleryFile[] = selfieFiles
+    ? groupFiltered.filter(f => selfieFiles.some(sf => sf.fileId === f.fileId))
+    : groupFiltered
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -540,40 +612,6 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
         </div>
       </div>
 
-      {/* ── How-to guide ────────────────────────────────────── */}
-      {files.length > 0 && (
-        <div className="max-w-6xl mx-auto px-4 pt-4 pb-2">
-          <div className="bg-card border border-border rounded-2xl px-4 py-4">
-            <p className="text-xs font-bold text-muted uppercase tracking-wider mb-3">How to use your gallery</p>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="flex flex-col items-center gap-1.5 text-center">
-                <div className="w-9 h-9 rounded-xl bg-rose-600/10 border border-rose-600/20 flex items-center justify-center">
-                  <HeartIcon filled className="w-5 h-5 text-rose-600" />
-                </div>
-                <p className="text-[11px] font-semibold text-text-primary">Tap to select</p>
-                <p className="text-[10px] text-muted leading-tight">Tap any photo to add it to your selection</p>
-              </div>
-              <div className="flex flex-col items-center gap-1.5 text-center">
-                <div className="w-9 h-9 rounded-xl bg-border/60 border border-border flex items-center justify-center">
-                  <DotsIcon />
-                </div>
-                <p className="text-[11px] font-semibold text-text-primary">Request edits</p>
-                <p className="text-[10px] text-muted leading-tight">Tap ··· on any photo to ask for retouching</p>
-              </div>
-              <div className="flex flex-col items-center gap-1.5 text-center">
-                <div className="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <p className="text-[11px] font-semibold text-text-primary">Submit when done</p>
-                <p className="text-[10px] text-muted leading-tight">Hit Submit at the bottom when you&apos;re happy</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Selfie search modal ─────────────────────────────── */}
       {showSelfie && (
         <SelfieSearchModal
@@ -625,11 +663,76 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
         </div>
       )}
 
+      {/* ── Face groups strip — same stacked-photo cards as the studio
+          admin's AI Face tab. Hidden once drilled into a specific group. ── */}
+      {faceGroups && faceGroups.length > 0 && !faceGroupFilter && (
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1">
+          <div className="flex items-start gap-4 overflow-x-auto pb-2">
+            {faceGroups.map(group => {
+              const groupPhotos = group.photoIds
+                .map(id => files.find(f => f.fileId === id))
+                .filter((f): f is GalleryFile => !!f)
+              const stack = pickStableRandom(groupPhotos, group.faceId, 4)
+              return (
+                <div key={group.faceId} className="relative flex-shrink-0 group/gc">
+                  <button
+                    onClick={() => setFaceGroupFilter({ faceId: group.faceId, label: group.label, fileIds: new Set(group.photoIds) })}
+                    className="relative w-28 h-24 flex-shrink-0"
+                  >
+                    {stack.length === 0 ? (
+                      <div className="absolute inset-0 w-20 h-20 mx-auto rounded-xl border-2 border-dashed border-border flex items-center justify-center text-[10px] text-muted text-center px-1">
+                        Loading…
+                      </div>
+                    ) : stack.map((f, i) => (
+                      <div
+                        key={f.fileId}
+                        className="absolute top-0 left-1/2 w-20 h-20 rounded-xl overflow-hidden border-2 border-card shadow-[0_8px_20px_-6px_rgba(0,0,0,0.45)] transition-transform group-hover/gc:-translate-y-1.5"
+                        style={{
+                          transform: `translateX(-50%) rotate(${(i - (stack.length - 1) / 2) * 12}deg) translateX(${(i - (stack.length - 1) / 2) * 20}px)`,
+                          zIndex: i,
+                        }}
+                      >
+                        {f.r2PreviewUrl
+                          ? <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                          : <div className="w-full h-full bg-border/40" />}
+                      </div>
+                    ))}
+                    {group.photoCount > stack.length && (
+                      <span className="absolute -top-1.5 -right-1 z-10 w-5 h-5 flex items-center justify-center rounded-full bg-accent text-white text-[9px] font-bold shadow">
+                        +{group.photoCount - stack.length}
+                      </span>
+                    )}
+                  </button>
+                  <div className="mt-1 text-center">
+                    {group.label && <div className="text-[11px] font-bold text-text-primary truncate px-1">{group.label}</div>}
+                    <div className="text-[10px] font-semibold text-muted">{group.photoCount} photo{group.photoCount !== 1 ? 's' : ''}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Back to groups ───────────────────────────────────── */}
+      {faceGroupFilter && (
+        <div className="max-w-6xl mx-auto px-4 pt-3 pb-1">
+          <button onClick={() => setFaceGroupFilter(null)}
+            className="flex items-center gap-1.5 text-xs font-bold text-accent hover:text-accent/80 transition-colors">
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Back to groups
+            <span className="text-muted font-normal">— {faceGroupFilter.label ?? 'Group'} · {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
+          </button>
+        </div>
+      )}
+
       {/* ── Grid toolbar ────────────────────────────────────── */}
       {files.length > 0 && (
-        <div className="max-w-6xl mx-auto px-4 pt-2 pb-1 flex items-center justify-between gap-3">
+        <div className="max-w-6xl mx-auto px-4 pt-2 pb-1">
           {viewFilter !== 'all' ? (
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold flex-1
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold
               ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
               {viewFilter === 'loved'
                 ? <><HeartIcon filled className="w-3.5 h-3.5 flex-shrink-0" /> Loved photos</>
@@ -642,21 +745,29 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
           ) : (
             <span className="text-xs text-muted">{files.length} photos</span>
           )}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <button onClick={() => setZoomLevel(v => Math.min(5, v + 1))} title="Zoom out"
-              className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
-              </svg>
-            </button>
-            <input type="range" min={2} max={5} value={7 - zoomLevel} onChange={e => setZoomLevel(7 - Number(e.target.value))} className="w-16 h-1 cursor-pointer accent-accent" />
-            <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
-              className="w-6 h-6 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-              </svg>
-            </button>
+        </div>
+      )}
+
+      {/* ── Floating zoom bar — same drag-track control the studio admin's
+          own gallery grid uses, works equally well as a touch target on
+          mobile (most clients browse from a phone) and with a mouse. ── */}
+      {files.length > 0 && (
+        <div className="fixed right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col items-center gap-1 bg-card border border-border/60 rounded-full py-1.5 px-1 shadow-lg">
+          <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Fewer columns (zoom in)"
+            className="w-6 h-6 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-sm font-bold leading-none">
+            +
+          </button>
+          <div ref={zoomTrackRef} onMouseDown={handleZoomTrackDrag} onTouchStart={handleZoomTrackDrag}
+            className="relative w-1.5 h-28 flex-shrink-0 bg-border/50 rounded-full cursor-pointer touch-none">
+            <span
+              className="absolute left-1/2 w-3.5 h-3.5 rounded-full bg-accent shadow-sm cursor-grab active:cursor-grabbing"
+              style={{ top: `${((zoomLevel - 2) / 8) * 100}%`, transform: 'translate(-50%, -50%)' }}
+            />
           </div>
+          <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="More columns (zoom out)"
+            className="w-6 h-6 flex-shrink-0 flex items-center justify-center text-muted hover:text-accent transition-colors text-sm font-bold leading-none">
+            −
+          </button>
         </div>
       )}
 
@@ -682,6 +793,7 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                       ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-bg shadow-md shadow-rose-600/20'
                       : 'ring-1 ring-border hover:ring-2 hover:ring-border'}`}
                   onClick={() => toggleSelect(f.fileId)}
+                  onDoubleClick={(e) => openLightbox(idx, e)}
                 >
                   {f.r2PreviewUrl ? (
                     <>
@@ -793,17 +905,18 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
         )}
       </div>
 
-      {/* ── Lightbox ────────────────────────────────────────── */}
-      {viewMode === 'lightbox' && (
-        <div className="fixed inset-0 z-50 bg-black/92 flex items-center justify-center" onClick={() => setViewMode('grid')}>
-          <button className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center" onClick={() => setViewMode('grid')}>✕</button>
-          <button className="absolute left-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20" disabled={lightboxIdx === 0} onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i - 1) }}>‹</button>
-          <button className="absolute right-3 text-white/70 hover:text-white text-3xl w-10 h-10 flex items-center justify-center disabled:opacity-20" disabled={lightboxIdx === displayFiles.length - 1} onClick={(e) => { e.stopPropagation(); setLightboxIdx((i) => i + 1) }}>›</button>
-          <img src={displayFiles[lightboxIdx]?.r2PreviewUrl ?? ''} alt={displayFiles[lightboxIdx]?.originalFilename} className="max-h-screen max-w-full object-contain px-16" onClick={(e) => e.stopPropagation()} draggable={false} />
-          <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-4">
-            <span className="text-white/50 text-sm">{lightboxIdx + 1} / {displayFiles.length}</span>
-          </div>
-        </div>
+      {/* ── Lightbox — download + love/select, no star/info (client role) ── */}
+      {viewMode === 'lightbox' && displayFiles.length > 0 && (
+        <PhotoLightbox
+          photos={displayFiles.map((f): LightboxPhoto => ({ fileId: f.fileId, previewUrl: f.r2PreviewUrl ?? '', filename: f.originalFilename }))}
+          index={lightboxIdx}
+          onIndexChange={setLightboxIdx}
+          onClose={() => setViewMode('grid')}
+          role="client"
+          isSelected={(p) => displayFiles.find(f => f.fileId === p.fileId)?.isSelected ?? false}
+          onToggleSelect={(p) => toggleSelect(p.fileId)}
+          onDownload={(p) => triggerDownload(p.fileId)}
+        />
       )}
 
       {/* ── Floating selection bar — only when the draft actually differs from
