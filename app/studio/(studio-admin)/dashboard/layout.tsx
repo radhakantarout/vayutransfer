@@ -1102,9 +1102,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             lives in the top header row instead, next to the brand name.
             One divider separating it from the scrollable area above; no
             lines splitting the items apart, just spacing between them. */}
-        <div className="border-t border-border flex-shrink-0 px-2 py-2 space-y-1.5">
+        <div className="border-t border-border flex-shrink-0 px-2 py-1 space-y-1">
           <Link href="/studio/dashboard/settings" onClick={clearSelection}
-            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
               pathname.startsWith('/studio/dashboard/settings')
                 ? 'bg-accent/10 text-accent'
                 : 'text-muted hover:text-text-primary hover:bg-border/50'
@@ -1117,8 +1117,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
 
           {stats && (
-            <div className="px-2.5 py-1.5 rounded-lg bg-border/25">
-              <div className="flex items-center justify-between mb-1">
+            <div className="px-2.5 py-1 rounded-lg bg-border/25">
+              <div className="flex items-center justify-between mb-0.5">
                 <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">Storage</span>
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-muted">{fmtBytes(stats.storageUsedBytes)} / {fmtBytes(stats.storageGrantBytes)}</span>
@@ -1141,8 +1141,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               indexing Lambda's faceIndexed flag, aggregated across every
               project, against a purchasable credit pool. */}
           {stats && (
-            <div className="px-2.5 py-1.5 rounded-lg bg-border/25">
-              <div className="flex items-center justify-between mb-1">
+            <div className="px-2.5 py-1 rounded-lg bg-border/25">
+              <div className="flex items-center justify-between mb-0.5">
                 <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">AI Search</span>
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-muted">{stats.aiSearchCreditsUsed} / {stats.aiSearchCreditsTotal}</span>
@@ -1293,16 +1293,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       </aside>
 
-      {/* Sidebar collapse/expand "roller" tab — sits outside <aside> (not
-          clipped by its own overflow-hidden) so it stays visible and slides
-          along with the sidebar's width transition, straddling its edge. */}
+      {/* Sidebar collapse/expand toggle — sits outside <aside> (not clipped
+          by its own overflow-hidden) so it stays visible and slides along
+          with the sidebar's width transition, straddling its edge. Modern
+          minimal styling: no accent fill, just a plain black/white icon on
+          a neutral surface, matching the current theme either way. */}
       <button
         onClick={() => setSidebarCollapsed(v => !v)}
         title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        style={{ left: sidebarCollapsed ? 48 : 256, marginLeft: -10 }}
-        className="absolute bottom-4 z-20 w-5 h-9 flex items-center justify-center rounded-md bg-accent text-white shadow-lg shadow-accent/30 hover:shadow-xl hover:shadow-accent/40 hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out"
+        style={{ left: sidebarCollapsed ? 48 : 256, marginLeft: -11 }}
+        className="absolute bottom-4 z-20 w-6 h-6 flex items-center justify-center rounded-full bg-card border border-border text-text-primary shadow-md hover:border-text-primary/40 hover:shadow-lg active:scale-90 transition-all duration-300 ease-in-out"
       >
-        <svg className={`w-3 h-3 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+        <svg className={`w-3 h-3 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
       </button>

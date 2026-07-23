@@ -2367,11 +2367,6 @@ export default function EventSection({
                                   : <div className="w-full h-full bg-border/40" />}
                               </div>
                             ))}
-                            {group.photoCount > stack.length && (
-                              <span className="absolute -top-1.5 -right-1 z-10 w-5 h-5 flex items-center justify-center rounded-full bg-accent text-white text-[9px] font-bold shadow">
-                                +{group.photoCount - stack.length}
-                              </span>
-                            )}
                           </button>
                           <div className="mt-1 text-center">
                             {group.label && (
