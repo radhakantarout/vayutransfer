@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import Razorpay from 'razorpay'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioPutItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { computeStorageAddOnPaise } from '@/constants/studioPricing'
-import type { StudioTransaction } from '@/types/studio'
+import type { Studio, StudioTransaction } from '@/types/studio'
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID ?? '',
@@ -13,14 +13,21 @@ const razorpay = new Razorpay({
 
 // Mirrors app/api/wallet/topup/route.ts's shape — a separate, VayuStudios-only
 // implementation on its own transactions table, not a shared code path.
-// Accepts an arbitrary GB amount (from the Pro plan's live calculator, or a
-// Free-plan studio topping up without upgrading) — price is always computed
-// here from the shared linear rate, never trusted from the client.
+// Accepts an arbitrary GB amount (from the Pro plan's live calculator) —
+// price is always computed here from the shared linear rate, never trusted
+// from the client. Top-ups are Pro+ only (the UI already redirects Free
+// studios to Billing's upgrade options instead of showing this at all —
+// this is the server-side backstop, not the primary UX).
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
     if (!auth || !['ADMIN', 'OWNER'].includes(auth.role) || !auth.studioId) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+
+    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })
+    if (!studio || (studio.billingPlanId ?? 'free') === 'free') {
+      return NextResponse.json({ success: false, error: 'PLAN_REQUIRED', message: 'Top-ups are available on Pro and Custom plans. Upgrade in Settings → Billing first.' }, { status: 403 })
     }
 
     const { gb } = await req.json().catch(() => ({})) as { gb?: number }

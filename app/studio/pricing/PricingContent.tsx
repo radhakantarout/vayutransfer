@@ -2,14 +2,20 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { formatPaiseAsRupees } from '@/constants/studioPricing'
+import {
+  formatPaiseAsRupees, computeProPlanPricePaise,
+  FREE_STORAGE_GB, FREE_AI_SEARCH_CREDITS,
+  PRO_BASE_PRICE_PAISE, PRO_BASE_STORAGE_GB, PRO_BASE_AI_CREDITS,
+  PRO_STORAGE_MAX_GB, PRO_STORAGE_STEP_GB, PRO_AI_MAX_CREDITS, PRO_AI_STEP_CREDITS,
+  STORAGE_EXTRA_PAISE_PER_100GB, AI_EXTRA_PAISE_PER_1000, ANNUAL_MONTHS_CHARGED,
+} from '@/constants/studioPricing'
 
-// UI-only mockup of a capacity-based pricing model, reflecting the R2
-// storage migration (zero egress fees → downloads are no longer a metered
-// cost) and the real AI-search-credit system already live in the product.
-// Deliberately kept separate from constants/studioPricing.ts (the real,
-// wired-up top-up billing config) — this page is a redesign to review
-// before any of it is actually wired to Razorpay/plan enforcement.
+// Marketing pricing page, reflecting the R2 storage migration (zero
+// egress fees → downloads are no longer a metered cost) and the real
+// AI-search-credit system already live in the product. Numbers come
+// straight from constants/studioPricing.ts — the same file the real
+// billing/quota backend reads from — so this page can't drift out of
+// sync with what's actually enforced.
 //
 // Philosophy: while VayuStudios is still growing its studio base, every
 // plan — including Free — gets the full feature set. The only thing that
@@ -18,40 +24,18 @@ import { formatPaiseAsRupees } from '@/constants/studioPricing'
 // centered pricing cards, with a "Client Gallery" / "Website Management"
 // feature checklist off to the side rather than repeated on every card.
 
-const FREE_STORAGE_GB = 5
-const FREE_AI_CREDITS = 200
-
-// Pro's dynamic pricing — a base price that includes a default amount of
-// storage and AI search, with linear per-unit pricing for anything beyond
-// that. Margins check out against real AWS/Cloudflare costs: storage nets
-// ~51% margin (₹3/GB sold vs ~₹1.45/GB R2 cost), AI credits net ~68%
-// (₹0.30/photo sold vs ~₹0.10/photo Rekognition cost) — both comfortably
-// inside the 50-60% target.
-const PRO_BASE_PRICE_PAISE = 99900 // ₹999
-const PRO_BASE_STORAGE_GB = 100
-const PRO_BASE_AI_CREDITS = 500
-const PRO_STORAGE_MAX_GB = 1000 // shown as "1 TB"
-const PRO_STORAGE_STEP_GB = 50
-const PRO_STORAGE_EXTRA_PAISE_PER_100GB = 30000 // ₹300
-const PRO_AI_MAX_CREDITS = 10000
-const PRO_AI_STEP_CREDITS = 500
-const PRO_AI_EXTRA_PAISE_PER_1000 = 30000 // ₹300
-
-function computeProPricePaise(storageGB: number, aiCredits: number): number {
-  const storageExtraGB = Math.max(0, storageGB - PRO_BASE_STORAGE_GB)
-  const aiExtraCredits = Math.max(0, aiCredits - PRO_BASE_AI_CREDITS)
-  const storageExtraPaise = Math.round((storageExtraGB / 100) * PRO_STORAGE_EXTRA_PAISE_PER_100GB)
-  const aiExtraPaise = Math.round((aiExtraCredits / 1000) * PRO_AI_EXTRA_PAISE_PER_1000)
-  return PRO_BASE_PRICE_PAISE + storageExtraPaise + aiExtraPaise
-}
+// Free/Pro numbers and the pricing function all come from
+// constants/studioPricing.ts now — this page used to keep its own
+// duplicate copies, which meant a real pricing change (e.g. adjusting the
+// free storage baseline) had to be made in two places. Single source now.
 
 const formatStorage = (v: number) => (v >= 1000 ? '1 TB' : `${v} GB`)
 const formatAi = (v: number) => `${v.toLocaleString('en-IN')} photos`
 
 // Same top-up notes shown on both Pro and Custom cards — built from the
 // real per-unit rates so the copy can't drift out of sync with the modal.
-const TOPUP_STORAGE_NOTE = `Top up storage anytime — +${formatPaiseAsRupees(PRO_STORAGE_EXTRA_PAISE_PER_100GB)} per 100 GB`
-const TOPUP_AI_NOTE = `Top up AI search anytime — +${formatPaiseAsRupees(PRO_AI_EXTRA_PAISE_PER_1000)} per 1,000 photos`
+const TOPUP_STORAGE_NOTE = `Top up storage anytime — +${formatPaiseAsRupees(STORAGE_EXTRA_PAISE_PER_100GB)} per 100 GB`
+const TOPUP_AI_NOTE = `Top up AI search anytime — +${formatPaiseAsRupees(AI_EXTRA_PAISE_PER_1000)} per 1,000 photos`
 
 interface Feature { label: string; customOnly?: boolean }
 
@@ -78,7 +62,7 @@ const WEBSITE_MANAGEMENT_FEATURES: Feature[] = [
 
 const FAQS = [
   { q: 'Why does Free get every feature?', a: 'We’re a growing platform — every studio gets full access to every feature, including AI search, custom watermarking, and your own booking website, right from the Free plan. You only ever pay for extra storage or AI search capacity, never to unlock a feature.' },
-  { q: 'Is there a free trial?', a: `Yes — every studio starts on Free, with ${FREE_STORAGE_GB} GB of storage and ${FREE_AI_CREDITS} AI photo searches, no credit card required, no time limit.` },
+  { q: 'Is there a free trial?', a: `Yes — every studio starts on Free, with ${FREE_STORAGE_GB} GB of storage and ${FREE_AI_SEARCH_CREDITS} AI photo searches, no credit card required, no time limit.` },
   { q: 'How does Pro’s pricing work?', a: `Pro starts at ${formatPaiseAsRupees(PRO_BASE_PRICE_PAISE)}/month, which includes ${PRO_BASE_STORAGE_GB} GB of storage and ${PRO_BASE_AI_CREDITS} AI photo searches. Use the "Check price" calculator to see the cost for more of either — it's +₹300 per 100 GB of storage and +₹300 per 1,000 AI photo searches.` },
   { q: 'Are downloads really unlimited and free on every plan?', a: 'Yes. Our storage runs on zero-egress-fee cloud infrastructure, so however many times your clients, guests, or print lab download photos, it never costs you extra — on Free, Pro, and Custom alike.' },
   { q: 'What happens if I go over my storage or AI limit?', a: 'We give you a data retention grace period (default 25 days, adjustable in dashboard settings) with reminder emails before anything is touched. Top up, or move to a bigger Pro configuration, any time during that window to stay covered.' },
@@ -134,8 +118,8 @@ function ProCalculatorModal({ onClose, annual }: { onClose: () => void; annual: 
   const [storageGB, setStorageGB] = useState(PRO_BASE_STORAGE_GB)
   const [aiCredits, setAiCredits] = useState(PRO_BASE_AI_CREDITS)
 
-  const monthlyPaise = computeProPricePaise(storageGB, aiCredits)
-  const displayPaise = annual ? monthlyPaise * 10 : monthlyPaise // 10x = "2 months free" annual discount
+  const monthlyPaise = computeProPlanPricePaise(storageGB, aiCredits)
+  const displayPaise = annual ? monthlyPaise * ANNUAL_MONTHS_CHARGED : monthlyPaise
   const perMonthPaise = Math.round(displayPaise / (annual ? 12 : 1))
 
   return (
@@ -215,7 +199,7 @@ function FreeCard() {
       </div>
       <div className="space-y-1.5 pb-1 border-b border-border/70">
         <p className="text-sm font-bold text-text-primary">{FREE_STORAGE_GB} GB storage</p>
-        <p className="text-sm font-bold text-text-primary">{FREE_AI_CREDITS} AI photo searches</p>
+        <p className="text-sm font-bold text-text-primary">{FREE_AI_SEARCH_CREDITS} AI photo searches</p>
       </div>
       <div className="flex-1 space-y-2">
         <IncludedNote>Every Client Gallery &amp; Website Management feature included</IncludedNote>
@@ -228,7 +212,10 @@ function FreeCard() {
   )
 }
 
-function ProCard({ onCheckPrice }: { onCheckPrice: () => void }) {
+function ProCard({ annual, onCheckPrice }: { annual: boolean; onCheckPrice: () => void }) {
+  const displayPaise = annual ? PRO_BASE_PRICE_PAISE * ANNUAL_MONTHS_CHARGED : PRO_BASE_PRICE_PAISE
+  const perMonthPaise = Math.round(displayPaise / (annual ? 12 : 1))
+
   return (
     <CardShell highlight>
       <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold text-[#0B0F1A] bg-accent px-3 py-1 rounded-full whitespace-nowrap shadow">
@@ -240,9 +227,11 @@ function ProCard({ onCheckPrice }: { onCheckPrice: () => void }) {
       </div>
       <div>
         <p className="text-4xl font-extrabold text-text-primary">
-          {formatPaiseAsRupees(PRO_BASE_PRICE_PAISE)}<span className="text-sm font-medium text-muted">/mo</span>
+          {formatPaiseAsRupees(perMonthPaise)}<span className="text-sm font-medium text-muted">/mo</span>
         </p>
-        <p className="text-[11px] text-muted mt-1">Billed monthly</p>
+        <p className="text-[11px] text-muted mt-1">
+          {annual ? `Billed ${formatPaiseAsRupees(displayPaise)} annually` : 'Billed monthly'}
+        </p>
       </div>
       <div className="space-y-1.5 pb-1 border-b border-border/70">
         <p className="text-sm font-bold text-text-primary">{PRO_BASE_STORAGE_GB} GB storage</p>
@@ -379,7 +368,7 @@ export default function PricingContent() {
           <div className="order-1 lg:order-2">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-3xl mx-auto items-stretch">
               <FreeCard />
-              <ProCard onCheckPrice={() => setShowCalculator(true)} />
+              <ProCard annual={annual} onCheckPrice={() => setShowCalculator(true)} />
               <CustomCard />
             </div>
           </div>

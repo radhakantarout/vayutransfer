@@ -45,10 +45,19 @@ const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: 'usage',     label: 'Usage',     icon: <UsageIcon /> },
 ]
 
-// UI-only mockup — every tab runs on local mock state, no fetch/API calls.
-// Once the look is signed off, backend wiring happens in a separate pass.
-export default function SettingsModal({ onClose, initialTab = 'general' }: { onClose: () => void; initialTab?: SettingsTab }) {
+// General/Watermark are still UI-only mock; Billing/Usage are wired to the
+// real backend (see lib/studio/quota.ts, app/studio/api/admin/stats).
+export default function SettingsModal({ onClose, initialTab = 'general', initialBillingAutoExpand = false }: {
+  onClose: () => void
+  initialTab?: SettingsTab
+  // Seeds BillingTab's "Change plan" section open on mount — used when a
+  // Free-plan studio clicks a "Top up" control anywhere in the app (top-ups
+  // are Pro+ only), so they land straight on the upgrade options instead of
+  // just a closed Billing tab.
+  initialBillingAutoExpand?: boolean
+}) {
   const [tab, setTab] = useState<SettingsTab>(initialTab)
+  const [billingAutoExpand, setBillingAutoExpand] = useState(initialBillingAutoExpand)
   const activeTab = TABS.find(t => t.id === tab)!
 
   return (
@@ -93,8 +102,8 @@ export default function SettingsModal({ onClose, initialTab = 'general' }: { onC
           <div className="flex-1 overflow-y-auto p-6">
             {tab === 'general' && <GeneralTab />}
             {tab === 'watermark' && <WatermarkTab />}
-            {tab === 'billing' && <BillingTab />}
-            {tab === 'usage' && <UsageTab />}
+            {tab === 'billing' && <BillingTab autoExpandChangePlan={billingAutoExpand} />}
+            {tab === 'usage' && <UsageTab onRequestChangePlan={() => { setBillingAutoExpand(true); setTab('billing') }} />}
           </div>
         </div>
       </div>

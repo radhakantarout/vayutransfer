@@ -410,10 +410,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { setOpen: setChatOpen } = useChatWidget()
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
+  const [settingsBillingAutoExpand, setSettingsBillingAutoExpand] = useState(false)
   // Shared by the sidebar's own Settings button and the profile menu's
   // Edit profile/Billing/Usage shortcuts — same popup, just opened on
   // whichever tab makes sense for how it was triggered.
-  const openSettings = (tab: SettingsTab = 'general') => { setSettingsInitialTab(tab); setShowSettingsModal(true) }
+  const openSettings = (tab: SettingsTab = 'general', billingAutoExpand = false) => {
+    setSettingsInitialTab(tab); setSettingsBillingAutoExpand(billingAutoExpand); setShowSettingsModal(true)
+  }
+  // Top-ups only make sense on a paid plan — a Free studio clicking a "+"
+  // anywhere gets sent to Billing's upgrade options instead of a real
+  // top-up purchase.
+  const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
+    if (stats?.billingPlanId === 'free') { openSettings('billing', true); return }
+    setTopupKind(kind)
+  }
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
@@ -1135,7 +1145,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">Storage</span>
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-muted">{fmtBytes(stats.storageUsedBytes)} / {fmtBytes(stats.storageGrantBytes)}</span>
-                  <button onClick={() => setTopupKind('storage')} title="Top up storage"
+                  <button onClick={() => handleTopUpClick('storage')} title="Top up storage"
                     className="w-3 h-3 flex items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0">
                     <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
@@ -1159,7 +1169,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">AI Search</span>
                 <div className="flex items-center gap-1">
                   <span className="text-[9px] text-muted">{stats.aiSearchCreditsUsed} / {stats.aiSearchCreditsTotal}</span>
-                  <button onClick={() => setTopupKind('ai-search')} title="Top up AI search credits"
+                  <button onClick={() => handleTopUpClick('ai-search')} title="Top up AI search credits"
                     className="w-3 h-3 flex items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0">
                     <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
@@ -1478,7 +1488,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           whatever page the admin is currently on — see the sidebar's
           Settings button above. */}
       {showSettingsModal && (
-        <SettingsModal onClose={() => setShowSettingsModal(false)} initialTab={settingsInitialTab} />
+        <SettingsModal onClose={() => setShowSettingsModal(false)} initialTab={settingsInitialTab} initialBillingAutoExpand={settingsBillingAutoExpand} />
       )}
 
       {/* ── Toast — quick confirmation for instant bulk actions (e.g. the

@@ -18,6 +18,7 @@ interface ClientUsage {
   totalBytes: number
 }
 interface BillingStats {
+  billingPlanId: 'free' | 'pro' | 'custom'
   storageUsedBytes: number
   storageGrantBytes: number
   storageUsagePct: number
@@ -31,7 +32,7 @@ const EVENT_COLORS = ['bg-accent', 'bg-accent/70', 'bg-accent/45', 'bg-accent/25
 // Real data — fetches /studio/api/admin/stats (overview totals) and
 // /studio/api/admin/usage/by-client (real per-project storage, summed from
 // MediaFile.sizeBytes on read since no per-project cache exists).
-export default function UsageTab() {
+export default function UsageTab({ onRequestChangePlan }: { onRequestChangePlan: () => void }) {
   const [billing, setBilling] = useState<BillingStats | null>(null)
   const [clients, setClients] = useState<ClientUsage[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,6 +57,13 @@ export default function UsageTab() {
     return <p className="text-sm text-muted">Couldn&apos;t load usage information — try again shortly.</p>
   }
 
+  // Top-ups only make sense once you're on a paid plan — a Free studio gets
+  // sent to Billing's upgrade options instead of a real top-up purchase.
+  const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
+    if (billing.billingPlanId === 'free') { onRequestChangePlan(); return }
+    setTopupKind(kind)
+  }
+
   return (
     <div className="max-w-3xl space-y-8 relative">
       {/* Overview */}
@@ -66,7 +74,7 @@ export default function UsageTab() {
             <span className="text-sm font-semibold text-text-primary">
               {formatBytesGB(billing.storageUsedBytes)} used of {formatBytesGB(billing.storageGrantBytes)}
             </span>
-            <button onClick={() => setTopupKind('storage')} className="text-xs font-semibold text-accent hover:underline">Top up storage</button>
+            <button onClick={() => handleTopUpClick('storage')} className="text-xs font-semibold text-accent hover:underline">Top up storage</button>
           </div>
           <UsageBar pct={billing.storageUsagePct} className="h-2" />
           <p className={`text-[11px] font-semibold ${usageTextColor(billing.storageUsagePct)}`}>{billing.storageUsagePct}% used</p>
@@ -77,7 +85,7 @@ export default function UsageTab() {
             <span className="text-sm font-semibold text-text-primary">
               {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} AI searches used of {billing.aiSearchCreditsTotal.toLocaleString('en-IN')} this cycle
             </span>
-            <button onClick={() => setTopupKind('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up AI search</button>
+            <button onClick={() => handleTopUpClick('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up AI search</button>
           </div>
           <UsageBar pct={billing.aiSearchUsagePct} className="h-2" />
           <p className={`text-[11px] font-semibold ${usageTextColor(billing.aiSearchUsagePct)}`}>{billing.aiSearchUsagePct}% used</p>

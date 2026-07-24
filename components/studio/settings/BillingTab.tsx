@@ -51,10 +51,10 @@ function loadRazorpay(): Promise<void> {
   })
 }
 
-export default function BillingTab() {
+export default function BillingTab({ autoExpandChangePlan = false }: { autoExpandChangePlan?: boolean }) {
   const [billing, setBilling] = useState<BillingStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showChangePlan, setShowChangePlan] = useState(false)
+  const [showChangePlan, setShowChangePlan] = useState(autoExpandChangePlan)
   const [proStorageGB, setProStorageGB] = useState(PRO_BASE_STORAGE_GB)
   const [proAiCredits, setProAiCredits] = useState(PRO_BASE_AI_CREDITS)
   const [annual, setAnnual] = useState(false)
@@ -145,6 +145,13 @@ export default function BillingTab() {
 
   const planName = billing.billingPlanId.charAt(0).toUpperCase() + billing.billingPlanId.slice(1)
   const isFree = billing.billingPlanId === 'free'
+  // Top-ups only make sense once you're on a paid plan (the base plan is
+  // what's actually being topped up on top of) — a Free studio clicking
+  // "Top up" gets sent straight to the upgrade options instead.
+  const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
+    if (isFree) { setShowChangePlan(true); return }
+    setTopupKind(kind)
+  }
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -253,7 +260,7 @@ export default function BillingTab() {
           <div className="bg-card border border-border rounded-2xl px-5 py-4 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted">Storage</span>
-              <button onClick={() => setTopupKind('storage')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
+              <button onClick={() => handleTopUpClick('storage')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
             </div>
             <p className="text-lg font-extrabold text-text-primary">
               {fmtBytes(billing.storageUsedBytes)} <span className="text-sm font-medium text-muted">/ {fmtBytes(billing.storageGrantBytes)}</span>
@@ -264,7 +271,7 @@ export default function BillingTab() {
           <div className="bg-card border border-border rounded-2xl px-5 py-4 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted">AI photo search</span>
-              <button onClick={() => setTopupKind('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
+              <button onClick={() => handleTopUpClick('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
             </div>
             <p className="text-lg font-extrabold text-text-primary">
               {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} <span className="text-sm font-medium text-muted">/ {billing.aiSearchCreditsTotal.toLocaleString('en-IN')}</span>

@@ -16,7 +16,7 @@
 export const GB = 1024 * 1024 * 1024
 
 // ── Free plan ────────────────────────────────────────────────────────────
-export const FREE_STORAGE_GB = 5
+export const FREE_STORAGE_GB = 3
 export const FREE_STORAGE_BYTES = FREE_STORAGE_GB * GB
 export const FREE_AI_SEARCH_CREDITS = 200
 

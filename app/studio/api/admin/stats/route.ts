@@ -4,8 +4,9 @@ import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import {
   activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, storageUsagePct,
   aiCreditsQuota, aiCreditsUsed, isOverAiQuota, aiUsagePct, syncBillingCycle,
+  planStorageBytes, planAiCredits,
 } from '@/lib/studio/quota'
-import { DEFAULT_RETENTION_GRACE_DAYS, FREE_STORAGE_GB, FREE_AI_SEARCH_CREDITS } from '@/constants/studioPricing'
+import { DEFAULT_RETENTION_GRACE_DAYS, GB } from '@/constants/studioPricing'
 import type { Studio } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
@@ -35,8 +36,11 @@ export async function GET(req: NextRequest) {
         plan:             studio.plan,
         billing: {
           billingPlanId: studio.billingPlanId ?? 'free',
-          planStorageGB: studio.planStorageGB ?? FREE_STORAGE_GB,
-          planAiCreditsPerMonth: studio.planAiCreditsPerMonth ?? FREE_AI_SEARCH_CREDITS,
+          // Goes through the same live-constant-for-Free logic as every
+          // other quota number (see lib/studio/quota.ts) — never a stale
+          // per-studio snapshot for a Free studio.
+          planStorageGB: planStorageBytes(studio) / GB,
+          planAiCreditsPerMonth: planAiCredits(studio),
           billingCycle: studio.billingCycle ?? 'monthly',
           billingPeriodStart: studio.billingPeriodStart ?? null,
           billingPeriodEnd: studio.billingPeriodEnd ?? null,

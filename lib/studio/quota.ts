@@ -9,11 +9,21 @@ import type { Studio } from '@/types/studio'
 // Replaces lib/studio/usage.ts, which also tracked downloads — removed
 // entirely under the R2 (zero-egress-fee) pricing model.
 
+// Free plan deliberately always reads the LIVE constant rather than
+// whatever was snapshotted onto the studio record at signup/backfill time —
+// a stored planStorageGB/planAiCreditsPerMonth only reflects a real choice
+// once the studio is actually on Pro/Custom (something they picked at
+// checkout). Otherwise a free-tier pricing change (e.g. 5GB → 3GB) would
+// silently not apply to any studio that already had the old value frozen
+// in, and would need a manual data backfill every time — this way it just
+// applies immediately, everywhere, the moment the constant changes.
 export function planStorageBytes(studio: Studio): number {
+  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_STORAGE_GB * GB
   return (studio.planStorageGB ?? FREE_STORAGE_GB) * GB
 }
 
 export function planAiCredits(studio: Studio): number {
+  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_AI_SEARCH_CREDITS
   return studio.planAiCreditsPerMonth ?? FREE_AI_SEARCH_CREDITS
 }
 
@@ -59,8 +69,11 @@ export function checkStorageAvailable(studio: Studio, extraBytes = 0): { ok: boo
 
 // This cycle's AI-search credit ceiling — plan base + any top-ups bought
 // during the current cycle (top-up credits don't roll over past a reset,
-// same "use it or lose it" rule as the base allotment).
+// same "use it or lose it" rule as the base allotment). Free plan never
+// has top-ups (gated to Pro+), so it always reads the live constant here
+// too — same reasoning as planStorageBytes/planAiCredits above.
 export function aiCreditsQuota(studio: Studio): number {
+  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_AI_SEARCH_CREDITS
   return studio.aiSearchCreditsTotal ?? planAiCredits(studio)
 }
 

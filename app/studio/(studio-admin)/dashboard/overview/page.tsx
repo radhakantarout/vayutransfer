@@ -5,6 +5,7 @@ import Link from 'next/link'
 import type { StudioProject } from '@/types/studio'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
 import UsageBar, { usageTextColor } from '@/components/studio/UsageBar'
+import SettingsModal from '@/components/studio/settings/SettingsModal'
 
 const STATUS_COLOR: Record<string, string> = {
   DRAFT:              'bg-border/60 text-muted',
@@ -89,6 +90,7 @@ export default function DashboardOverviewPage() {
   const [billing, setBilling]           = useState<BillingStats | null>(null)
   const [loading, setLoading]           = useState(true)
   const [topupKind, setTopupKind]       = useState<'storage' | 'ai-search' | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   const loadStats = () => {
     fetch('/studio/api/admin/stats').then((r) => r.json()).then((sRes) => {
@@ -130,6 +132,13 @@ export default function DashboardOverviewPage() {
   const recent = [...realProjects]
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 4)
+
+  // Top-ups only make sense on a paid plan — a Free studio gets sent to
+  // Billing's upgrade options instead of a real top-up purchase.
+  const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
+    if (billing?.billingPlanId === 'free') { setShowSettings(true); return }
+    setTopupKind(kind)
+  }
 
   if (loading) {
     return (
@@ -175,7 +184,7 @@ export default function DashboardOverviewPage() {
                   ({billing.dataRetentionGraceDays}-day grace period from when the limit was first crossed).
                 </p>
               </div>
-              <button onClick={() => setTopupKind('storage')}
+              <button onClick={() => handleTopUpClick('storage')}
                 className="bg-danger text-white text-xs font-bold px-4 py-2 rounded-xl hover:bg-danger/90 transition-colors flex-shrink-0">
                 Top up storage
               </button>
@@ -190,7 +199,7 @@ export default function DashboardOverviewPage() {
               usedLabel={fmtBytes(billing.storageUsedBytes)}
               quotaLabel={fmtBytes(billing.storageGrantBytes)}
               pct={billing.storageUsagePct}
-              onTopUp={() => setTopupKind('storage')}
+              onTopUp={() => handleTopUpClick('storage')}
             />
             <UsageCard
               label="AI Search Credits This Cycle"
@@ -199,7 +208,7 @@ export default function DashboardOverviewPage() {
               usedLabel={billing.aiSearchCreditsUsed.toLocaleString('en-IN')}
               quotaLabel={billing.aiSearchCreditsTotal.toLocaleString('en-IN')}
               pct={billing.aiSearchUsagePct}
-              onTopUp={() => setTopupKind('ai-search')}
+              onTopUp={() => handleTopUpClick('ai-search')}
             />
           </div>
         </div>
@@ -211,6 +220,10 @@ export default function DashboardOverviewPage() {
           onClose={() => setTopupKind(null)}
           onSuccess={() => { setTopupKind(null); loadStats() }}
         />
+      )}
+
+      {showSettings && (
+        <SettingsModal onClose={() => setShowSettings(false)} initialTab="billing" initialBillingAutoExpand />
       )}
 
       {/* Recent activity */}

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import Razorpay from 'razorpay'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioPutItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { computeAiAddOnPaise } from '@/constants/studioPricing'
-import type { StudioTransaction } from '@/types/studio'
+import type { Studio, StudioTransaction } from '@/types/studio'
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID ?? '',
@@ -13,12 +13,19 @@ const razorpay = new Razorpay({
 
 // Mirrors storage-topup/route.ts exactly, for AI-search (face-indexing)
 // credits. Accepts an arbitrary credit amount, priced server-side. Applies
-// to the current billing cycle only — see lib/studio/quota.ts.
+// to the current billing cycle only — see lib/studio/quota.ts. Top-ups are
+// Pro+ only — server-side backstop, the UI already redirects Free studios
+// to Billing's upgrade options instead of showing this at all.
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
     if (!auth || !['ADMIN', 'OWNER'].includes(auth.role) || !auth.studioId) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+
+    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })
+    if (!studio || (studio.billingPlanId ?? 'free') === 'free') {
+      return NextResponse.json({ success: false, error: 'PLAN_REQUIRED', message: 'Top-ups are available on Pro and Custom plans. Upgrade in Settings → Billing first.' }, { status: 403 })
     }
 
     const { credits } = await req.json().catch(() => ({})) as { credits?: number }
