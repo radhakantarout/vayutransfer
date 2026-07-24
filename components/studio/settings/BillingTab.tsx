@@ -35,6 +35,14 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+interface BillingHistoryRow {
+  txnId: string
+  type: 'storage_topup' | 'ai_search_topup' | 'plan_change'
+  label: string
+  amountPaise: number
+  createdAt: string
+}
+
 declare global {
   interface Window {
     Razorpay: new (options: Record<string, unknown>) => { open(): void }
@@ -61,13 +69,31 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [topupKind, setTopupKind] = useState<'storage' | 'ai-search' | null>(null)
+  const [history, setHistory] = useState<BillingHistoryRow[] | null>(null)
+  const [resendingTxnId, setResendingTxnId] = useState<string | null>(null)
+  const [resentTxnId, setResentTxnId] = useState<string | null>(null)
 
   const loadStats = () => {
     fetch('/studio/api/admin/stats').then(r => r.json()).then(res => {
       if (res.success) setBilling(res.data.billing)
     }).finally(() => setLoading(false))
   }
-  useEffect(loadStats, [])
+  const loadHistory = () => {
+    fetch('/studio/api/billing/history').then(r => r.json()).then(res => {
+      if (res.success) setHistory(res.data)
+    })
+  }
+  useEffect(() => { loadStats(); loadHistory() }, [])
+
+  const resendReceipt = async (txnId: string) => {
+    setResendingTxnId(txnId); setResentTxnId(null)
+    try {
+      const res = await fetch(`/studio/api/billing/receipt/${txnId}`, { method: 'POST' }).then(r => r.json())
+      if (res.success) setResentTxnId(txnId)
+    } finally {
+      setResendingTxnId(null)
+    }
+  }
 
   const proMonthlyPaise = computeProPlanPricePaise(proStorageGB, proAiCredits)
   const proDisplayPaise = annual ? proMonthlyPaise * ANNUAL_MONTHS_CHARGED : proMonthlyPaise
@@ -82,7 +108,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
       }).then(r => r.json())
       if (!res.success) throw new Error(res.error ?? 'Failed to switch plan')
       setShowChangePlan(false)
-      loadStats()
+      loadStats(); loadHistory()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -127,7 +153,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
         rzp.open()
       })
       setShowChangePlan(false)
-      loadStats()
+      loadStats(); loadHistory()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong'
       if (msg !== 'Payment cancelled') setError(msg)
@@ -288,11 +314,38 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
       {/* Billing history */}
       <section className="space-y-3">
         <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Billing history</h4>
-        <p className="text-xs text-muted">A PDF receipt is emailed to you automatically after every payment — check your inbox for past invoices.</p>
+        <p className="text-xs text-muted">A PDF receipt is emailed to you automatically after every payment.</p>
+
+        {history === null ? (
+          <div className="flex items-center justify-center h-20"><div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-muted bg-card border border-border rounded-2xl px-5 py-4">No payments yet.</p>
+        ) : (
+          <div className="border border-border rounded-2xl divide-y divide-border overflow-hidden">
+            {history.map((txn) => (
+              <div key={txn.txnId} className="flex items-center justify-between gap-3 px-5 py-3 flex-wrap">
+                <div>
+                  <p className="text-sm font-bold text-text-primary">{txn.label}</p>
+                  <p className="text-xs text-muted">{fmtDate(txn.createdAt)}</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <p className="text-sm font-bold text-text-primary">{formatPaiseAsRupees(txn.amountPaise)}</p>
+                  <div className="flex items-center gap-3 text-xs font-semibold text-accent">
+                    <a href={`/studio/api/billing/receipt/${txn.txnId}`} target="_blank" rel="noopener noreferrer" className="hover:underline">View</a>
+                    <a href={`/studio/api/billing/receipt/${txn.txnId}?download=1`} className="hover:underline">Download</a>
+                    <button type="button" disabled={resendingTxnId === txn.txnId} onClick={() => resendReceipt(txn.txnId)} className="hover:underline disabled:opacity-60">
+                      {resendingTxnId === txn.txnId ? 'Sending…' : resentTxnId === txn.txnId ? 'Sent ✓' : 'Email me'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {topupKind && (
-        <StudioTopupModal kind={topupKind} onClose={() => setTopupKind(null)} onSuccess={() => { setTopupKind(null); loadStats() }} />
+        <StudioTopupModal kind={topupKind} onClose={() => setTopupKind(null)} onSuccess={() => { setTopupKind(null); loadStats(); loadHistory() }} />
       )}
     </div>
   )

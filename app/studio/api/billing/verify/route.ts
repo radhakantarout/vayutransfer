@@ -4,6 +4,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { applyTopup, type ApplyTopupInput } from '@/lib/studio/billing'
 import { renderReceiptPdf } from '@/lib/studio/receiptPdf'
+import { formatTxnLabel } from '@/lib/studio/receiptLabel'
 import { sendStudioReceiptEmail } from '@/lib/aws/ses'
 import { formatPaiseAsRupees } from '@/constants/studioPricing'
 import type { Studio, StudioTransaction, StudioUser } from '@/types/studio'
@@ -69,11 +70,7 @@ export async function POST(req: NextRequest) {
         if (!studio || !txn) return
         const adminUser = await studioGetItem<StudioUser>(TABLES.users, { userId: auth.userId }).catch(() => null)
         if (!adminUser?.email) return
-        const label = txn.type === 'storage_topup'
-          ? `${txn.gbPurchased} GB storage top-up`
-          : txn.type === 'ai_search_topup'
-            ? `${txn.creditsPurchased} AI search top-up`
-            : `${txn.planId === 'free' ? 'Free plan' : `Pro plan (${txn.gbPurchased} GB, ${txn.creditsPurchased} AI searches/mo, ${txn.billingCycle})`}`
+        const label = formatTxnLabel(txn)
         const pdf = await renderReceiptPdf(studio.name, txn)
         await sendStudioReceiptEmail(adminUser.email, studio.name, pdf, label, txn.amountPaise)
       } catch (err) {
