@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { formatBytesGB } from '@/constants/studioPricing'
+import { formatBytesGB, formatAiCredits } from '@/constants/studioPricing'
 import UsageBar, { usageTextColor } from '@/components/studio/UsageBar'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
 
@@ -83,7 +83,7 @@ export default function UsageTab({ onRequestChangePlan }: { onRequestChangePlan:
         <div className="bg-card border border-border rounded-2xl px-5 py-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-text-primary">
-              {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} AI searches used of {billing.aiSearchCreditsTotal.toLocaleString('en-IN')} this cycle
+              {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} used of {formatAiCredits(billing.aiSearchCreditsTotal)} this cycle
             </span>
             <button onClick={() => handleTopUpClick('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up AI search</button>
           </div>

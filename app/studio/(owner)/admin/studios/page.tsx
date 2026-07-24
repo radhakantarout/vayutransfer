@@ -435,7 +435,7 @@ export default function OwnerStudiosPage() {
                     <span>·</span>
                     <span title="Live storage — decreases as photos are deleted">{formatBytes(Math.max(0, s.billableStorageBytes ?? 0))}</span>
                     <span>·</span>
-                    <span title="Cumulative photos ever indexed — never decreases">{s.aiSearchCreditsUsed ?? 0} AI indexed</span>
+                    <span title="Cumulative photos ever indexed — never decreases">{(s.aiSearchCreditsUsed ?? 0).toLocaleString('en-IN')} photos indexed</span>
                     <span>·</span>
                     <span>Created {new Date(s.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </div>

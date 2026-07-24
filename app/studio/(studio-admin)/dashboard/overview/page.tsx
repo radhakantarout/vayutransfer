@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { StudioProject } from '@/types/studio'
+import { formatAiCredits } from '@/constants/studioPricing'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
 import UsageBar, { usageTextColor } from '@/components/studio/UsageBar'
 import SettingsModal from '@/components/studio/settings/SettingsModal'
@@ -206,7 +207,7 @@ export default function DashboardOverviewPage() {
               used={billing.aiSearchCreditsUsed}
               quota={billing.aiSearchCreditsTotal}
               usedLabel={billing.aiSearchCreditsUsed.toLocaleString('en-IN')}
-              quotaLabel={billing.aiSearchCreditsTotal.toLocaleString('en-IN')}
+              quotaLabel={formatAiCredits(billing.aiSearchCreditsTotal)}
               pct={billing.aiSearchUsagePct}
               onTopUp={() => handleTopUpClick('ai-search')}
             />

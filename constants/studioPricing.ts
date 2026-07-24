@@ -68,3 +68,10 @@ export function formatPaiseAsRupees(paise: number): string {
 export function formatBytesGB(bytes: number): string {
   return `${(bytes / GB).toFixed(1)} GB`
 }
+
+// AI search credits are a plain count with no natural unit of their own
+// (unlike bytes -> GB) — "photos" is the unit every AI-usage display should
+// attach, the same way every storage number always carries "GB".
+export function formatAiCredits(n: number): string {
+  return `${n.toLocaleString('en-IN')} photos`
+}

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import type { StudioProject, MediaFile, CurationStatus } from '@/types/studio'
+import { formatAiCredits } from '@/constants/studioPricing'
 import AddEventModal from './AddEventModal'
 import EditEventModal from './EditEventModal'
 import EventSection, { type ActiveTab } from './EventSection'
@@ -1168,7 +1169,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="flex items-center justify-between mb-0.5">
                 <span className="text-[9px] font-semibold text-muted uppercase tracking-wide">AI Search</span>
                 <div className="flex items-center gap-1">
-                  <span className="text-[9px] text-muted">{stats.aiSearchCreditsUsed} / {stats.aiSearchCreditsTotal}</span>
+                  <span className="text-[9px] text-muted">{stats.aiSearchCreditsUsed.toLocaleString('en-IN')} / {formatAiCredits(stats.aiSearchCreditsTotal)}</span>
                   <button onClick={() => handleTopUpClick('ai-search')} title="Top up AI search credits"
                     className="w-3 h-3 flex items-center justify-center rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors flex-shrink-0">
                     <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>

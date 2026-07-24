@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  formatPaiseAsRupees, computeProPlanPricePaise,
+  formatPaiseAsRupees, computeProPlanPricePaise, formatAiCredits,
   PRO_BASE_PRICE_PAISE, PRO_BASE_STORAGE_GB, PRO_BASE_AI_CREDITS,
   PRO_STORAGE_MAX_GB, PRO_STORAGE_STEP_GB, PRO_AI_MAX_CREDITS, PRO_AI_STEP_CREDITS,
   FREE_STORAGE_GB, FREE_AI_SEARCH_CREDITS, ANNUAL_MONTHS_CHARGED,
@@ -254,7 +254,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-[11px]">
                       <span className="text-muted">AI search / mo</span>
-                      <span className="font-bold text-accent">{proAiCredits.toLocaleString('en-IN')}</span>
+                      <span className="font-bold text-accent">{formatAiCredits(proAiCredits)}</span>
                     </div>
                     <input type="range" min={PRO_BASE_AI_CREDITS} max={PRO_AI_MAX_CREDITS} step={PRO_AI_STEP_CREDITS}
                       value={proAiCredits} onChange={e => setProAiCredits(Number(e.target.value))}
@@ -300,7 +300,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
               <button onClick={() => handleTopUpClick('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
             </div>
             <p className="text-lg font-extrabold text-text-primary">
-              {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} <span className="text-sm font-medium text-muted">/ {billing.aiSearchCreditsTotal.toLocaleString('en-IN')}</span>
+              {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} <span className="text-sm font-medium text-muted">/ {formatAiCredits(billing.aiSearchCreditsTotal)}</span>
             </p>
             <UsageBar pct={billing.aiSearchUsagePct} />
             <p className={`text-[11px] font-semibold ${usageTextColor(billing.aiSearchUsagePct)}`}>{billing.aiSearchUsagePct}% used</p>
