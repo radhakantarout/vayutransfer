@@ -144,7 +144,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     const initRes = await fetch('/studio/api/admin/website/portfolio-upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, contentType: file.type, category, kind }),
+      body: JSON.stringify({ filename: file.name, contentType: file.type, category, kind, sizeBytes: file.size }),
     }).then(r => r.json())
     if (!initRes.success) throw new Error(initRes.error ?? 'Failed to prepare upload')
 
@@ -155,7 +155,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     })
     if (!putRes.ok) throw new Error('Upload to storage failed — please try again')
 
-    return { id: initRes.id as string, url: initRes.publicUrl as string, category: initRes.category as string }
+    return { id: initRes.id as string, url: initRes.publicUrl as string, category: initRes.category as string, sizeBytes: file.size }
   }
 
   const handlePhotoUpload = async (files: FileList | null) => {
@@ -165,8 +165,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     try {
       const newPhotos: WebsiteGalleryPhoto[] = []
       for (const file of Array.from(files)) {
-        const { id, url, category } = await uploadImageToR2(file, 'portfolio', uploadCategory)
-        newPhotos.push({ id, url, caption: '', category })
+        const { id, url, category, sizeBytes } = await uploadImageToR2(file, 'portfolio', uploadCategory)
+        newPhotos.push({ id, url, caption: '', category, sizeBytes })
       }
       if (newPhotos.length > 0) {
         const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
@@ -192,12 +192,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     setUploadingHero(true)
     setUploadError(null)
     try {
-      const { url } = await uploadImageToR2(file, 'hero')
-      setSite(prev => prev ? { ...prev, heroImageUrl: url } : prev)
+      const { url, sizeBytes } = await uploadImageToR2(file, 'hero')
+      setSite(prev => prev ? { ...prev, heroImageUrl: url, heroImageSizeBytes: sizeBytes } : prev)
       const saveRes = await fetch('/studio/api/admin/website', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...site, heroImageUrl: url }),
+        body: JSON.stringify({ ...site, heroImageUrl: url, heroImageSizeBytes: sizeBytes }),
       }).then(r => r.json())
       if (!saveRes.success) throw new Error('Cover image uploaded but could not be saved — please try again')
     } catch (err) {
@@ -210,14 +210,21 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const removeHeroImage = () => {
     if (!site) return
+    if (site.heroImageUrl) {
+      fetch('/studio/api/admin/website/portfolio-upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes }),
+      }).catch(() => {})
+    }
     // Empty string (not undefined) so it survives JSON — the API merges by spreading
     // the request body over the existing record, and `undefined` keys are dropped by
     // JSON.stringify before the request is even sent, so the old value would stick.
-    update({ heroImageUrl: '' })
+    update({ heroImageUrl: '', heroImageSizeBytes: 0 })
     fetch('/studio/api/admin/website', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, heroImageUrl: '' }),
+      body: JSON.stringify({ ...site, heroImageUrl: '', heroImageSizeBytes: 0 }),
     }).catch(() => {})
   }
 
@@ -228,7 +235,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       fetch('/studio/api/admin/website/portfolio-upload', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: photo.url }),
+        body: JSON.stringify({ url: photo.url, sizeBytes: photo.sizeBytes }),
       }).catch(() => {})
     }
     const updatedPhotos = site.galleryPhotos.filter(p => p.id !== id)

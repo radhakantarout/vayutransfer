@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioQueryByPK, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
-import { getMonthUsage } from '@/lib/studio/usage'
 import type { AuditLog, MediaFile, Studio, StudioProject } from '@/types/studio'
 
 type Period = 'daily' | 'monthly' | 'yearly'
-
-function monthKeysForYear(year: number, throughMonth: number): string[] {
-  return Array.from({ length: throughMonth }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
-}
 
 // GET .../performance?view=summary&period=daily|monthly|yearly
 //     .../performance?view=deletes&from=&to=
@@ -53,28 +48,12 @@ export async function GET(
         .filter((f) => f.uploadedAt && new Date(f.uploadedAt) >= rangeStart)
         .reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
 
-      // Downloads are only ever tracked as one rolled-up byte total per
-      // month (lib/studio/usage.ts's recordDownload) — no per-download
-      // event log exists, so there's no real "daily" download figure to
-      // show. Monthly/yearly both work by summing that same monthly
-      // counter; daily reports as unavailable rather than faking a number.
-      let downloadBytes: number | null = null
-      if (period === 'monthly') {
-        downloadBytes = (await getMonthUsage(studioId)).downloadBytes
-      } else if (period === 'yearly') {
-        const months = monthKeysForYear(now.getUTCFullYear(), now.getUTCMonth() + 1)
-        const usages = await Promise.all(months.map((m) => getMonthUsage(studioId, m)))
-        downloadBytes = usages.reduce((sum, u) => sum + u.downloadBytes, 0)
-      }
-
       return NextResponse.json({
         success: true,
         data: {
           totalClients: new Set(realProjects.map((p) => p.clientName)).size,
           totalEvents: realProjects.length,
           uploadBytes,
-          downloadBytes,
-          downloadGranularity: period === 'daily' ? 'unavailable' : period,
         },
       })
     }

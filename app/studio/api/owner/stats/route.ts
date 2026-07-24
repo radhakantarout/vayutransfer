@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     // billableStorageBytes, not storageUsedBytes — the latter is a
     // historical, never-decremented "Total Upload Size" figure, so it drifts
     // further from reality every time anything gets deleted. billable is the
-    // live, delete-aware number (see lib/studio/usage.ts's currentStorageBytes).
+    // live, delete-aware number (see lib/studio/quota.ts's currentStorageBytes).
     const totalStorageBytes = studios.reduce((sum, s) => sum + Math.max(0, s.billableStorageBytes ?? 0), 0)
     const usersByRole = users.reduce<Record<string, number>>((acc, u) => {
       acc[u.role] = (acc[u.role] ?? 0) + 1

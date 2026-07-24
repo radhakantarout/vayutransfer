@@ -3,7 +3,8 @@ import { randomUUID, randomBytes } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2TransferKey } from '@/lib/studio/r2'
-import type { StudioProject, StudioTransfer } from '@/types/studio'
+import { syncBillingCycle, checkStorageAvailable } from '@/lib/studio/quota'
+import type { StudioProject, StudioTransfer, Studio } from '@/types/studio'
 
 const studioUrl = () => process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
 const expirySeconds = () => parseInt(process.env.TRANSFER_LINK_EXPIRY_SECONDS ?? '604800', 10)
@@ -72,6 +73,19 @@ export async function POST(
       }
       if (partCount < 1 || partCount > 10000) {
         return NextResponse.json({ success: false, error: 'INVALID_PART_COUNT' }, { status: 400 })
+      }
+
+      let studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      if (studio) {
+        studio = await syncBillingCycle(studio)
+        const quota = checkStorageAvailable(studio, sizeBytes)
+        if (!quota.ok) {
+          return NextResponse.json({
+            success: false, error: 'QUOTA_EXCEEDED', quotaType: 'storage',
+            message: 'You’re out of storage space. Top up storage or upgrade your plan in Settings → Billing to keep sending files.',
+            usedBytes: quota.usedBytes, quotaBytes: quota.quotaBytes, usedPct: quota.usedPct,
+          }, { status: 402 })
+        }
       }
 
       const r2Key = getStudioR2TransferKey(studioId, projectId, transferId, filename)

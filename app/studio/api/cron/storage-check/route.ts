@@ -6,7 +6,7 @@ import { deleteMediaObjects } from '@/lib/studio/storage'
 import { deleteStudioR2Object } from '@/lib/studio/r2'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
-import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota } from '@/lib/studio/usage'
+import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, syncBillingCycle } from '@/lib/studio/quota'
 import { logAuditEvent } from '@/lib/studio/auditLog'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
@@ -140,10 +140,19 @@ export async function GET(req: NextRequest) {
   }
 
   const now = Date.now()
-  let checked = 0, reminded = 0, deletedFrom = 0
+  let checked = 0, reminded = 0, deletedFrom = 0, cyclesReset = 0
 
-  for (const studio of studios) {
+  for (const rawStudio of studios) {
     checked++
+    // Rolls the 30-day billing cycle forward (resetting AI credits) if due —
+    // this is the primary place that keeps every studio's cycle current;
+    // admin/stats and the enforcement routes also self-heal lazily, but this
+    // daily pass guarantees it happens even for a studio that hasn't loaded
+    // any page since its cycle ended.
+    const beforeReset = rawStudio.billingPeriodEnd
+    const studio = await syncBillingCycle(rawStudio)
+    if (studio.billingPeriodEnd !== beforeReset) cyclesReset++
+
     const overQuota = isOverStorageQuota(studio)
 
     if (!overQuota) {
@@ -240,5 +249,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, expiredTransfersSwept: expiredSwept.count } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count } })
 }

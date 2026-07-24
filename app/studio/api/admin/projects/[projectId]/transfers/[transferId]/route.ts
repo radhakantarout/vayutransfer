@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteStudioR2Object } from '@/lib/studio/r2'
+import { logAuditEvent } from '@/lib/studio/auditLog'
 import type { StudioTransfer, MediaFile } from '@/types/studio'
 
 // Deletes a transfer. If it's already been imported into the gallery, the
@@ -62,6 +63,16 @@ export async function DELETE(
     }
 
     await studioDeleteItem(TABLES.transfers, { projectId, transferId })
+
+    logAuditEvent({
+      studioId: transfer.studioId,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      action: 'DELETE_TRANSFER',
+      targetType: 'TRANSFER',
+      targetId: transferId,
+      metadata: { projectId, filename: transfer.filename, sizeBytes: transfer.sizeBytes ?? 0, direction: transfer.direction },
+    })
 
     return NextResponse.json({ success: true })
   } catch (err) {

@@ -11,8 +11,6 @@ interface Summary {
   totalClients: number
   totalEvents: number
   uploadBytes: number
-  downloadBytes: number | null
-  downloadGranularity: 'daily' | 'monthly' | 'yearly' | 'unavailable'
 }
 
 interface UploadRow {
@@ -130,17 +128,11 @@ export default function StudioPerformancePage() {
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {[
             { label: 'Total clients', value: summary?.totalClients ?? '—' },
             { label: 'Total events', value: summary?.totalEvents ?? '—' },
             { label: `Uploaded (${period})`, value: summary ? formatBytes(summary.uploadBytes) : '—' },
-            {
-              label: `Downloaded (${period})`,
-              value: summaryLoading ? '—' : summary?.downloadGranularity === 'unavailable'
-                ? 'Not tracked daily'
-                : formatBytes(summary?.downloadBytes ?? 0),
-            },
           ].map(({ label, value }) => (
             <div key={label} className="bg-card border border-border rounded-xl px-4 py-3">
               <div className="text-xl font-bold text-text-primary">{summaryLoading ? '…' : value}</div>

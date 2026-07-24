@@ -57,6 +57,33 @@ export interface Studio {
   // already incurred and is non-refundable, so deleting the photo later must
   // not make it look like that AI-search credit was never spent.
   aiSearchCreditsUsed?: number
+  // Real self-service billing plan — separate from the legacy `plan` field
+  // above (an owner-assigned cosmetic label from an older admin tool, not
+  // tied to actual quota enforcement). Every studio has one of these three;
+  // 'free' is the default from signup. Undefined on studios created before
+  // this field existed — treated as 'free' with the free baseline amounts.
+  billingPlanId?: 'free' | 'pro' | 'custom'
+  // Base allotment for the current billing plan — Free is fixed
+  // (FREE_STORAGE_GB/FREE_AI_CREDITS), Pro is whatever the studio's slider
+  // chose at checkout, Custom is negotiated. This is what resets each cycle
+  // (AI credits) or forms the storage floor (storage); top-ups add on top
+  // of it without changing it. See lib/studio/quota.ts.
+  planStorageGB?: number
+  planAiCreditsPerMonth?: number
+  billingCycle?: 'monthly' | 'annual'
+  // Fixed 30-day rolling window from signup/last plan-change, used purely
+  // for AI-credit reset bookkeeping — advances every 30 days regardless of
+  // billingCycle or top-ups. Separate from planRenewsAt (payment due date)
+  // below: a monthly-billed studio's AI credits and payment both happen to
+  // land on the same 30-day cadence, but an annual studio's AI credits
+  // still reset every 30 days even though they only pay once a year.
+  billingPeriodStart?: string
+  billingPeriodEnd?: string
+  // When the studio next needs to manually pay to keep its Pro/Custom plan
+  // (no real recurring auto-debit exists yet — see lib/studio/quota.ts).
+  // 30 days out for monthly, 365 for annual, set at plan-change time.
+  // Undefined for Free (never needs renewal).
+  planRenewsAt?: string
   dataRetentionGraceDays: number
   storageOverageStartedAt?: string
   storageReminderCount?: number
@@ -272,8 +299,9 @@ export interface Selection {
 // directly.
 export type AuditAction =
   | 'DELETE_PHOTOS' | 'DELETE_PROJECT' | 'DELETE_CLIENT' | 'DELETE_STUDIO'
+  | 'DELETE_TRANSFER' | 'DELETE_WEBSITE_MEDIA'
   | 'SUSPEND_STUDIO' | 'REACTIVATE_STUDIO' | 'TOGGLE_AI_FLAG'
-export type AuditTargetType = 'PHOTO_BATCH' | 'PROJECT' | 'CLIENT' | 'STUDIO'
+export type AuditTargetType = 'PHOTO_BATCH' | 'PROJECT' | 'CLIENT' | 'STUDIO' | 'TRANSFER' | 'WEBSITE_MEDIA'
 
 export interface AuditLog {
   auditId: string
@@ -305,6 +333,9 @@ export interface WebsiteGalleryPhoto {
   url: string
   caption?: string
   category?: string
+  // Billed against the studio's storage quota — see
+  // app/studio/api/admin/website/portfolio-upload/route.ts.
+  sizeBytes?: number
 }
 
 export interface StudioWebsite {
@@ -321,6 +352,7 @@ export interface StudioWebsite {
   services: WebsiteService[]
   galleryPhotos: WebsiteGalleryPhoto[]
   heroImageUrl?: string
+  heroImageSizeBytes?: number
   contactEmail?: string
   contactPhone?: string
   whatsapp?: string
@@ -357,30 +389,31 @@ export interface Booking {
 
 // ── Billing ───────────────────────────────────────────────────────────────────
 
-export type StudioTxnType = 'storage_topup' | 'download_topup' | 'ai_search_topup'
+// Downloads are never metered under the R2 (zero-egress-fee) pricing model —
+// 'download_topup' intentionally removed. 'plan_change' covers Free→Pro,
+// Pro storage/AI/billingCycle adjustments, and manual cycle renewal — all
+// reuse the same Razorpay order→verify pipeline as top-ups.
+export type StudioTxnType = 'storage_topup' | 'ai_search_topup' | 'plan_change'
 export type StudioTxnStatus = 'pending' | 'success' | 'failed'
 
 export interface StudioTransaction {
   txnId: string
   studioId: string
   type: StudioTxnType
+  // Descriptive label (e.g. "custom_150gb", "plan_pro_100gb_500ai") — no
+  // longer a lookup key into a fixed catalog since amounts are now
+  // computed from a linear rate, not chosen from a package list.
   packageId: string
   amountPaise: number
   gbPurchased: number
   months?: number            // set for storage_topup only
   creditsPurchased?: number  // set for ai_search_topup only
+  // set for plan_change only — the plan/cycle this transaction moved the
+  // studio to, so a receipt or audit trail can show what actually changed.
+  planId?: 'free' | 'pro' | 'custom'
+  billingCycle?: 'monthly' | 'annual'
   razorpayOrderId?: string
   razorpayPaymentId?: string
   status: StudioTxnStatus
   createdAt: string
-}
-
-// Monthly download counter — PK studioId, SK month ("2026-07"). A new month
-// simply starts a fresh record at zero, no reset job needed.
-export interface StudioUsageMonth {
-  studioId: string
-  month: string
-  downloadBytes: number
-  downloadTopupBytes: number
-  updatedAt: string
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { StudioProject } from '@/types/studio'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
+import UsageBar, { usageTextColor } from '@/components/studio/UsageBar'
 
 const STATUS_COLOR: Record<string, string> = {
   DRAFT:              'bg-border/60 text-muted',
@@ -46,34 +47,39 @@ function StatCard({
 }
 
 function UsageCard({
-  label, usedBytes, quotaBytes, onTopUp,
-}: { label: string; usedBytes: number; quotaBytes: number; onTopUp: () => void }) {
-  const pct = quotaBytes > 0 ? Math.min(100, (usedBytes / quotaBytes) * 100) : 0
-  const over = usedBytes > quotaBytes
+  label, used, quota, usedLabel, quotaLabel, pct, onTopUp,
+}: { label: string; used: number; quota: number; usedLabel: string; quotaLabel: string; pct: number; onTopUp: () => void }) {
   return (
-    <div className={`bg-card border rounded-2xl px-5 py-4 space-y-2 ${over ? 'border-danger/30' : 'border-border'}`}>
+    <div className={`bg-card border rounded-2xl px-5 py-4 space-y-2 ${pct > 80 ? 'border-danger/30' : 'border-border'}`}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-muted">{label}</span>
         <button onClick={onTopUp} className="text-xs font-semibold text-accent hover:underline">Top up</button>
       </div>
       <div className="text-lg font-extrabold text-text-primary">
-        {fmtBytes(usedBytes)} <span className="text-sm font-medium text-muted">/ {fmtBytes(quotaBytes)}</span>
+        {usedLabel} <span className="text-sm font-medium text-muted">/ {quotaLabel}</span>
       </div>
-      <div className="h-1.5 bg-border rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${over ? 'bg-danger' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
-      </div>
+      <UsageBar pct={pct} />
+      <p className={`text-[11px] font-semibold ${usageTextColor(pct)}`}>{pct}% used</p>
     </div>
   )
 }
 
 interface BillingStats {
+  billingPlanId: 'free' | 'pro' | 'custom'
+  planStorageGB: number
+  planAiCreditsPerMonth: number
+  billingCycle: 'monthly' | 'annual'
+  planRenewsAt: string | null
   storageUsedBytes: number
   storageGrantBytes: number
   storageOverQuota: boolean
+  storageUsagePct: number
   storageOverageStartedAt: string | null
   dataRetentionGraceDays: number
-  downloadUsedBytes: number
-  downloadQuotaBytes: number
+  aiSearchCreditsUsed: number
+  aiSearchCreditsTotal: number
+  aiSearchOverQuota: boolean
+  aiSearchUsagePct: number
 }
 
 export default function DashboardOverviewPage() {
@@ -82,7 +88,7 @@ export default function DashboardOverviewPage() {
   const [storageBytes, setStorageBytes] = useState(0)
   const [billing, setBilling]           = useState<BillingStats | null>(null)
   const [loading, setLoading]           = useState(true)
-  const [topupKind, setTopupKind]       = useState<'storage' | 'download' | null>(null)
+  const [topupKind, setTopupKind]       = useState<'storage' | 'ai-search' | null>(null)
 
   const loadStats = () => {
     fetch('/studio/api/admin/stats').then((r) => r.json()).then((sRes) => {
@@ -179,15 +185,21 @@ export default function DashboardOverviewPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <UsageCard
               label="Storage Quota"
-              usedBytes={billing.storageUsedBytes}
-              quotaBytes={billing.storageGrantBytes}
+              used={billing.storageUsedBytes}
+              quota={billing.storageGrantBytes}
+              usedLabel={fmtBytes(billing.storageUsedBytes)}
+              quotaLabel={fmtBytes(billing.storageGrantBytes)}
+              pct={billing.storageUsagePct}
               onTopUp={() => setTopupKind('storage')}
             />
             <UsageCard
-              label="Downloads This Month"
-              usedBytes={billing.downloadUsedBytes}
-              quotaBytes={billing.downloadQuotaBytes}
-              onTopUp={() => setTopupKind('download')}
+              label="AI Search Credits This Cycle"
+              used={billing.aiSearchCreditsUsed}
+              quota={billing.aiSearchCreditsTotal}
+              usedLabel={billing.aiSearchCreditsUsed.toLocaleString('en-IN')}
+              quotaLabel={billing.aiSearchCreditsTotal.toLocaleString('en-IN')}
+              pct={billing.aiSearchUsagePct}
+              onTopUp={() => setTopupKind('ai-search')}
             />
           </div>
         </div>

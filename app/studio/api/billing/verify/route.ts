@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
-import { applyTopup, findStorageTopupPackage, findDownloadTopupPackage, findAiSearchTopupPackage } from '@/lib/studio/billing'
+import { applyTopup, type ApplyTopupInput } from '@/lib/studio/billing'
 import { renderReceiptPdf } from '@/lib/studio/receiptPdf'
 import { sendStudioReceiptEmail } from '@/lib/aws/ses'
 import { formatPaiseAsRupees } from '@/constants/studioPricing'
-import type { Studio, StudioTransaction, StudioTxnType, StudioUser } from '@/types/studio'
+import type { Studio, StudioTransaction, StudioUser } from '@/types/studio'
 
 // Mirrors app/api/wallet/verify/route.ts's HMAC verification exactly, on a
-// separate VayuStudios-only path. This is the primary confirmation route,
-// called by the client right after Razorpay checkout succeeds; the webhook
-// (app/api/webhooks/razorpay-studio) is a backup that calls the same
-// idempotent applyTopup().
+// separate VayuStudios-only path. Amounts/quantities are always read from
+// the pending StudioTransaction row the order-creation route already wrote
+// server-side — never re-derived from anything the client sends here, so a
+// tampered client request can't change what gets credited.
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
@@ -25,13 +25,16 @@ export async function POST(req: NextRequest) {
       razorpayOrderId?: string
       razorpaySignature?: string
       txnId?: string
-      type?: StudioTxnType
-      packageId?: string
     }
-    const { razorpayPaymentId, razorpayOrderId, razorpaySignature, txnId, type, packageId } = body
+    const { razorpayPaymentId, razorpayOrderId, razorpaySignature, txnId } = body
 
-    if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature || !txnId || !type || !packageId) {
+    if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature || !txnId) {
       return NextResponse.json({ success: false, error: 'MISSING_PARAMS' }, { status: 400 })
+    }
+
+    const pendingTxn = await studioGetItem<StudioTransaction>(TABLES.transactions, { txnId })
+    if (!pendingTxn || pendingTxn.studioId !== auth.studioId || pendingTxn.razorpayOrderId !== razorpayOrderId) {
+      return NextResponse.json({ success: false, error: 'INVALID_TXN' }, { status: 400 })
     }
 
     const secret = process.env.RAZORPAY_KEY_SECRET ?? ''
@@ -41,16 +44,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'SIGNATURE_INVALID' }, { status: 400 })
     }
 
-    const pkg = type === 'storage_topup'
-      ? findStorageTopupPackage(packageId)
-      : type === 'ai_search_topup'
-        ? findAiSearchTopupPackage(packageId)
-        : findDownloadTopupPackage(packageId)
-    if (!pkg) {
-      return NextResponse.json({ success: false, error: 'INVALID_PACKAGE' }, { status: 400 })
-    }
+    const input: ApplyTopupInput = pendingTxn.type === 'storage_topup'
+      ? { type: 'storage_topup', gb: pendingTxn.gbPurchased, amountPaise: pendingTxn.amountPaise }
+      : pendingTxn.type === 'ai_search_topup'
+        ? { type: 'ai_search_topup', credits: pendingTxn.creditsPurchased ?? 0, amountPaise: pendingTxn.amountPaise }
+        : {
+            type: 'plan_change',
+            planId: pendingTxn.planId ?? 'pro',
+            storageGB: pendingTxn.gbPurchased,
+            aiCreditsPerMonth: pendingTxn.creditsPurchased ?? 0,
+            billingCycle: pendingTxn.billingCycle ?? 'monthly',
+            amountPaise: pendingTxn.amountPaise,
+          }
 
-    await applyTopup(auth.studioId, txnId, type, packageId, razorpayOrderId, razorpayPaymentId)
+    await applyTopup(auth.studioId, txnId, input, razorpayOrderId, razorpayPaymentId)
 
     // Fire-and-forget PDF receipt — a failure here never blocks the payment itself
     void (async () => {
@@ -62,9 +69,13 @@ export async function POST(req: NextRequest) {
         if (!studio || !txn) return
         const adminUser = await studioGetItem<StudioUser>(TABLES.users, { userId: auth.userId }).catch(() => null)
         if (!adminUser?.email) return
+        const label = txn.type === 'storage_topup'
+          ? `${txn.gbPurchased} GB storage top-up`
+          : txn.type === 'ai_search_topup'
+            ? `${txn.creditsPurchased} AI search top-up`
+            : `${txn.planId === 'free' ? 'Free plan' : `Pro plan (${txn.gbPurchased} GB, ${txn.creditsPurchased} AI searches/mo, ${txn.billingCycle})`}`
         const pdf = await renderReceiptPdf(studio.name, txn)
-        const label = type === 'storage_topup' ? pkg.label : pkg.label
-        await sendStudioReceiptEmail(adminUser.email, studio.name, pdf, label, pkg.pricePaise)
+        await sendStudioReceiptEmail(adminUser.email, studio.name, pdf, label, txn.amountPaise)
       } catch (err) {
         console.error('[billing/verify] receipt email failed', err)
       }
@@ -72,7 +83,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { amountFormatted: formatPaiseAsRupees(pkg.pricePaise) },
+      data: { amountFormatted: formatPaiseAsRupees(pendingTxn.amountPaise) },
     })
   } catch (err) {
     console.error('[billing/verify]', err)

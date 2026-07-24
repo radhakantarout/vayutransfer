@@ -3,7 +3,7 @@ import Razorpay from 'razorpay'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import { findStorageTopupPackage } from '@/lib/studio/billing'
+import { computeStorageAddOnPaise } from '@/constants/studioPricing'
 import type { StudioTransaction } from '@/types/studio'
 
 const razorpay = new Razorpay({
@@ -13,6 +13,9 @@ const razorpay = new Razorpay({
 
 // Mirrors app/api/wallet/topup/route.ts's shape — a separate, VayuStudios-only
 // implementation on its own transactions table, not a shared code path.
+// Accepts an arbitrary GB amount (from the Pro plan's live calculator, or a
+// Free-plan studio topping up without upgrading) — price is always computed
+// here from the shared linear rate, never trusted from the client.
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
@@ -20,14 +23,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { packageId } = await req.json().catch(() => ({})) as { packageId?: string }
-    const pkg = packageId ? findStorageTopupPackage(packageId) : null
-    if (!pkg) {
-      return NextResponse.json({ success: false, error: 'INVALID_PACKAGE' }, { status: 400 })
+    const { gb } = await req.json().catch(() => ({})) as { gb?: number }
+    if (!gb || !Number.isFinite(gb) || gb <= 0 || gb > 10000) {
+      return NextResponse.json({ success: false, error: 'INVALID_AMOUNT' }, { status: 400 })
     }
 
+    const amountPaise = computeStorageAddOnPaise(gb)
     const order = await razorpay.orders.create({
-      amount: pkg.pricePaise,
+      amount: amountPaise,
       currency: 'INR',
       receipt: randomUUID().slice(0, 40),
     })
@@ -37,10 +40,9 @@ export async function POST(req: NextRequest) {
       txnId,
       studioId: auth.studioId,
       type: 'storage_topup',
-      packageId: pkg.id,
-      amountPaise: pkg.pricePaise,
-      gbPurchased: pkg.gb,
-      months: pkg.months,
+      packageId: `custom_${gb}gb`,
+      amountPaise,
+      gbPurchased: gb,
       razorpayOrderId: order.id,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -49,14 +51,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        orderId: order.id,
-        amountPaise: pkg.pricePaise,
-        currency: 'INR',
-        keyId: process.env.RAZORPAY_KEY_ID ?? '',
-        txnId,
-        packageId: pkg.id,
-      },
+      data: { orderId: order.id, amountPaise, currency: 'INR', keyId: process.env.RAZORPAY_KEY_ID ?? '', txnId, gb },
     })
   } catch (err) {
     console.error('[billing/storage-topup]', err)

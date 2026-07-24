@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaDownloadUrl } from '@/lib/studio/storage'
-import { recordDownload } from '@/lib/studio/usage'
 import type { StudioProject, MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -53,7 +52,6 @@ export async function GET(
         'ADD shareDownloadCount :one',
         { ':one': 1 }
       ).catch((err) => console.error('[client download] shareDownloadCount increment failed', err))
-      recordDownload(entry.studioId, file.sizeBytes).catch((err) => console.error('[usage record]', err))
     }
 
     return NextResponse.redirect(downloadUrl)

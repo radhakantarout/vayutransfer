@@ -12,11 +12,15 @@ import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 import DeleteProjectModal from '@/components/studio/DeleteProjectModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
 import RecentTransfersModal from '@/components/studio/RecentTransfersModal'
+import SettingsModal, { type SettingsTab } from '@/components/studio/settings/SettingsModal'
 import AISortingModal from '@/components/studio/AISortingModal'
 import EditClientModal from '@/components/studio/EditClientModal'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
 import ProfileMenu from '@/components/studio/ProfileMenu'
 import EditProfileModal from '@/components/studio/EditProfileModal'
+import { usageBarColor } from '@/components/studio/UsageBar'
+import { ROLE_LABEL } from '@/lib/studio/roleLabels'
+import type { StudioRole } from '@/lib/studio/auth'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
 
@@ -404,6 +408,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const searchParams = useSearchParams()
   const { setNavCollapsed } = useExpandedGrid()
   const { setOpen: setChatOpen } = useChatWidget()
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
+  // Shared by the sidebar's own Settings button and the profile menu's
+  // Edit profile/Billing/Usage shortcuts — same popup, just opened on
+  // whichever tab makes sense for how it was triggered.
+  const openSettings = (tab: SettingsTab = 'general') => { setSettingsInitialTab(tab); setShowSettingsModal(true) }
 
   const [projects, setProjects]         = useState<StudioProject[]>([])
   const [authChecked, setAuthChecked]   = useState(false)
@@ -417,7 +427,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // sidebar — fetched on demand (not on every project list refresh) since
   // resolving covers means a files lookup per event.
   const [focusedCoverUrl, setFocusedCoverUrl] = useState<string | null>(null)
-  const [stats, setStats]               = useState<{ storageUsedBytes: number; storageGrantBytes: number; aiSearchCreditsUsed: number; aiSearchCreditsTotal: number } | null>(null)
+  const [stats, setStats]               = useState<{ storageUsedBytes: number; storageGrantBytes: number; storageUsagePct: number; aiSearchCreditsUsed: number; aiSearchCreditsTotal: number; aiSearchUsagePct: number; billingPlanId: 'free' | 'pro' | 'custom' } | null>(null)
+  const planLabel = stats ? stats.billingPlanId.charAt(0).toUpperCase() + stats.billingPlanId.slice(1) : 'Free'
   const [topupKind, setTopupKind]       = useState<'storage' | 'ai-search' | null>(null)
   const [userInfo, setUserInfo]         = useState<{ role?: string; name?: string; email?: string } | null>(null)
   const [showEditProfile, setShowEditProfile] = useState(false)
@@ -948,7 +959,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <ProfileMenu
                   position="below"
                   align="right"
-                  onEditProfile={openEditProfile}
+                  name={userInfo.name ?? 'Studio User'}
+                  roleLabel={ROLE_LABEL[userInfo.role as StudioRole] ?? 'Studio Admin'}
+                  planLabel={planLabel}
+                  onOpenSettings={openSettings}
                   onLogout={handleLogout}
                   trigger={
                     <div className="w-7 h-7 rounded-full bg-accent/15 text-accent flex items-center justify-center text-[11px] font-bold cursor-pointer uppercase">
@@ -1017,7 +1031,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Dashboard
               </Link>
 
-              <div className="flex items-center gap-1 px-0.5">
+              <div className="flex flex-col gap-1">
                 {(['recent', 'starred', 'projects'] as const).map(view => (
                   <button key={view} onClick={() => {
                     setSidebarView(view)
@@ -1029,7 +1043,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     if (view === 'projects') router.push('/studio/dashboard/projects')
                     else router.push(`/studio/dashboard/projects?filter=${view}`)
                   }}
-                    className={`flex-1 flex items-center justify-center gap-1 text-[11px] font-bold uppercase tracking-wide py-1.5 rounded-lg transition-colors ${
+                    className={`flex items-center gap-2 text-sm font-semibold py-2 px-2.5 rounded-lg transition-colors ${
                       // Once a project card is drilled into, this no longer
                       // reflects "browsing all projects" — don't show the
                       // tab as active so clicking it again reads as a fresh
@@ -1037,21 +1051,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       sidebarView === view && !(view === 'projects' && focusedClient) ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
                     }`}>
                     {view === 'recent' && (
-                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     )}
                     {view === 'starred' && (
-                      <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
+                      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
                       </svg>
                     )}
                     {view === 'projects' && (
-                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
                       </svg>
                     )}
-                    {view === 'recent' ? 'Recent' : view === 'starred' ? 'Starred' : 'Projects'}
+                    {view === 'recent' ? 'Recent Projects' : view === 'starred' ? 'Starred Projects' : 'All Projects'}
                   </button>
                 ))}
               </div>
@@ -1103,18 +1117,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             One divider separating it from the scrollable area above; no
             lines splitting the items apart, just spacing between them. */}
         <div className="border-t border-border flex-shrink-0 px-2 py-1 space-y-1">
-          <Link href="/studio/dashboard/settings" onClick={clearSelection}
-            className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-              pathname.startsWith('/studio/dashboard/settings')
-                ? 'bg-accent/10 text-accent'
-                : 'text-muted hover:text-text-primary hover:bg-border/50'
-            }`}>
+          {/* Opens as a popup on top of whatever page the admin is already
+              on (e.g. mid-way through an event gallery) instead of
+              navigating away and losing that context. */}
+          <button onClick={() => openSettings('general')}
+            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-medium text-muted hover:text-text-primary hover:bg-border/50 transition-colors">
             <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             Settings
-          </Link>
+          </button>
 
           {stats && (
             <div className="px-2.5 py-1 rounded-lg bg-border/25">
@@ -1131,8 +1144,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
               </div>
               <div className="h-1 rounded-full bg-border overflow-hidden">
-                <div className="h-full bg-accent rounded-full"
-                  style={{ width: `${stats.storageGrantBytes > 0 ? Math.min(100, (stats.storageUsedBytes / stats.storageGrantBytes) * 100) : 0}%` }} />
+                <div className={`h-full rounded-full ${usageBarColor(stats.storageUsagePct)}`}
+                  style={{ width: `${Math.min(100, stats.storageUsagePct)}%` }} />
               </div>
             </div>
           )}
@@ -1155,8 +1168,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
               </div>
               <div className="h-1 rounded-full bg-border overflow-hidden">
-                <div className={`h-full rounded-full ${stats.aiSearchCreditsUsed > stats.aiSearchCreditsTotal ? 'bg-danger' : 'bg-accent'}`}
-                  style={{ width: `${stats.aiSearchCreditsTotal > 0 ? Math.min(100, (stats.aiSearchCreditsUsed / stats.aiSearchCreditsTotal) * 100) : 0}%` }} />
+                <div className={`h-full rounded-full ${usageBarColor(stats.aiSearchUsagePct)}`}
+                  style={{ width: `${Math.min(100, stats.aiSearchUsagePct)}%` }} />
               </div>
             </div>
           )}
@@ -1175,7 +1188,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <ProfileMenu
                 position="below"
                 align="left"
-                onEditProfile={openEditProfile}
+                name={userInfo.name ?? 'Studio User'}
+                roleLabel={ROLE_LABEL[userInfo.role as StudioRole] ?? 'Studio Admin'}
+                planLabel={planLabel}
+                onOpenSettings={openSettings}
                 onLogout={handleLogout}
                 trigger={
                   <div title={userInfo.name ?? 'Profile'}
@@ -1238,7 +1254,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
               </svg>
             </Link>
-            <button onClick={() => { setSidebarView('recent'); clearSelection(); router.push('/studio/dashboard/projects?filter=recent') }} title="Recent"
+            <button onClick={() => { setSidebarView('recent'); clearSelection(); router.push('/studio/dashboard/projects?filter=recent') }} title="Recent Projects"
               className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
                 sidebarView === 'recent' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
               }`}>
@@ -1246,7 +1262,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </button>
-            <button onClick={() => { setSidebarView('starred'); clearSelection(); router.push('/studio/dashboard/projects?filter=starred') }} title="Starred"
+            <button onClick={() => { setSidebarView('starred'); clearSelection(); router.push('/studio/dashboard/projects?filter=starred') }} title="Starred Projects"
               className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
                 sidebarView === 'starred' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
               }`}>
@@ -1254,7 +1270,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
               </svg>
             </button>
-            <button onClick={() => { setSidebarView('projects'); clearSelection(); router.push('/studio/dashboard/projects') }} title="Projects"
+            <button onClick={() => { setSidebarView('projects'); clearSelection(); router.push('/studio/dashboard/projects') }} title="All Projects"
               className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
                 sidebarView === 'projects' && !focusedClient ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
               }`}>
@@ -1456,6 +1472,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onClose={() => setShowEditProfile(false)}
           onSaved={(name) => { setShowEditProfile(false); setUserInfo(u => u ? { ...u, name } : u) }}
         />
+      )}
+
+      {/* Rendered here (not a route) so it opens as a popup on top of
+          whatever page the admin is currently on — see the sidebar's
+          Settings button above. */}
+      {showSettingsModal && (
+        <SettingsModal onClose={() => setShowSettingsModal(false)} initialTab={settingsInitialTab} />
       )}
 
       {/* ── Toast — quick confirmation for instant bulk actions (e.g. the

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaDownloadUrl } from '@/lib/studio/storage'
-import { recordDownload } from '@/lib/studio/usage'
 import type { MediaFile } from '@/types/studio'
 
 function getSecret() {
@@ -39,7 +38,6 @@ export async function GET(
     // a guest could otherwise hand-craft the query param.
     const wantsOriginal = allowOriginalDownload && req.nextUrl.searchParams.get('original') === 'true'
     const downloadUrl = await getMediaDownloadUrl(file, file.originalFilename, { original: wantsOriginal })
-    recordDownload(file.studioId, file.sizeBytes).catch((e) => console.error('[usage record]', e))
     return NextResponse.redirect(downloadUrl)
   } catch (err) {
     console.error('[guest download GET]', err)

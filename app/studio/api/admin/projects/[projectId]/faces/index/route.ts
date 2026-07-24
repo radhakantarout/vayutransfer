@@ -3,6 +3,7 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { accuracyToQualityFilter, DEFAULT_AI_ACCURACY } from '@/lib/studio/faceAccuracy'
+import { syncBillingCycle, checkAiCreditsAvailable } from '@/lib/studio/quota'
 import type { Studio, StudioProject, StudioJob } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -26,7 +27,7 @@ export async function POST(
       typeof body?.accuracyLevel === 'number' ? body.accuracyLevel : DEFAULT_AI_ACCURACY
     )
 
-    const [studio, project] = await Promise.all([
+    let [studio, project] = await Promise.all([
       studioGetItem<Studio>(TABLES.studios, { studioId }),
       studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId }),
     ])
@@ -38,6 +39,24 @@ export async function POST(
         success: false, error: 'FEATURE_DISABLED',
         message: 'AI Face Recognition is not enabled on your plan',
       }, { status: 403 })
+    }
+
+    // Real per-photo Rekognition cost is charged the moment indexing runs,
+    // regardless of what happens to the photo afterward — block before
+    // dispatching rather than letting the Lambda run up an unmetered bill.
+    // When fileIds isn't provided (forceAll / "index everything new"), the
+    // exact batch size isn't known until the Lambda scans the project, so
+    // this can only guarantee at least 1 credit of headroom exists — still
+    // stops the common case (already fully out of credits).
+    studio = await syncBillingCycle(studio)
+    const requestedCount = fileIds?.length ?? 1
+    const aiQuota = checkAiCreditsAvailable(studio, requestedCount)
+    if (!aiQuota.ok) {
+      return NextResponse.json({
+        success: false, error: 'QUOTA_EXCEEDED', quotaType: 'ai',
+        message: 'You’re out of AI search credits for this cycle. Top up credits or upgrade your plan in Settings → Billing to keep sorting.',
+        usedCredits: aiQuota.usedCredits, quotaCredits: aiQuota.quotaCredits, usedPct: aiQuota.usedPct,
+      }, { status: 402 })
     }
 
     // Check if a job is already running for this project

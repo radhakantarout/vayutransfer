@@ -1,68 +1,62 @@
 // VayuStudios billing constants — deliberately separate from VayuTransfer's
-// constants/pricing.ts. Prices computed for a ~40% margin after AWS Mumbai
-// (ap-south-1) costs and Razorpay's ~2.36% fee (2% + 18% GST), verified July 2026:
-//   S3 storage:  ~$0.023/GB/month  (~₹1.93/GB/month at ₹84/$)
-//   S3/CloudFront egress to India: ~$0.109/GB (~₹9.16/GB, one-time)
+// constants/pricing.ts. Single source of truth for the capacity-based
+// pricing model (Free / Pro-with-slider / Custom): shared by the marketing
+// pricing page (app/studio/pricing/PricingContent.tsx), the real Settings
+// Billing/Usage tabs, and every backend billing/quota route — a price or
+// quota number must never be computed a second way anywhere else.
+//
+// Verified against real Cloudflare R2 + AWS Rekognition (ap-south-1) costs,
+// July 2026, at ~₹97/$1:
+//   R2 storage:        $0.015/GB/month (~₹1.45/GB/month) — zero egress fee,
+//                       which is why downloads are not metered at all here.
+//   Rekognition index:  $0.001/photo (~₹0.10/photo), Group 1 API, first 1M/mo.
+// Storage sold at ₹3/100GB-unit nets ~51% margin; AI search at ₹0.30/photo
+// nets ~68% — both comfortably inside the target 50-60% gross margin.
 
 export const GB = 1024 * 1024 * 1024
 
-// Free baseline — every studio gets this regardless of plan.
-export const FREE_STORAGE_BYTES  = 20 * GB   // standing balance
-export const FREE_DOWNLOAD_BYTES = 2  * GB   // resets every calendar month
-
-// Storage is sold in time-bound blocks ("N GB guaranteed for M months") —
-// this is what lets a one-time payment stay profitable regardless of how
-// long a studio keeps the data, unlike an open-ended "N GB forever" grant.
-export interface StorageTopupPackage {
-  id: string
-  label: string
-  gb: number
-  months: number
-  pricePaise: number
-  popular?: boolean
-}
-
-export const STORAGE_TOPUP_PACKAGES: StorageTopupPackage[] = [
-  { id: 'storage_50_3',  label: '50 GB · 3 months',  gb: 50,  months: 3, pricePaise: 50000 },
-  { id: 'storage_100_3', label: '100 GB · 3 months', gb: 100, months: 3, pricePaise: 100000, popular: true },
-  { id: 'storage_100_6', label: '100 GB · 6 months', gb: 100, months: 6, pricePaise: 200000 },
-]
-
-// Downloads don't persist — a one-time charge per GB is the correct economic
-// model here (no retention/expiry concept needed, unlike storage).
-export interface DownloadTopupPackage {
-  id: string
-  label: string
-  gb: number
-  pricePaise: number
-  popular?: boolean
-}
-
-export const DOWNLOAD_TOPUP_PACKAGES: DownloadTopupPackage[] = [
-  { id: 'download_10',  label: '10 GB',  gb: 10,  pricePaise: 16000 },
-  { id: 'download_50',  label: '50 GB',  gb: 50,  pricePaise: 80000, popular: true },
-  { id: 'download_100', label: '100 GB', gb: 100, pricePaise: 160000 },
-]
-
-// AI face-indexing is a real per-photo AWS Rekognition cost (~₹0.08-0.10/photo
-// incl. compute) — this is a genuine metered cost, not a cosmetic quota.
-// Free baseline is small since indexing costs money per photo, unlike
-// storage/downloads which are much cheaper per-unit.
+// ── Free plan ────────────────────────────────────────────────────────────
+export const FREE_STORAGE_GB = 5
+export const FREE_STORAGE_BYTES = FREE_STORAGE_GB * GB
 export const FREE_AI_SEARCH_CREDITS = 200
 
-export interface AiSearchTopupPackage {
-  id: string
-  label: string
-  credits: number
-  pricePaise: number
-  popular?: boolean
+// ── Pro plan ─────────────────────────────────────────────────────────────
+// Base price includes a default amount of storage and AI search; anything
+// beyond that is priced linearly. Dragging below the included defaults
+// never reduces the price below the base — it's a starting price, not a
+// per-unit-from-zero calculator.
+export const PRO_BASE_PRICE_PAISE = 99900 // ₹999/mo
+export const PRO_BASE_STORAGE_GB = 100
+export const PRO_BASE_AI_CREDITS = 500
+export const PRO_STORAGE_MAX_GB = 1000   // slider ceiling, shown as "1 TB"
+export const PRO_STORAGE_STEP_GB = 50
+export const PRO_AI_MAX_CREDITS = 10000  // slider ceiling
+export const PRO_AI_STEP_CREDITS = 500
+export const STORAGE_EXTRA_PAISE_PER_100GB = 30000 // +₹300 per 100 GB
+export const AI_EXTRA_PAISE_PER_1000 = 30000       // +₹300 per 1,000 photos
+
+// Same linear rate used for the Pro slider, for both (a) sizing the plan
+// itself at checkout/plan-change, and (b) mid-cycle top-ups on top of
+// whatever plan a studio is already on (Free included — Free studios can
+// still top up without moving to Pro).
+export function computeStorageAddOnPaise(extraGB: number): number {
+  return Math.round((Math.max(0, extraGB) / 100) * STORAGE_EXTRA_PAISE_PER_100GB)
+}
+export function computeAiAddOnPaise(extraCredits: number): number {
+  return Math.round((Math.max(0, extraCredits) / 1000) * AI_EXTRA_PAISE_PER_1000)
+}
+// Pro plan price for an arbitrary chosen storage/AI amount (the calculator's
+// live price, and the authoritative server-side price for a plan-change).
+export function computeProPlanPricePaise(storageGB: number, aiCredits: number): number {
+  return PRO_BASE_PRICE_PAISE
+    + computeStorageAddOnPaise(storageGB - PRO_BASE_STORAGE_GB)
+    + computeAiAddOnPaise(aiCredits - PRO_BASE_AI_CREDITS)
 }
 
-export const AI_SEARCH_TOPUP_PACKAGES: AiSearchTopupPackage[] = [
-  { id: 'ai_search_500',  label: '500 photos',   credits: 500,  pricePaise: 30000 },
-  { id: 'ai_search_1000', label: '1,000 photos', credits: 1000, pricePaise: 50000, popular: true },
-  { id: 'ai_search_5000', label: '5,000 photos', credits: 5000, pricePaise: 200000 },
-]
+// Billing cycle — a fixed 30-day rolling window; annual billing is 10x the
+// monthly rate ("2 months free"), still resets AI credits every 30 days.
+export const BILLING_CYCLE_DAYS = 30
+export const ANNUAL_MONTHS_CHARGED = 10
 
 export const DEFAULT_RETENTION_GRACE_DAYS = 25
 export const RETENTION_GRACE_DAY_OPTIONS = [15, 25, 45] as const

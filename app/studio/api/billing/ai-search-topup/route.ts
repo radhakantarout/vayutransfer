@@ -3,7 +3,7 @@ import Razorpay from 'razorpay'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import { findAiSearchTopupPackage } from '@/lib/studio/billing'
+import { computeAiAddOnPaise } from '@/constants/studioPricing'
 import type { StudioTransaction } from '@/types/studio'
 
 const razorpay = new Razorpay({
@@ -11,7 +11,9 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET ?? '',
 })
 
-// Mirrors storage-topup/route.ts exactly, for AI-search (face-indexing) credits.
+// Mirrors storage-topup/route.ts exactly, for AI-search (face-indexing)
+// credits. Accepts an arbitrary credit amount, priced server-side. Applies
+// to the current billing cycle only — see lib/studio/quota.ts.
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
@@ -19,14 +21,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { packageId } = await req.json().catch(() => ({})) as { packageId?: string }
-    const pkg = packageId ? findAiSearchTopupPackage(packageId) : null
-    if (!pkg) {
-      return NextResponse.json({ success: false, error: 'INVALID_PACKAGE' }, { status: 400 })
+    const { credits } = await req.json().catch(() => ({})) as { credits?: number }
+    if (!credits || !Number.isFinite(credits) || credits <= 0 || credits > 100000) {
+      return NextResponse.json({ success: false, error: 'INVALID_AMOUNT' }, { status: 400 })
     }
 
+    const amountPaise = computeAiAddOnPaise(credits)
     const order = await razorpay.orders.create({
-      amount: pkg.pricePaise,
+      amount: amountPaise,
       currency: 'INR',
       receipt: randomUUID().slice(0, 40),
     })
@@ -36,10 +38,10 @@ export async function POST(req: NextRequest) {
       txnId,
       studioId: auth.studioId,
       type: 'ai_search_topup',
-      packageId: pkg.id,
-      amountPaise: pkg.pricePaise,
+      packageId: `custom_${credits}credits`,
+      amountPaise,
       gbPurchased: 0,
-      creditsPurchased: pkg.credits,
+      creditsPurchased: credits,
       razorpayOrderId: order.id,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -48,14 +50,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        orderId: order.id,
-        amountPaise: pkg.pricePaise,
-        currency: 'INR',
-        keyId: process.env.RAZORPAY_KEY_ID ?? '',
-        txnId,
-        packageId: pkg.id,
-      },
+      data: { orderId: order.id, amountPaise, currency: 'INR', keyId: process.env.RAZORPAY_KEY_ID ?? '', txnId, credits },
     })
   } catch (err) {
     console.error('[billing/ai-search-topup]', err)
