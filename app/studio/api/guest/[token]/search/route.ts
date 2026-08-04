@@ -62,7 +62,9 @@ export async function POST(
       searchRes = await rek.send(new SearchFacesByImageCommand({
         CollectionId: `vayustudio-${projectId}`,
         Image: { Bytes: selfieBuffer },
-        FaceMatchThreshold: 70,
+        // Raised from 70 -> 85 to cut down false-positive matches (wrong
+        // person pulled in due to similar angle/lighting/makeup).
+        FaceMatchThreshold: 85,
         MaxFaces: 4096,
       }))
     } catch (err: unknown) {
@@ -113,7 +115,10 @@ export async function POST(
           getMediaPreviewUrl(f).then(u => u ?? ''),
           getMediaDownloadUrl(f, f.originalFilename).catch(() => ''),
         ])
-        return { fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl, isEdited: !!(f.editedS3Key || f.editedR2Key) }
+        return {
+          fileId: f.fileId, previewUrl, filename: f.originalFilename, downloadUrl,
+          isEdited: !!(f.editedS3Key || f.editedR2Key), sizeBytes: f.sizeBytes,
+        }
       })
     )
 

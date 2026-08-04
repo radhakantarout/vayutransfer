@@ -24,6 +24,10 @@ interface Props {
 
 export default function AddEventModal({ clientName, existingProjects, onClose, onCreated }: Props) {
   const existing = existingProjects.find((p) => p.clientName === clientName)
+  // A brand-new client has a "shell" placeholder row with no real event yet
+  // (created by New Project) — the first Add Event promotes it in place
+  // instead of creating a second, duplicate row.
+  const placeholder = existingProjects.find((p) => p.clientName === clientName && p.isPlaceholder)
 
   const [eventType, setEventType]       = useState<EventType>('WEDDING')
   const [eventDate, setEventDate]       = useState('')
@@ -63,14 +67,17 @@ export default function AddEventModal({ clientName, existingProjects, onClose, o
     setSaving(true)
     setError('')
     try {
-      const res = await fetch('/studio/api/admin/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation }),
-      })
+      const res = await fetch(
+        placeholder ? `/studio/api/admin/projects/${placeholder.projectId}` : '/studio/api/admin/projects',
+        {
+          method: placeholder ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientName, clientEmail, clientPhone, eventDate, eventType, eventLocation }),
+        }
+      )
       const data = await res.json()
       if (!data.success) { setError(data.message ?? 'Failed to create event.'); return }
-      onCreated(data.data.projectId)
+      onCreated(placeholder ? placeholder.projectId : data.data.projectId)
     } catch {
       setError('Network error. Please try again.')
     } finally {

@@ -3,9 +3,12 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, studioDeleteItem, TABLES } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
-import type { MediaFile } from '@/types/studio'
+import { logAuditEvent } from '@/lib/studio/auditLog'
+import type { MediaFile, StudioProject, CurationStatus } from '@/types/studio'
 
-// PATCH — toggle watermark or update display order
+const CURATION_STATUSES: CurationStatus[] = ['STARRED', 'FAVORITE', 'FINAL']
+
+// PATCH — toggle watermark, update display order, or rename
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { projectId: string; fileId: string } }
@@ -17,7 +20,7 @@ export async function PATCH(
     }
 
     const { projectId, fileId } = params
-    const { watermarkEnabled, displayOrder } = await req.json()
+    const { watermarkEnabled, displayOrder, originalFilename, curationStatus } = await req.json()
     const now = new Date().toISOString()
 
     const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
@@ -26,7 +29,24 @@ export async function PATCH(
     }
 
     const updates: string[] = ['updatedAt = :now']
+    const removes: string[] = []
     const values: Record<string, unknown> = { ':now': now }
+
+    if (typeof originalFilename === 'string' && originalFilename.trim().length > 0) {
+      updates.push('originalFilename = :fn')
+      values[':fn'] = originalFilename.trim()
+    }
+
+    if (curationStatus !== undefined) {
+      if (curationStatus === null) {
+        removes.push('curationStatus')
+      } else if (CURATION_STATUSES.includes(curationStatus)) {
+        updates.push('curationStatus = :curation')
+        values[':curation'] = curationStatus
+      } else {
+        return NextResponse.json({ success: false, error: 'INVALID_INPUT', message: 'Invalid curationStatus' }, { status: 400 })
+      }
+    }
 
     if (watermarkEnabled !== undefined) {
       updates.push('watermarkEnabled = :wm')
@@ -53,10 +73,14 @@ export async function PATCH(
       values[':order'] = displayOrder
     }
 
+    const expression = removes.length > 0
+      ? `SET ${updates.join(', ')} REMOVE ${removes.join(', ')}`
+      : `SET ${updates.join(', ')}`
+
     await studioUpdateItem(
       TABLES.mediafiles,
       { projectId, fileId },
-      `SET ${updates.join(', ')}`,
+      expression,
       values
     )
 
@@ -95,12 +119,18 @@ export async function DELETE(
     ])
 
     const now = new Date().toISOString()
+    // Best-effort — the file is already gone at this point, so a project
+    // deleted out from under us (e.g. a concurrent project delete) shouldn't
+    // fail this request. Guarded with attribute_exists so it can't resurrect
+    // a ghost project record either way.
     await studioUpdateItem(
       TABLES.projects,
       { studioId: file.studioId, projectId },
       'ADD totalFiles :neg SET updatedAt = :now',
-      { ':neg': -1, ':now': now }
-    )
+      { ':neg': -1, ':now': now },
+      undefined,
+      'attribute_exists(studioId)'
+    ).catch(() => {})
     // billableStorageBytes decrement — storageUsedBytes (Total Upload Size)
     // intentionally left untouched, it's the historical/lifetime figure.
     await studioUpdateItem(
@@ -109,6 +139,23 @@ export async function DELETE(
       'ADD billableStorageBytes :negSize SET updatedAt = :now',
       { ':negSize': -file.sizeBytes, ':now': now }
     )
+
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId: file.studioId, projectId }).catch(() => null)
+    logAuditEvent({
+      studioId: file.studioId,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      action: 'DELETE_PHOTOS',
+      targetType: 'PHOTO_BATCH',
+      targetId: projectId,
+      metadata: {
+        photoCount: 1,
+        totalBytes: file.sizeBytes,
+        projectId,
+        clientName: project?.clientName,
+        eventType: project?.eventType,
+      },
+    })
 
     return NextResponse.json({ success: true })
   } catch (err) {

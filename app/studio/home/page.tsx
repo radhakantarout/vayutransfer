@@ -349,7 +349,7 @@ export default async function StudioHomePage() {
               plan: 'Starter',
               price: 'Contact us',
               desc: 'Perfect for solo photographers just getting started.',
-              features: ['Up to 5 active projects', 'Watermarked previews', 'Client OTP login', 'Editing requests', '5 GB storage'],
+              features: ['Up to 5 active projects', 'Watermarked previews', 'Client OTP login', 'Editing requests', '3 GB storage'],
               accent: false,
             },
             {

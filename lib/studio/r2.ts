@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
+  CopyObjectCommand,
   ListPartsCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -149,6 +150,25 @@ export async function getStudioR2SignedDownloadUrl(key: string, filename: string
     }),
     { expiresIn: expiresInSeconds }
   )
+}
+
+// Server-side copy within the same bucket — used by the copy-photo-to-event
+// feature when the source is already on R2. No bytes pass through our
+// server; R2 does the copy internally.
+export async function copyStudioR2Object(sourceKey: string, destKey: string): Promise<void> {
+  await studioR2.send(new CopyObjectCommand({
+    Bucket: STUDIO_R2_ORIGINAL_BUCKET,
+    CopySource: `${STUDIO_R2_ORIGINAL_BUCKET}/${encodeURIComponent(sourceKey)}`,
+    Key: destKey,
+  }))
+}
+
+// Direct server-side write — used by the copy-photo-to-event feature for the
+// rare case where the source file is still on legacy S3 (can't CopyObject
+// across providers, so it's read via getMediaObjectBuffer then put here;
+// every copy always lands on R2 regardless of the source's backend).
+export async function putStudioR2Object(buffer: Buffer, key: string, contentType: string): Promise<void> {
+  await studioR2.send(new PutObjectCommand({ Bucket: STUDIO_R2_ORIGINAL_BUCKET, Key: key, Body: buffer, ContentType: contentType }))
 }
 
 export async function getStudioR2EditedPresignedPutUrl(r2Key: string, mimeType: string): Promise<string> {

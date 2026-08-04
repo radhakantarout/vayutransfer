@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
-import { recordDownload } from '@/lib/studio/usage'
 import type { StudioTransfer } from '@/types/studio'
 
 // Fully anonymous, no JWT — same pattern as print/gallery/[token]. Lets
@@ -29,7 +28,6 @@ export async function GET(
     const downloadUrl = await getStudioR2SignedDownloadUrl(transfer.r2Key, transfer.filename)
 
     const now = new Date().toISOString()
-    if (transfer.sizeBytes) recordDownload(transfer.studioId, transfer.sizeBytes).catch((e) => console.error('[recordDownload]', e))
     studioUpdateItem(
       TABLES.transfers,
       { projectId: transfer.projectId, transferId: transfer.transferId },

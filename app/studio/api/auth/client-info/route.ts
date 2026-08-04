@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
         clientPhone: project.clientPhone ?? '',
         studioName:  studio?.name ?? 'Your photographer',
         isReturning: existingUsers.length > 0,
+        sharePasswordProtected: project.sharePasswordProtected === true,
       },
     })
   } catch (err) {

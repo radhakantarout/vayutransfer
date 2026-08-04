@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from '@react-pdf/renderer'
+import { formatTxnLabel } from '@/lib/studio/receiptLabel'
 import type { StudioTransaction } from '@/types/studio'
 
 const styles = StyleSheet.create({
@@ -33,9 +34,7 @@ interface Props {
 function ReceiptDocument({ studioName, txn }: Props) {
   const baseAmount = Math.round(txn.amountPaise / 1.18)   // reverse out 18% GST for display
   const gstAmount  = txn.amountPaise - baseAmount
-  const packageLabel = txn.type === 'storage_topup'
-    ? `Storage top-up — ${txn.gbPurchased} GB for ${txn.months} month${txn.months !== 1 ? 's' : ''}`
-    : `Download top-up — ${txn.gbPurchased} GB`
+  const packageLabel = formatTxnLabel(txn)
 
   return (
     <Document>

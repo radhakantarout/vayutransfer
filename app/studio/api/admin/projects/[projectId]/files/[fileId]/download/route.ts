@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaDownloadUrl } from '@/lib/studio/storage'
-import { recordDownload } from '@/lib/studio/usage'
 import type { MediaFile } from '@/types/studio'
 
 export async function GET(
@@ -32,7 +31,6 @@ export async function GET(
     const filename = file.originalFilename.replace(/(\.[^.]+)$/, `${suffix}$1`)
 
     const url = await getMediaDownloadUrl(file, filename, { original: forceOriginal })
-    recordDownload(file.studioId, file.sizeBytes).catch((e) => console.error('[usage record]', e))
     return NextResponse.json({ success: true, data: { url, filename } })
   } catch (err) {
     console.error('[file download GET]', err)

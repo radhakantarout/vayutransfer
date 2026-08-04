@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioQueryByIndex, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioQueryByIndex, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaPreviewUrl } from '@/lib/studio/storage'
 import type { StudioProject, MediaFile, Selection, Studio } from '@/types/studio'
 
@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || auth.role !== 'CLIENT') {
+    if (!auth) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
     }
 
@@ -30,8 +30,26 @@ export async function GET(
     if (!entry.clientShareExpiresAt || new Date(entry.clientShareExpiresAt) < new Date()) {
       return NextResponse.json({ success: false, error: 'TOKEN_EXPIRED' }, { status: 410 })
     }
-    if (auth.projectId !== entry.projectId) {
+    // Either the client themselves (JWT scoped to this exact share token) or
+    // the owning studio's own staff previewing what the client will see —
+    // studio staff never need the password/OTP gate, they're already
+    // authenticated as themselves.
+    const isClient = auth.role === 'CLIENT' && auth.projectId === entry.projectId
+    const isStudioPreview = ['ADMIN', 'OWNER'].includes(auth.role) && auth.studioId === entry.studioId
+    if (!isClient && !isStudioPreview) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+
+    // Recent Transfers panel — only a real client visit counts as "opened",
+    // never the studio's own preview. Fire-and-forget, never blocks the
+    // response.
+    if (isClient) {
+      studioUpdateItem(
+        TABLES.projects,
+        { studioId: entry.studioId, projectId: entry.projectId },
+        'SET shareLastOpenedAt = :now',
+        { ':now': new Date().toISOString() }
+      ).catch((err) => console.error('[client-gallery overview] shareLastOpenedAt stamp failed', err))
     }
 
     const { studioId, clientEmail } = entry
@@ -66,8 +84,13 @@ export async function GET(
           .filter(f => f.processingStatus === 'READY' && (!sharedSet || sharedSet.has(f.fileId)))
           .sort((a, b) => a.displayOrder - b.displayOrder)
 
-        // Cover = first ready photo
-        const coverUrl: string | null = readyFiles[0] ? (await getMediaPreviewUrl(readyFiles[0])) ?? null : null
+        // Cover = admin's explicit choice if set and still READY, else first
+        // ready photo by displayOrder.
+        const chosenCover = project.coverPhotoFileId
+          ? readyFiles.find(f => f.fileId === project.coverPhotoFileId)
+          : undefined
+        const coverFile = chosenCover ?? readyFiles[0]
+        const coverUrl: string | null = coverFile ? (await getMediaPreviewUrl(coverFile)) ?? null : null
 
         const lovedCount = selections.filter(s => s.isSelected).length
         const editCount  = selections.filter(s => s.editingRequired).length
@@ -85,7 +108,7 @@ export async function GET(
     )
 
     // Sort events by eventDate ascending
-    events.sort((a, b) => a.project.eventDate.localeCompare(b.project.eventDate))
+    events.sort((a, b) => (a.project.eventDate ?? '').localeCompare(b.project.eventDate ?? ''))
 
     const totalLoved     = events.reduce((s, e) => s + e.lovedCount, 0)
     const totalEdit      = events.reduce((s, e) => s + e.editCount, 0)

@@ -5,7 +5,6 @@ import { getMediaDownloadUrl, getMediaPreviewUrl } from '@/lib/studio/storage'
 // here for now — direct presigned URLs avoid the CloudFront distribution's
 // origin-bucket-per-environment config entirely. Swap back in later if CDN
 // acceleration for print-quality downloads becomes worth the config overhead.
-import { recordDownload } from '@/lib/studio/usage'
 import type { StudioProject, MediaFile, Selection } from '@/types/studio'
 
 export async function GET(
@@ -67,12 +66,6 @@ export async function GET(
         selection:        allSelections.find((s) => s.fileId === f.fileId) ?? null,
       }
     }))
-
-    // Batch of links issued at once — record the sum against this studio's
-    // monthly quota, same "counted at URL issuance" approximation used for
-    // the other two download paths (no server-side egress byte tracking exists).
-    const totalBytes = printFiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
-    if (totalBytes > 0) recordDownload(studioId, totalBytes).catch((e) => console.error('[usage record]', e))
 
     return NextResponse.json({
       success: true,

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioQueryByPK, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { getMediaPreviewUrl } from '@/lib/studio/storage'
-import type { Selection, MediaFile } from '@/types/studio'
+import type { Selection, MediaFile, StudioProject } from '@/types/studio'
 
 export async function GET(
   req: NextRequest,
@@ -15,6 +15,10 @@ export async function GET(
     }
 
     const { projectId } = params
+    const studioId = auth.studioId!
+
+    const project = await studioGetItem<StudioProject>(TABLES.projects, { studioId, projectId })
+    if (!project) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
     const [allSelections, allFiles] = await Promise.all([
       studioQueryByPK<Selection>(TABLES.selections, 'projectId', projectId),

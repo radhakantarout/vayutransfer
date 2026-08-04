@@ -39,6 +39,15 @@ body {
   box-sizing: border-box;
 }
 
+/* Studio admin sidebar + gallery — turns every grey/secondary label
+   (dates, counts, filenames, etc, all normally text-muted) into bold black
+   (dark-theme-aware via --text) instead of grey. Scoped to .dash-bold-text
+   so nothing outside the admin sidebar/gallery is affected. */
+.dash-bold-text .text-muted {
+  color: rgb(var(--text));
+  font-weight: 700;
+}
+
 /* VayuStudio — floating photo grid animations */
 @keyframes float-col {
   0%, 100% { transform: translateY(0px); }
@@ -72,13 +81,13 @@ body {
   opacity: 0;
 }
 
-/* Pavan (chat assistant) — gentle idle bob + antenna wiggle */
-@keyframes pavan-bob {
+/* Chat assistant — gentle idle bob + antenna wiggle */
+@keyframes bot-bob {
   0%, 100% { transform: translateY(0) rotate(0deg); }
   50%       { transform: translateY(-2px) rotate(-4deg); }
 }
-.animate-pavan-bob {
-  animation: pavan-bob 1.8s ease-in-out infinite;
+.animate-bot-bob {
+  animation: bot-bob 1.8s ease-in-out infinite;
 }
 
 /* Thin scrollbar for event photo grids */

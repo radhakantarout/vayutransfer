@@ -185,8 +185,8 @@ export default function PrintPortalPage() {
               </div>
               <div className="text-text-primary font-semibold mt-2">{project.clientName}</div>
               <div className="text-sm text-muted mt-0.5">
-                {new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-                {' · '}{project.eventType.replace('_', ' ')}
+                {project.eventDate ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                {' · '}{(project.eventType ?? '').replace('_', ' ')}
               </div>
             </div>
             <div className="text-right text-xs text-muted">

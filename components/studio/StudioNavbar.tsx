@@ -5,15 +5,11 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
 import type { StudioRole } from '@/lib/studio/auth'
+import { ROLE_LABEL } from '@/lib/studio/roleLabels'
+import ProfileMenu from './ProfileMenu'
+import SettingsModal, { type SettingsTab } from './settings/SettingsModal'
 
 type Auth = { role: StudioRole; userId: string; studioId?: string; name: string; email: string; projectToken?: string }
-
-const ROLE_LABEL: Record<StudioRole, string> = {
-  OWNER: 'Platform Owner',
-  ADMIN: 'Studio Admin',
-  CLIENT: 'Client',
-  PRINT: 'Print Admin',
-}
 
 const PRODUCTS: { label: string; href: string; desc: string; icon: JSX.Element; badge?: string }[] = [
   { label: 'Client Gallery',   href: '/studio/products/client-gallery',  desc: 'Secure watermarked gallery for clients',      icon: <GalleryIcon /> },
@@ -41,6 +37,7 @@ function HamburgerIcon() { return <svg className="w-5 h-5" fill="none" viewBox="
 function CloseIcon()     { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg> }
 function ChevronDown()   { return <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> }
 function HomeIcon()      { return <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg> }
+function SettingsIcon()  { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> }
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   const initials = name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -57,6 +54,10 @@ export default function StudioNavbar() {
   const [profileOpen, setProfileOpen]       = useState(false)
   const [productsOpen, setProductsOpen]     = useState(false)
   const [mobileProducts, setMobileProducts] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
+  const [planLabel, setPlanLabel] = useState('Free')
+  const openSettings = (tab: SettingsTab = 'general') => { setSettingsInitialTab(tab); setShowSettingsModal(true) }
   const profileRef  = useRef<HTMLDivElement>(null)
   const productsRef = useRef<HTMLDivElement>(null)
   const router      = useRouter()
@@ -71,6 +72,14 @@ export default function StudioNavbar() {
       } catch { setAuth(null) }
     } else { setAuth(null) }
   }, [pathname])
+
+  useEffect(() => {
+    if (!auth || auth === 'loading' || (auth as Auth).role !== 'ADMIN') return
+    fetch('/studio/api/admin/stats').then(r => r.json()).then(res => {
+      const planId = res?.data?.billing?.billingPlanId as 'free' | 'pro' | 'custom' | undefined
+      if (planId) setPlanLabel(planId.charAt(0).toUpperCase() + planId.slice(1))
+    }).catch(() => {})
+  }, [auth])
 
   useEffect(() => {
     if (!profileOpen) return
@@ -198,6 +207,25 @@ export default function StudioNavbar() {
           <div className="hidden md:flex items-center gap-2">
             {auth === 'loading' ? (
               <div className="w-9 h-9 rounded-full bg-border animate-pulse" />
+            ) : isLoggedIn && (auth as Auth).role === 'ADMIN' ? (
+              // Studio admins get the exact same profile popover as the
+              // dashboard sidebar (name/role/plan header + Settings tabs) —
+              // consistent whether they're inside the dashboard or here on
+              // the marketing home page after clicking the brand name.
+              <ProfileMenu
+                position="below"
+                align="right"
+                name={(auth as Auth).name || (auth as Auth).email || 'Studio User'}
+                roleLabel={ROLE_LABEL.ADMIN}
+                planLabel={planLabel}
+                onOpenSettings={openSettings}
+                onLogout={handleLogout}
+                trigger={
+                  <button className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-border/40 transition-colors" aria-label="Profile menu">
+                    <Avatar name={(auth as Auth).name || (auth as Auth).email || 'U'} />
+                  </button>
+                }
+              />
             ) : isLoggedIn ? (
               <div className="relative" ref={profileRef}>
                 <button onClick={() => setProfileOpen((v) => !v)} className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-border/40 transition-colors" aria-label="Profile menu">
@@ -268,8 +296,18 @@ export default function StudioNavbar() {
                   <div className="text-sm font-semibold text-text-primary truncate">{(auth as Auth).name || 'Studio User'}</div>
                   <div className="text-xs text-muted truncate">{(auth as Auth).email}</div>
                 </div>
-                <span className="ml-auto text-[10px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5 flex-shrink-0">{ROLE_LABEL[(auth as Auth).role]}</span>
+                <div className="ml-auto flex flex-col items-end gap-1 flex-shrink-0">
+                  <span className="text-[10px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-2 py-0.5">{ROLE_LABEL[(auth as Auth).role]}</span>
+                  {(auth as Auth).role === 'ADMIN' && (
+                    <span className="text-[10px] font-semibold text-text-primary bg-border/50 border border-border rounded-full px-2 py-0.5">{planLabel} Plan</span>
+                  )}
+                </div>
               </div>
+              {(auth as Auth).role === 'ADMIN' && (
+                <button onClick={() => { closeAll(); openSettings('general') }} className="flex items-center gap-2 w-full py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                  <SettingsIcon /><span>Settings</span>
+                </button>
+              )}
               <Link href="/studio/home" onClick={closeAll} className="flex items-center gap-2 py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
                 <HomeIcon /><span>Home</span>
               </Link>
@@ -328,6 +366,10 @@ export default function StudioNavbar() {
           )}
         </div>
       </div>
+
+      {showSettingsModal && (
+        <SettingsModal onClose={() => setShowSettingsModal(false)} initialTab={settingsInitialTab} />
+      )}
     </>
   )
 }

@@ -370,12 +370,12 @@ export default function ProjectDetailPage() {
               </button>
             </div>
             <div className="text-sm text-muted mt-1 flex gap-3 flex-wrap">
-              <span>{project.eventType.replace('_', ' ')}</span>
+              <span>{(project.eventType ?? '').replace('_', ' ')}</span>
               <span>·</span>
-              <span>{new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+              <span>{project.eventDate ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</span>
               {project.clientPhone && <><span>·</span><span>{project.clientPhone}</span></>}
               <span>·</span>
-              <span className={STATUS_COLOR[project.status]}>{project.status.replace('_', ' ')}</span>
+              <span className={STATUS_COLOR[project.status] ?? 'text-muted'}>{(project.status ?? '').replace('_', ' ')}</span>
             </div>
           </div>
           <div className="flex gap-2">

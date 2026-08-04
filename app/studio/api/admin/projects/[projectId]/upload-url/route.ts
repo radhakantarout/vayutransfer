@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2Key } from '@/lib/studio/r2'
-import type { StudioProject, MediaFile } from '@/types/studio'
+import { syncBillingCycle, checkStorageAvailable } from '@/lib/studio/quota'
+import type { StudioProject, MediaFile, Studio } from '@/types/studio'
 
 export async function POST(
   req: NextRequest,
@@ -34,6 +35,24 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     }
 
+    // Soft gate — real size is only known once, but this stops the common
+    // case (already full, about to add more) before the studio wastes time
+    // picking/uploading files. billableStorageBytes is the hard backstop:
+    // upload-complete still runs even if this check is skipped somehow, but
+    // the studio would just be over quota and see it on their next check.
+    let studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId! })
+    if (studio) {
+      studio = await syncBillingCycle(studio)
+      const quota = checkStorageAvailable(studio, sizeBytes)
+      if (!quota.ok) {
+        return NextResponse.json({
+          success: false, error: 'QUOTA_EXCEEDED', quotaType: 'storage',
+          message: 'You’re out of storage space. Top up storage or upgrade your plan in Settings → Billing to keep uploading.',
+          usedBytes: quota.usedBytes, quotaBytes: quota.quotaBytes, usedPct: quota.usedPct,
+        }, { status: 402 })
+      }
+    }
+
     const studioId = auth.studioId!
     const fileId = randomUUID()
     const fileType = mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE'
@@ -55,7 +74,12 @@ export async function POST(
       sizeBytes,
       storageBackend: 'R2',
       r2Key,
-      watermarkEnabled: true,
+      // Clean by default — the studio admin explicitly applies watermark
+      // (single photo or bulk) when they want it, rather than every upload
+      // being auto-protected. The watermark Lambda already fully respects
+      // this flag (still resizes to 1200px either way, just skips the
+      // overlay when false), so this needs no new image pipeline.
+      watermarkEnabled: false,
       displayOrder: Date.now(),
       uploadedAt: now,
       processingStatus: 'UPLOADING',

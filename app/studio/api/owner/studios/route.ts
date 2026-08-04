@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     }
 
     const studios = await studioScanTable<Studio>(TABLES.studios)
-    studios.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    studios.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
     return NextResponse.json({ success: true, data: studios })
   } catch (err) {
     console.error('[owner studios GET]', err)

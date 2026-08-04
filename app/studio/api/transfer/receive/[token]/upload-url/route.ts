@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByIndex, studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2TransferKey } from '@/lib/studio/r2'
-import type { StudioTransfer } from '@/types/studio'
+import { syncBillingCycle, checkStorageAvailable } from '@/lib/studio/quota'
+import type { StudioTransfer, Studio } from '@/types/studio'
 
 // Fully anonymous, no JWT — lets whoever the studio owner shared this link
 // with upload a file back, with no VayuStudios login at all.
@@ -31,6 +32,18 @@ export async function POST(
     }
     if (partCount < 1 || partCount > 10000) {
       return NextResponse.json({ success: false, error: 'INVALID_PART_COUNT' }, { status: 400 })
+    }
+
+    // The uploader here is anonymous (no JWT) — gate against the *studio's*
+    // quota, not theirs. A studio that's out of storage shouldn't be able
+    // to accept a RECEIVE upload just because the sender isn't logged in.
+    let studio = await studioGetItem<Studio>(TABLES.studios, { studioId: transfer.studioId })
+    if (studio) {
+      studio = await syncBillingCycle(studio)
+      const quota = checkStorageAvailable(studio, sizeBytes)
+      if (!quota.ok) {
+        return NextResponse.json({ success: false, error: 'QUOTA_EXCEEDED', message: 'This studio is out of storage space and can\'t accept this upload right now.' }, { status: 402 })
+      }
     }
 
     const r2Key = getStudioR2TransferKey(transfer.studioId, transfer.projectId, transfer.transferId, filename)

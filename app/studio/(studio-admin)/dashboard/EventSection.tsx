@@ -3,11 +3,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
-import type { StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
-import EditEventModal from './EditEventModal'
+import type { StudioProject, MediaFile, Selection, StudioTransfer, CurationStatus, StudioFace } from '@/types/studio'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
+import PhotoActionsMenu, { type PhotoMenuAction } from '@/components/studio/PhotoActionsMenu'
+import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
+import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
+import QuickShareModal from '@/components/studio/QuickShareModal'
+import UploadModal from '@/components/studio/UploadModal'
+import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
+import Tooltip from '@/components/studio/Tooltip'
+import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
+import AccuracySlider from '@/components/studio/AccuracySlider'
+import { loadAccuracyLevel, saveAccuracyLevel } from '@/lib/studio/faceAccuracy'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -23,6 +32,28 @@ const STALE_UPLOAD_MS = 15 * 60 * 1000
 interface UploadItem {
   id: string; file: File; progress: number; uploadedBytes: number
   status: 'queued' | 'uploading' | 'done' | 'error'; error?: string
+  // Which project this file is headed to — defaults to the currently-open
+  // project, but the Upload popup lets the admin target a different (or
+  // brand-new) event without navigating away from this one.
+  projectId: string
+}
+
+// Deterministic "random-looking" pick — used for the AI Face group cards'
+// photo-stack cover. A real Math.random() shuffle would re-pick different
+// covers on every re-render (search keystrokes, selection changes, etc.),
+// making the stack visibly flicker; seeding off the group's own id keeps the
+// pick stable for that group across the whole session while still differing
+// from group to group.
+function pickStableRandom<T>(arr: T[], seed: string, count: number): T[] {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  const copy = [...arr]
+  for (let i = copy.length - 1; i > 0; i--) {
+    h = (h * 1103515245 + 12345) >>> 0
+    const j = h % (i + 1)
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy.slice(0, count)
 }
 
 // Resumes a previously interrupted upload if the same file (matched by
@@ -61,15 +92,6 @@ async function initOrResumeUpload(
   return { fileId, uploadId, presignedUrls, completedParts: [] }
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  DRAFT: 'text-muted', ACTIVE: 'text-accent',
-  SELECTION_RECEIVED: 'text-yellow-400', COMPLETED: 'text-success',
-}
-const EVENT_ICON: Record<string, string> = {
-  WEDDING: '💒', MEHENDI: '🪔', RECEPTION: '🎊', ENGAGEMENT: '💍',
-  PRE_WEDDING: '📸', BIRTHDAY: '🎂', CORPORATE: '🏢', SCHOOL: '🎒', OTHER: '📷',
-}
-
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
@@ -85,8 +107,32 @@ function fmtEta(sec: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+type SortMode = 'DEFAULT' | 'NAME_ASC' | 'NAME_DESC' | 'DATE_OLD' | 'DATE_NEW' | 'SIZE_LARGE' | 'SIZE_SMALL'
+const SORT_LABEL: Record<SortMode, string> = {
+  DEFAULT:     'Default order',
+  NAME_ASC:    'Name (A–Z)',
+  NAME_DESC:   'Name (Z–A)',
+  DATE_OLD:    'Oldest first',
+  DATE_NEW:    'Newest first',
+  SIZE_LARGE:  'Size (largest first)',
+  SIZE_SMALL:  'Size (smallest first)',
+}
+function sortFiles(files: MediaFile[], mode: SortMode): MediaFile[] {
+  if (mode === 'DEFAULT') return files
+  const arr = [...files]
+  switch (mode) {
+    case 'NAME_ASC':   arr.sort((a, b) => (a.originalFilename ?? '').localeCompare(b.originalFilename ?? '')); break
+    case 'NAME_DESC':  arr.sort((a, b) => (b.originalFilename ?? '').localeCompare(a.originalFilename ?? '')); break
+    case 'DATE_OLD':   arr.sort((a, b) => (a.uploadedAt ?? '').localeCompare(b.uploadedAt ?? '')); break
+    case 'DATE_NEW':   arr.sort((a, b) => (b.uploadedAt ?? '').localeCompare(a.uploadedAt ?? '')); break
+    case 'SIZE_LARGE':  arr.sort((a, b) => b.sizeBytes - a.sizeBytes); break
+    case 'SIZE_SMALL':  arr.sort((a, b) => a.sizeBytes - b.sizeBytes); break
+  }
+  return arr
+}
+
 type DeleteMode = 'selected' | 'all' | null
-type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
+export type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
 
 interface FaceStatus {
   totalPhotos: number; indexedPhotos: number; pendingPhotos: number
@@ -102,56 +148,124 @@ interface EditUploadState {
 interface Props {
   project: StudioProject
   onUpdated: () => void
-  // Cross-event selection (controlled from layout)
+  // Cross-event selection (controlled from layout) — single-project shape,
+  // used as-is when only one project is open at all.
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void
   onFilesLoaded: (files: MediaFile[]) => void
   refreshTrigger?: number
-  hidePill?: boolean
   triggerShare?: boolean
   onShareTriggered?: () => void
+  // Grid zoom + grid/list view mode — controlled from layout so both stay in
+  // sync across every event section open at once (multi-select view). The
+  // floating zoom bar itself is rendered once, by layout.tsx, not per-event
+  // (rendering it here per-instance would stack duplicate fixed-position
+  // widgets on top of each other when multiple events are open).
+  zoomLevel: number
+  viewMode: 'grid' | 'list'
+  onViewModeChange: (mode: 'grid' | 'list') => void
+  // Closes this event entirely (clears sidebar selection) — the small ×
+  // next to the header, replacing the old separate "Clear" bar.
+  onClose?: () => void
+  // Multi-event mode: when 2+ projects are selected in the sidebar, this
+  // SAME EventSection (not a different-looking component) merges their
+  // "All Photos" into one grid instead of stacking a section per project.
+  // `project` above stays the "host" (its header/tabs/Face-Index/Selections/
+  // Raw-Transfers are always about the host only — those are inherently
+  // single-project concepts and don't merge). Only the All Photos grid
+  // pulls from every checked entry here.
+  photoSourceProjects?: StudioProject[]
+  photoSelectionsMap?: Map<string, Set<string>>
+  onPhotoSelectionChange?: (projectId: string) => (ids: Set<string>) => void
+  onFilesLoadedFor?: (projectId: string) => (files: MediaFile[]) => void
+  // AI Face only works against one project's own Rekognition collection —
+  // when multiple events are checked, its "pick one event" popup uses this
+  // to narrow the sidebar's selection straight down to a single project.
+  onNarrowSelection?: (projectId: string) => void
+  // Narrowing to a different (non-host) event remounts this component (its
+  // key is the host's projectId) — without this, the fresh mount's own tab
+  // initializer would fall back to Photos, undoing the very tab the admin
+  // was just trying to reach via the AI Face popup.
+  initialTab?: ActiveTab
+  // Reports every active-tab change (mount + manual switches) up to the
+  // parent, which persists it to sessionStorage so a browser refresh can
+  // restore the admin to the same tab via initialTab above.
+  onActiveTabChange?: (tab: ActiveTab) => void
+  // Lets a parent-level bulk action (the global selection pill's star
+  // toggle) patch curationStatus straight into this component's own `files`
+  // state instantly, instead of waiting on a full loadFiles() re-fetch —
+  // `token` must change on every dispatch (even repeats) so the effect fires.
+  externalCurationUpdate?: { fileIds: string[]; curationStatus: CurationStatus | undefined; token: number } | null
 }
 
-export default function EventSection({ project, onUpdated, selectedIds, onSelectionChange, onFilesLoaded, refreshTrigger, hidePill, triggerShare, onShareTriggered }: Props) {
+export default function EventSection({
+  project, onUpdated,
+  selectedIds: selectedIdsProp, onSelectionChange: onSelectionChangeProp,
+  onFilesLoaded, refreshTrigger, triggerShare, onShareTriggered,
+  zoomLevel, viewMode, onViewModeChange: setViewMode,
+  onClose,
+  photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
+  externalCurationUpdate, onNarrowSelection, initialTab, onActiveTabChange,
+}: Props) {
   const pathname = usePathname()
+
+  // ── Multi-event photo sources ───────────────────────────────
+  // Which events contribute photos to the All Photos grid — always every
+  // event currently checked in the sidebar (that checkbox list is the only
+  // selection mechanism now; there used to be a second, redundant checkbox
+  // dropdown here that just duplicated it).
+  const isMultiSource = (photoSourceProjects?.length ?? 0) > 1
+  const activeSourceProjects = photoSourceProjects ?? [project]
 
   // ── Photo grid ────────────────────────────────────────────
   const [files, setFiles]           = useState<MediaFile[]>([])
   const [loading, setLoading]       = useState(true)
   const [uploads, setUploads]       = useState<UploadItem[]>([])
-  const [editOpen, setEditOpen]     = useState(false)
-  const [shareUrl, setShareUrl]     = useState<string | null>(null)
-  const [sharing, setSharing]       = useState(false)
-  const [copied, setCopied]         = useState(false)
-  const [showShareSetup, setShowShareSetup] = useState(false)
-  const [shareError, setShareError] = useState<string | null>(null)
-  const [selMin, setSelMin]         = useState(project.selectionMin ?? 0)
-  const [selMax, setSelMax]         = useState(project.selectionMax ?? 0)
-  const [uploadOpen, setUploadOpen]       = useState(false)
+  // Quick Share — the unified popup (components/studio/QuickShareModal.tsx)
+  // handles its own scope/expiry/password/email state; this component only
+  // needs to resolve which fileIds-per-project to hand it.
+  const [showQuickShare, setShowQuickShare] = useState(false)
+  const [quickShareProjects, setQuickShareProjects] = useState<StudioProject[]>([])
+  const [quickShareFileIdsByProject, setQuickShareFileIdsByProject] = useState<Map<string, string[]>>(new Map())
+  const [quickShareError, setQuickShareError] = useState<string | null>(null)
+  const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadExpanded, setUploadExpanded] = useState(false)
   const [uploadSpeed, setUploadSpeed]       = useState(0)
-  const [zoomLevel, setZoomLevel]       = useState(6)
+  const [sortMode, setSortMode]         = useState<SortMode>('DEFAULT')
   const [expanded, setExpanded]         = useState(false)
   const [deleteMode, setDeleteMode]     = useState<DeleteMode>(null)
   const [deleting, setDeleting]         = useState(false)
   const [deleteError, setDeleteError]   = useState<string | null>(null)
+  const [renamingFile, setRenamingFile] = useState<MediaFile | null>(null)
+  const [renameValue, setRenameValue]   = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [moveCopyTarget, setMoveCopyTarget] = useState<{ mode: 'copy' | 'move'; clientName: string; files: { fileId: string; projectId: string }[] } | null>(null)
+  const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
+  const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  const [bulkAISorting, setBulkAISorting] = useState(false)
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
-  const [backfilling, setBackfilling]   = useState(false)
-  const [backfillMsg, setBackfillMsg]   = useState<string | null>(null)
+  const [searchQuery, setSearchQuery]   = useState('')
 
-  // Client selection filter (used for heart/edit icons in header when received)
+  // Client selection filter (loaded on demand — only CLIENT_FAVORITE/EDIT_REQUIRED need it)
   type ClientSel = { selection: Selection; file: MediaFile }
   const [clientSelections, setClientSelections] = useState<ClientSel[] | null>(null)
   const [selLoading, setSelLoading]             = useState(false)
-  const [viewFilter, setViewFilter]             = useState<'all' | 'loved' | 'edit'>('all')
+  // Multiple lifecycle stages can be active at once (e.g. Starred + Client
+  // Favorite together) — empty set means "All Photos", no filter applied.
+  const [viewFilters, setViewFilters]           = useState<Set<PhotoScope>>(new Set())
 
   // ── Tabs ─────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    if (initialTab) return initialTab
     if (pathname.endsWith('/faces'))      return 'faces'
     if (pathname.endsWith('/selections')) return 'selections'
     if (pathname.endsWith('/transfers'))  return 'transfers'
     return 'photos'
   })
+  // Reports on mount too (not just switches) so the parent's persisted
+  // "last location" always reflects the tab actually being viewed, even if
+  // it just got here via initialTab rather than a manual click.
+  useEffect(() => { onActiveTabChange?.(activeTab) }, [activeTab, onActiveTabChange])
 
   // ── Face Index tab ────────────────────────────────────────
   const [faceStatus, setFaceStatus]         = useState<FaceStatus | null>(null)
@@ -159,7 +273,30 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [faceTriggering, setFaceTriggering] = useState(false)
   const [faceError, setFaceError]           = useState<string | null>(null)
   const [faceFeatureOff, setFaceFeatureOff] = useState(false)
+  // Admin-curated photo groups (pick from already AI-enabled photos + save
+  // selection) — no automatic clustering, no selfie search, no local upload;
+  // same MoveCopyPhotoModal-style additive design.
+  const [faceGroups, setFaceGroups]             = useState<StudioFace[] | null>(null)
+  const [faceGroupsLoading, setFaceGroupsLoading] = useState(false)
+  const [faceGroupFilter, setFaceGroupFilter]   = useState<{ faceId: string; fileIds: Set<string> } | null>(null)
+  const [savingGroup, setSavingGroup]           = useState(false)
+  const [startSortingOpen, setStartSortingOpen] = useState(false)
+  const [showQrModal, setShowQrModal]           = useState(false)
+  const [showReindexConfirm, setShowReindexConfirm] = useState(false)
+  // Group card's × — holds the group pending confirmation, not just a
+  // boolean, since the confirm popup needs to show which group/how many
+  // photos before actually deleting.
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<StudioFace | null>(null)
+  // AI Face's "pick one event" popup dropdown — defaults to the host, reset
+  // whenever the checked events change so a stale id can't linger selected.
+  const [narrowEventId, setNarrowEventId] = useState(project.projectId)
+  // Single 0-100 dial the admin controls — persisted to localStorage so it
+  // carries across sessions/projects, not tied to any one project's data.
+  const [accuracyLevel, setAccuracyLevel] = useState(85)
+  useEffect(() => { setAccuracyLevel(loadAccuracyLevel()) }, [])
+  const handleAccuracyChange = (level: number) => { setAccuracyLevel(level); saveAccuracyLevel(level) }
   const [qrExpiry, setQrExpiry]           = useState<12 | 24 | 48>(24)
+  const [qrAllowOriginal, setQrAllowOriginal] = useState(false)
   const [qrGenerating, setQrGenerating]   = useState(false)
   const [qrDataUrl, setQrDataUrl]         = useState<string | null>(null)
   const [qrGuestUrl, setQrGuestUrl]       = useState<string | null>(null)
@@ -187,32 +324,109 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [sendTransferProgress, setSendTransferProgress] = useState<{ filename: string; percent: number } | null>(null)
   const transferFileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Admin photo preview (for floating selection pill) ─────
+  // ── Admin photo preview (lightbox) ─────────────────────────
+  // 'selected' = the floating-pill "Preview" flow (only currently-selected
+  // photos, existing behavior). 'all' = opened via a single tile's "Open"
+  // menu action — browses every visible photo in the grid, not just a
+  // selection.
   const [showAdminPreview, setShowAdminPreview] = useState(false)
+  const [previewMode, setPreviewMode]           = useState<'selected' | 'all'>('selected')
   const [adminPreviewIdx, setAdminPreviewIdx]   = useState(0)
+  const [showPhotoInfo, setShowPhotoInfo]       = useState(false)
+  // No backend field for image dimensions — read it client-side once the
+  // full-size image actually loads in the lightbox, free, no new API call.
+  const [previewImgDims, setPreviewImgDims]     = useState<{ width: number; height: number } | null>(null)
   const adminTouchStartX = useRef<number>(0)
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const gridRef      = useRef<HTMLDivElement>(null)
   const dragState    = useRef<{ active: boolean; startX: number; startY: number; moved: boolean }>({
     active: false, startX: 0, startY: 0, moved: false,
   })
+  // A genuine drag can start and end on the same tile (e.g. a diagonal
+  // gesture that curls back), which would otherwise also fire that tile's
+  // own click and toggle it — on top of whatever the rubber-band selected.
+  // Set the instant a real drag completes, consumed by the next tile click.
+  const suppressNextTileClickRef = useRef(false)
   const speedRef = useRef<{ bytes: number; time: number }>({ bytes: 0, time: 0 })
 
   // ── Files ─────────────────────────────────────────────────
+  // Every MediaFile already carries its own projectId (the table's real PK),
+  // so merging multiple source projects' files into one array needs no
+  // client-side tagging — actions just read f.projectId instead of assuming
+  // the host project.
+  const activeSourceProjectIds = activeSourceProjects.map(p => p.projectId).join(',')
+  useEffect(() => { setNarrowEventId(project.projectId) }, [activeSourceProjectIds, project.projectId])
   const loadFiles = useCallback(async () => {
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/files`).then(r => r.json())
-    if (res.success) { setFiles(res.data); onFilesLoaded(res.data) }
+    const sources = isMultiSource ? activeSourceProjects : [project]
+    const results = await Promise.all(
+      sources.map(p =>
+        fetch(`/studio/api/admin/projects/${p.projectId}/files`).then(r => r.json())
+          .then(d => ({ projectId: p.projectId, files: (d.success ? d.data : []) as MediaFile[] }))
+      )
+    )
+    const merged = results.flatMap(r => r.files)
+    setFiles(merged)
+    if (isMultiSource) {
+      results.forEach(({ projectId, files }) => onFilesLoadedFor?.(projectId)(files))
+    } else {
+      onFilesLoaded(merged)
+    }
     setLoading(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.projectId])
+  }, [project.projectId, isMultiSource, activeSourceProjectIds])
 
   useEffect(() => { loadFiles() }, [loadFiles, refreshTrigger])
-  useEffect(() => { if (!loading && files.length === 0) setUploadOpen(true) }, [loading, files.length])
 
-  // Open share setup when triggered from global pill
+  // Applies a parent-dispatched bulk curationStatus patch straight to this
+  // component's own files — instant UI feedback for the global selection
+  // pill's star toggle, no full reload needed. Runs off `token` (not the
+  // fileIds/status themselves) so a repeat dispatch always re-fires.
   useEffect(() => {
-    if (triggerShare) { setShowShareSetup(true); onShareTriggered?.() }
+    if (!externalCurationUpdate) return
+    const { fileIds, curationStatus } = externalCurationUpdate
+    const idSet = new Set(fileIds)
+    setFiles(prev => prev.map(f => idSet.has(f.fileId) ? { ...f, curationStatus } : f))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalCurationUpdate?.token])
+
+  // ── Cross-project selection routing ─────────────────────────
+  // projectIdOf: every action below operates on a fileId — look up which
+  // project it actually belongs to (rather than assuming the host project)
+  // so download/delete/watermark/rename/cover/curation/share all target the
+  // right project even when the grid is showing merged multi-event photos.
+  const projectIdOf = (fileId: string): string =>
+    files.find(f => f.fileId === fileId)?.projectId ?? project.projectId
+
+  const combinedSelectedIds: Set<string> = isMultiSource
+    ? new Set(activeSourceProjects.flatMap(p => Array.from(photoSelectionsMap?.get(p.projectId) ?? [])))
+    : selectedIdsProp
+
+  const selectedIds = combinedSelectedIds
+
+  const onSelectionChange = (next: Set<string>) => {
+    if (!isMultiSource || !photoSelectionsMap || !onPhotoSelectionChange) {
+      onSelectionChangeProp(next)
+      return
+    }
+    const current = combinedSelectedIds
+    const added   = Array.from(next).filter(id => !current.has(id))
+    const removed = Array.from(current).filter(id => !next.has(id))
+    const byProject = new Map<string, Set<string>>()
+    activeSourceProjects.forEach(p => byProject.set(p.projectId, new Set(photoSelectionsMap.get(p.projectId) ?? [])))
+    added.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, new Set())
+      byProject.get(pid)!.add(fid)
+    })
+    removed.forEach(fid => { byProject.get(projectIdOf(fid))?.delete(fid) })
+    byProject.forEach((set, pid) => onPhotoSelectionChange(pid)(set))
+  }
+  useEffect(() => { if (!loading && files.length === 0) setShowUploadModal(true) }, [loading, files.length])
+
+  // Open Quick Share when triggered from global pill — shares the current
+  // photo selection (if any), same as the selection-bar Quick Share icon.
+  useEffect(() => {
+    if (triggerShare) { openQuickShare(); onShareTriggered?.() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerShare])
 
@@ -272,6 +486,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       const { startX, startY, moved } = dragState.current
       dragState.current.active = false; dragState.current.moved = false; setDragRect(null)
       if (!moved || !gridRef.current) return
+      suppressNextTileClickRef.current = true
       const gr = gridRef.current.getBoundingClientRect()
       const ex = e.clientX - gr.left; const ey = e.clientY - gr.top
       const selL = Math.min(startX, ex) + gr.left; const selT = Math.min(startY, ey) + gr.top
@@ -290,27 +505,22 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [selectedIds, onSelectionChange])
 
-  // Keyboard navigation for admin photo preview
-  useEffect(() => {
-    if (!showAdminPreview) return
-    const selPhotos = files.filter(f => selectedIds.has(f.fileId))
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
-      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(selPhotos.length - 1, i + 1))
-      if (e.key === 'Escape')     setShowAdminPreview(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [showAdminPreview, files, selectedIds])
-
+  // Only bail out of drag-select for actual interactive controls (the "⋯"
+  // menu trigger, marked data-no-drag) — not the whole tile, which used to
+  // exclude virtually all pixels given the grid's 5px gap left almost no
+  // genuinely empty space to start a drag from.
   const handleGridMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || (e.target as Element).closest('[data-fileid]')) return
+    if (e.button !== 0 || (e.target as Element).closest('[data-no-drag]')) return
     const gr = gridRef.current!.getBoundingClientRect()
     dragState.current = { active: true, startX: e.clientX - gr.left, startY: e.clientY - gr.top, moved: false }
     e.preventDefault()
+  }
+
+  const handleTileClick = (fileId: string) => {
+    if (suppressNextTileClickRef.current) { suppressNextTileClickRef.current = false; return }
+    togglePhoto(fileId)
   }
 
   // ── Face Index functions ───────────────────────────────────
@@ -324,29 +534,87 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     }
   }, [project.projectId])
 
-  // Poll while face job is active
+  // Poll while a face-indexing job is genuinely still in progress — not
+  // gated to the AI Face tab, since the "being reindexed" blur/spinner on
+  // photo tiles needs to keep updating even while looking at All Photos.
+  // Also stops the moment counts catch up even if the job record itself
+  // lags (mirrors the `isIndexing` derived value below), so a stale/never-
+  // closed job of any kind can't leave this polling forever.
   useEffect(() => {
-    if (activeTab !== 'faces' || !faceStatus?.activeJob) return
-    const t = setInterval(loadFaceStatus, 6000)
+    if (!faceStatus?.activeJob) return
+    if ((faceStatus.indexedPhotos ?? 0) >= (faceStatus.totalPhotos ?? 0)) return
+    // Also refresh the actual file list each tick — the per-photo blur/
+    // spinner is driven by each MediaFile's own faceIndexed flag, which only
+    // this (not the aggregate faceStatus counts) reflects.
+    const t = setInterval(() => { loadFaceStatus(); loadFiles() }, 6000)
     return () => clearInterval(t)
-  }, [activeTab, faceStatus?.activeJob, loadFaceStatus])
+  }, [faceStatus?.activeJob, faceStatus?.indexedPhotos, faceStatus?.totalPhotos, loadFaceStatus, loadFiles])
 
-  const triggerFaceIndexing = async () => {
+  const triggerFaceIndexing = async (forceAll?: boolean) => {
     setFaceTriggering(true); setFaceError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, { method: 'POST' }).then(r => r.json())
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/index`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(forceAll ? { forceAll: true } : {}), accuracyLevel }),
+    }).then(r => r.json())
     setFaceTriggering(false)
     if (!res.success) {
       if (res.error === 'FEATURE_DISABLED') { setFaceFeatureOff(true); return }
       setFaceError(res.message ?? res.error); return
     }
-    setFaceStatus(prev => prev ? { ...prev, activeJob: { jobId: res.data.jobId, status: 'PENDING' } } : prev)
+    // forceAll resets every targeted photo back to "not yet indexed"
+    // server-side — reflect that immediately instead of waiting for the
+    // next 6s poll, so the progress bar/counts don't briefly show stale
+    // "all done" numbers.
+    setFaceStatus(prev => prev
+      ? {
+          ...prev,
+          activeJob: { jobId: res.data.jobId, status: 'PENDING' },
+          ...(forceAll ? { indexedPhotos: 0, pendingPhotos: prev.totalPhotos } : {}),
+        }
+      : prev)
+    // Mirror that reset onto the actual file list too, so every photo's
+    // blur/spinner shows immediately instead of waiting for the first poll.
+    if (forceAll) {
+      setFiles(prev => prev.map(f => f.fileType === 'IMAGE' ? { ...f, faceIndexed: false, faceCount: 0 } : f))
+    }
+  }
+
+  const loadFaceGroups = useCallback(async () => {
+    setFaceGroupsLoading(true)
+    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`).then(r => r.json()).catch(() => null)
+    if (res?.success) setFaceGroups(res.data)
+    setFaceGroupsLoading(false)
+  }, [project.projectId])
+
+  const handleSaveGroup = async () => {
+    if (selectedIds.size === 0) return
+    setSavingGroup(true)
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoIds: Array.from(selectedIds) }),
+      }).then(r => r.json())
+      if (res.success) {
+        setFaceGroups(prev => [...(prev ?? []), res.data as StudioFace].sort((a, b) => b.photoCount - a.photoCount))
+        onSelectionChange(new Set())
+      }
+    } finally {
+      setSavingGroup(false)
+    }
+  }
+
+  const handleDeleteGroup = async (faceId: string) => {
+    setFaceGroups(prev => (prev ?? []).filter(g => g.faceId !== faceId))
+    if (faceGroupFilter?.faceId === faceId) setFaceGroupFilter(null)
+    await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups/${faceId}`, { method: 'DELETE' }).catch(() => {})
   }
 
   const generateQr = async () => {
     setQrGenerating(true)
     const res = await fetch(`/studio/api/admin/projects/${project.projectId}/guest-token`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiryHours: qrExpiry }),
+      body: JSON.stringify({ expiryHours: qrExpiry, allowOriginalDownload: qrAllowOriginal }),
     }).then(r => r.json())
     setQrGenerating(false)
     if (!res.success) { setFaceError(res.message ?? 'Could not generate QR code'); return }
@@ -527,7 +795,258 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     if (res.success) window.open(res.data.url, '_blank')
   }
 
-  // ── Client selections filter (header buttons) ─────────────
+  // Current/best version (edited if one exists) — the general per-photo
+  // "Download" action, distinct from downloadOriginalEdit's forced-original.
+  const downloadPhoto = async (fileId: string) => {
+    const res = await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}/download`).then(r => r.json())
+    if (res.success) window.open(res.data.url, '_blank')
+  }
+
+  const toggleWatermark = async (fileId: string, watermarkEnabled: boolean) => {
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ watermarkEnabled }),
+    }).catch(() => {})
+    await loadFiles()
+  }
+
+  const copyFilename = async (filename: string) => {
+    await navigator.clipboard.writeText(filename)
+  }
+
+  // Admin-only curation pipeline: undefined -> STARRED -> FAVORITE -> FINAL -> undefined.
+  // Shared by the grid tile menu, the lightbox menu, and the list view's move
+  // icon so all three stay in sync rather than offering divergent affordances.
+  const CURATION_ORDER: (CurationStatus | undefined)[] = [undefined, 'STARRED', 'FAVORITE', 'FINAL']
+  const nextCurationStatus = (current?: CurationStatus): CurationStatus | undefined =>
+    CURATION_ORDER[(CURATION_ORDER.indexOf(current) + 1) % CURATION_ORDER.length]
+  // "(Admin only)" — this is the studio admin's own private curation mark,
+  // never visible or settable by the client, distinct from the client's own
+  // loved/submitted state elsewhere in the gallery.
+  const curationMenuLabel = (current?: CurationStatus): string => {
+    if (current === 'FINAL') return 'Clear curation status (Admin only)'
+    if (current === 'FAVORITE') return 'Mark Final (Admin only)'
+    if (current === 'STARRED') return 'Mark Favorite (Admin only)'
+    return 'Mark Starred (Admin only)'
+  }
+  // Optimistic — a full loadFiles() reload re-fetches every photo's signed
+  // preview URL (slow on large galleries) for a change that has no
+  // server-computed visual side effect. Update locally, save in the
+  // background, and only revert if the save actually fails.
+  const saveCurationStatus = async (fileId: string, current: CurationStatus | undefined, next: CurationStatus | undefined) => {
+    setFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, curationStatus: next } : f))
+    try {
+      const res = await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ curationStatus: next ?? null }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.message ?? 'Failed to save')
+    } catch {
+      setFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, curationStatus: current } : f))
+    }
+  }
+  // Advances through all 3 stages — used by the "⋯" menu (labelled per-stage)
+  // and the list view's dedicated move icon, where the progression is explicit.
+  const cycleCurationStatus = (fileId: string, current?: CurationStatus) =>
+    saveCurationStatus(fileId, current, nextCurationStatus(current))
+  // A simple two-state star/unstar toggle — the grid tile's star icon only
+  // shows filled-vs-outline (2 visual states), so cycling it through all 3
+  // stages meant un-starring from Favorite/Final needed 2-3 clicks with no
+  // visible feedback in between, which read as broken. Any non-empty status
+  // clears in one click; clicking again from empty sets Starred.
+  const toggleStarred = (fileId: string, current?: CurationStatus) =>
+    saveCurationStatus(fileId, current, current ? undefined : 'STARRED')
+
+  // Shared per-photo action set — used by both the grid tile's "⋯" menu and
+  // the list view's "⋯" menu, so the two views never drift apart.
+  const buildPhotoMenuActions = (f: MediaFile, idx: number): PhotoMenuAction[] => [
+    {
+      label: 'Open', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5v6m0-6h6m-6 0l6.75 6.75M19.5 4.5v6m0-6h-6m6 0l-6.75 6.75M4.5 19.5v-6m0 6h6m-6 0l6.75-6.75M19.5 19.5v-6m0 6h-6m6 0l-6.75-6.75" />
+        </svg>
+      ),
+      onClick: () => { setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) },
+    },
+    {
+      label: 'Download', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+      ),
+      onClick: () => downloadPhoto(f.fileId),
+    },
+    {
+      label: 'Copy filename', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+        </svg>
+      ),
+      onClick: () => copyFilename(f.originalFilename),
+    },
+    {
+      label: f.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      onClick: () => toggleWatermark(f.fileId, !f.watermarkEnabled),
+    },
+    {
+      label: 'Rename', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+        </svg>
+      ),
+      onClick: () => { setRenamingFile(f); setRenameValue(f.originalFilename) },
+    },
+    {
+      label: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).coverPhotoFileId === f.fileId ? '✓ Cover Photo' : 'Set as Cover', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+        </svg>
+      ),
+      onClick: () => setCoverPhoto(f.fileId),
+    },
+    {
+      label: curationMenuLabel(f.curationStatus), icon: (
+        <svg fill={f.curationStatus ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+        </svg>
+      ),
+      onClick: () => cycleCurationStatus(f.fileId, f.curationStatus),
+    },
+    {
+      label: 'Copy to event…', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+        </svg>
+      ),
+      onClick: () => setMoveCopyTarget({
+        mode: 'copy',
+        clientName: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).clientName,
+        files: [{ fileId: f.fileId, projectId: f.projectId }],
+      }),
+    },
+    {
+      label: 'Move to event…', icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
+        </svg>
+      ),
+      onClick: () => setMoveCopyTarget({
+        mode: 'move',
+        clientName: (activeSourceProjects.find(p => p.projectId === f.projectId) ?? project).clientName,
+        files: [{ fileId: f.fileId, projectId: f.projectId }],
+      }),
+    },
+    {
+      label: 'Delete', danger: true, icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+        </svg>
+      ),
+      onClick: () => deleteFiles([f.fileId]),
+    },
+  ]
+
+  const saveRename = async () => {
+    if (!renamingFile || !renameValue.trim()) return
+    setRenameSaving(true)
+    await fetch(`/studio/api/admin/projects/${renamingFile.projectId}/files/${renamingFile.fileId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originalFilename: renameValue.trim() }),
+    }).catch(() => {})
+    setRenameSaving(false)
+    setRenamingFile(null)
+    await loadFiles()
+  }
+
+  const setCoverPhoto = async (fileId: string) => {
+    setSettingCoverId(fileId)
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coverPhotoFileId: fileId }),
+    }).catch(() => {})
+    setSettingCoverId(null)
+    onUpdated()
+  }
+
+  // Omitting fileIds targets every eligible file in the project — the
+  // backend route already supports this (used for the header's always-on
+  // Watermark button when nothing is selected; targets just the selection
+  // when something is). Grouped per-project so this stays correct when the
+  // grid is showing merged multi-event photos.
+  const bulkApplyWatermark = async (watermarkEnabled: boolean) => {
+    setBulkWatermarking(true)
+    if (selectedIds.size > 0) {
+      const byProject = new Map<string, string[]>()
+      selectedIds.forEach(fid => {
+        const pid = projectIdOf(fid)
+        if (!byProject.has(pid)) byProject.set(pid, [])
+        byProject.get(pid)!.push(fid)
+      })
+      await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
+        fetch(`/studio/api/admin/projects/${pid}/watermark`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileIds, watermarkEnabled }),
+        }).catch(() => {})
+      ))
+    } else {
+      await Promise.all(activeSourceProjects.map(p =>
+        fetch(`/studio/api/admin/projects/${p.projectId}/watermark`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ watermarkEnabled }),
+        }).catch(() => {})
+      ))
+    }
+    setBulkWatermarking(false)
+    setTimeout(loadFiles, 3000)
+  }
+
+  // Selection-bar bulk star toggle — standard "star-all" UX: if every
+  // selected photo is already starred, clicking clears all of them;
+  // otherwise it stars every selected photo that isn't already. Reuses the
+  // same optimistic saveCurationStatus() the single-photo star button uses.
+  const selectedFiles = files.filter(f => selectedIds.has(f.fileId))
+  const allSelectedStarred = selectedFiles.length > 0 && selectedFiles.every(f => !!f.curationStatus)
+  const bulkToggleStar = async () => {
+    const next = allSelectedStarred ? undefined : 'STARRED'
+    await Promise.all(selectedFiles.map(f => saveCurationStatus(f.fileId, f.curationStatus, next)))
+  }
+
+  // Runs AI face indexing scoped to just the selected photos — same route
+  // the Face Index tab already uses, grouped per-project the same way
+  // bulkApplyWatermark is (a selection can span multiple merged events).
+  const bulkAISort = async () => {
+    setBulkAISorting(true)
+    const byProject = new Map<string, string[]>()
+    selectedIds.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push(fid)
+    })
+    await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
+      fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds }),
+      }).catch(() => {})
+    ))
+    setBulkAISorting(false)
+  }
+
+  // Sequential with a small stagger — opening many tabs at once via
+  // Promise.all would get most of them blocked by the browser's popup
+  // blocker (only the first synchronous window.open per user gesture is
+  // reliably allowed).
+  const bulkDownloadSelected = async () => {
+    for (const fid of Array.from(selectedIds)) {
+      await downloadPhoto(fid)
+      await new Promise(r => setTimeout(r, 150))
+    }
+  }
+
+  // ── Photo lifecycle filter (header filter icon) ────────────
   const loadSelections = async () => {
     if (clientSelections !== null) return
     setSelLoading(true)
@@ -536,22 +1055,16 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     setSelLoading(false)
   }
 
-  const toggleFilter = async (filter: 'loved' | 'edit') => {
-    if (viewFilter === filter) { setViewFilter('all'); return }
-    await loadSelections(); setViewFilter(filter)
-  }
-
-  const generatePreviews = async () => {
-    setBackfilling(true); setBackfillMsg(null)
-    try {
-      const res = await fetch(`/studio/api/admin/projects/${project.projectId}/backfill-previews`, { method: 'POST' }).then(r => r.json())
-      if (res.success) {
-        const { queued } = res.data
-        setBackfillMsg(queued === 0 ? '✓ All previews up to date' : `✓ Generating ${queued} previews…`)
-        if (queued > 0) setTimeout(loadFiles, 8000)
-      } else setBackfillMsg('Failed to queue previews')
-    } catch { setBackfillMsg('Network error') }
-    setBackfilling(false); setTimeout(() => setBackfillMsg(null), 5000)
+  // Toggling 'ALL' always resets to no filter; toggling any other stage adds
+  // or removes it from the active set, leaving the rest untouched.
+  const toggleFilterScope = async (scope: PhotoScope) => {
+    if (scope === 'ALL') { setViewFilters(new Set()); return }
+    if (scope === 'CLIENT_FAVORITE' || scope === 'EDIT_REQUIRED') await loadSelections()
+    setViewFilters(prev => {
+      const next = new Set(prev)
+      next.has(scope) ? next.delete(scope) : next.add(scope)
+      return next
+    })
   }
 
   const togglePhoto = (fileId: string) => {
@@ -564,15 +1077,29 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     if (!fileIds.length) return
     setDeleting(true)
     setDeleteError(null)
-    const results = await Promise.all(fileIds.map(fid =>
-      fetch(`/studio/api/admin/projects/${project.projectId}/files/${fid}`, { method: 'DELETE' })
-        .then(async (res) => ({ fid, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
-        .catch(() => ({ fid, ok: false }))
+    // One bulk request per project touched (not one per photo) — a
+    // multi-event selection still spans at most a couple of requests, and
+    // each one lands as exactly one audit log entry server-side instead of
+    // a flood of single-photo entries.
+    const byProject = new Map<string, string[]>()
+    for (const fid of fileIds) {
+      const pid = projectIdOf(fid)
+      byProject.set(pid, [...(byProject.get(pid) ?? []), fid])
+    }
+    const results = await Promise.all(Array.from(byProject.entries()).map(([pid, ids]) =>
+      fetch(`/studio/api/admin/projects/${pid}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds: ids }),
+      })
+        .then(async (res) => ({ pid, count: ids.length, ok: res.ok && (await res.json().catch(() => ({ success: true }))).success !== false }))
+        .catch(() => ({ pid, count: ids.length, ok: false }))
     ))
     const failed = results.filter(r => !r.ok)
     setDeleteMode(null); onSelectionChange(new Set()); setDeleting(false)
     if (failed.length > 0) {
-      setDeleteError(`Could not delete ${failed.length} of ${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} — please try again.`)
+      const failedCount = failed.reduce((sum, r) => sum + r.count, 0)
+      setDeleteError(`Could not delete ${failedCount} of ${fileIds.length} photo${fileIds.length !== 1 ? 's' : ''} — please try again.`)
     }
     await loadFiles(); onUpdated()
   }
@@ -580,12 +1107,12 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
   const retryFile = async (fileId: string) => {
     setRetryingIds(prev => new Set(prev).add(fileId))
-    await fetch(`/studio/api/admin/projects/${project.projectId}/files/${fileId}/retry-watermark`, { method: 'POST' }).catch(() => {})
+    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}/retry-watermark`, { method: 'POST' }).catch(() => {})
     setRetryingIds(prev => { const next = new Set(prev); next.delete(fileId); return next })
     await loadFiles()
   }
 
-  const uploadFile = async (file: File, itemId: string) => {
+  const uploadFile = async (file: File, itemId: string, targetProjectId: string) => {
     const update = (patch: Partial<UploadItem>) =>
       setUploads(prev => prev.map(u => u.id === itemId ? { ...u, ...patch } : u))
     update({ status: 'uploading', progress: 0 })
@@ -593,18 +1120,20 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     try {
       // Resumes from a previous attempt if the same file was seen before
       // and the server still has that upload alive.
-      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(project.projectId, file, partCount)
+      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(targetProjectId, file, partCount)
       const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, completedParts, (uploadedBytes, partsDone) => {
         update({ progress: Math.round((partsDone / partCount) * 100), uploadedBytes })
       })
-      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${project.projectId}/upload-complete`, {
+      const completeRes = await fetchWithTimeout(`/studio/api/admin/projects/${targetProjectId}/upload-complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId, uploadId, parts }),
       }).then(r => r.json())
       if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
-      clearUploadResume(project.projectId, file.name, file.size, file.lastModified)
+      clearUploadResume(targetProjectId, file.name, file.size, file.lastModified)
       update({ status: 'done', progress: 100, uploadedBytes: file.size })
-      loadFiles(); onUpdated()
+      // Only the currently-open project's grid needs refreshing — an
+      // upload targeting a different event has nothing to show here.
+      if (targetProjectId === project.projectId) { loadFiles(); onUpdated() }
     } catch (err) {
       update({
         status: 'error',
@@ -613,61 +1142,98 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     }
   }
 
-  const handleFiles = (selected: FileList | null) => {
+  const handleFiles = (selected: FileList | null, targetProjectId: string = project.projectId) => {
     if (!selected) return
-    const items: UploadItem[] = Array.from(selected).map(f => ({ id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0 }))
+    const items: UploadItem[] = Array.from(selected).map(f => ({
+      id: crypto.randomUUID(), file: f, progress: 0, status: 'queued' as const, uploadedBytes: 0, projectId: targetProjectId,
+    }))
     setUploads(prev => [...prev, ...items])
     // Bounded concurrency — selecting hundreds/thousands of files and firing
     // them all at once is what caused large batches to silently stall past a
     // few hundred files (see MAX_CONCURRENT_UPLOADS comment above).
-    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
+    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id, item.projectId))
   }
 
-  const generateShareLink = async () => {
-    if (selectedIds.size === 0) {
-      setShareError('Please select at least one photo to share')
+  // Opens the unified Quick Share popup (components/studio/QuickShareModal.tsx)
+  // for a given fileId set (or the current grid selection when omitted),
+  // grouping by project and blocking the cross-client edge case up front —
+  // the modal itself assumes every project it's given belongs to one client.
+  const openQuickShare = (fileIds?: Set<string>) => {
+    const source = fileIds ?? selectedIds
+    if (source.size === 0) {
+      setQuickShareError('Please select at least one photo to share')
       return
     }
-    setShareError(null)
-    setSharing(true)
-    const hasRange = selMax > 0
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/share-link`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        expiryDays: 30,
-        ...(hasRange ? { selectionMin: selMin, selectionMax: selMax } : {}),
-        includedFileIds: Array.from(selectedIds),
-      }),
-    }).then(r => r.json())
-    setSharing(false); setShowShareSetup(false)
-    if (res.success) setShareUrl(res.data.shareUrl)
-    else setShareError(res.message ?? 'Failed to generate link')
+    const byProject = new Map<string, string[]>()
+    source.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push(fid)
+    })
+    const involvedProjects = activeSourceProjects.filter(p => byProject.has(p.projectId))
+    const emails = Array.from(new Set(involvedProjects.map(p => p.clientEmail)))
+    if (emails.length > 1) {
+      setQuickShareError('Selected photos belong to different clients. Narrow the event dropdown to one client\'s events before sharing.')
+      return
+    }
+    setQuickShareError(null)
+    setQuickShareProjects(involvedProjects)
+    setQuickShareFileIdsByProject(byProject)
+    setShowQuickShare(true)
   }
 
-  const copyLink = async () => {
-    if (!shareUrl) return
-    await navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2000)
+  // Lightbox "quick share" — shares just this one photo, independent of
+  // whatever's selected in the grid.
+  const quickSharePhoto = (fileId: string) => {
+    setShowAdminPreview(false)
+    setShowPhotoInfo(false)
+    openQuickShare(new Set([fileId]))
   }
 
   // ── Tab switch ────────────────────────────────────────────
   const switchTab = (tab: ActiveTab) => {
     setActiveTab(tab)
     if (tab === 'faces' && !faceStatus && !faceLoading) loadFaceStatus()
+    if (tab === 'faces' && faceGroups === null && !faceGroupsLoading) loadFaceGroups()
     if (tab === 'selections') loadSelItems()
     if (tab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
   }
 
-  // ── Derived values ────────────────────────────────────────
-  const lovedCount = clientSelections?.length ?? null
-  const editCount  = clientSelections?.filter(s => s.selection.editingRequired).length ?? null
+  // Mounting directly onto a non-default tab (e.g. via initialTab, or a
+  // pathname ending in /faces) skips the click-driven loads above entirely
+  // — without this, the AI Face status row shows "0 requested / 0 AI
+  // enabled" even though the grid below it (backed by `files`, loaded
+  // separately) correctly shows the already-indexed photos.
+  useEffect(() => {
+    if (activeTab === 'faces') {
+      if (!faceStatus && !faceLoading) loadFaceStatus()
+      if (faceGroups === null && !faceGroupsLoading) loadFaceGroups()
+    }
+    if (activeTab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
+  // ── Derived values ────────────────────────────────────────
+  // The "AI Face" tab reuses this exact same grid/selection-bar pipeline,
+  // just scoped to faceIndexed files (and further to one saved group, once
+  // the admin drills into a group card) instead of the lifecycle filters
+  // that apply to the "All Photos" tab.
   const displayFiles: MediaFile[] = (() => {
-    if (viewFilter === 'all' || !clientSelections) return files
-    if (viewFilter === 'loved') return clientSelections.map(s => s.file)
-    return clientSelections.filter(s => s.selection.editingRequired).map(s => s.file)
+    if (activeTab === 'faces') {
+      const aiFiles = files.filter(f => f.faceIndexed)
+      return faceGroupFilter ? aiFiles.filter(f => faceGroupFilter.fileIds.has(f.fileId)) : aiFiles
+    }
+    if (viewFilters.size === 0) return files
+    const selections = clientSelections?.map(s => s.selection) ?? []
+    const idSet = new Set<string>()
+    viewFilters.forEach(scope => {
+      const ids = resolveScopeFileIds(scope, files, selections, project)
+      if (ids) ids.forEach(id => idSet.add(id))
+    })
+    return files.filter(f => idSet.has(f.fileId))
   })()
 
-  const editCommentMap: Map<string, string> = viewFilter === 'edit' && clientSelections
+  const editCommentMap: Map<string, string> = viewFilters.has('EDIT_REQUIRED') && clientSelections
     ? new Map(clientSelections.filter(s => s.selection.editingRequired && s.selection.comment).map(s => [s.file.fileId, s.selection.comment!]))
     : new Map()
 
@@ -678,18 +1244,307 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
     ? deleteTargetIds.filter(id => clientSelections.some(s => s.file.fileId === id && s.selection.isSelected)).length
     : 0
 
-  const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
+  const searchedDisplayFiles = searchQuery.trim()
+    ? displayFiles.filter(f => f.originalFilename.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : displayFiles
+  const sortedDisplayFiles = sortFiles(searchedDisplayFiles, sortMode)
 
-  // Face index derived
-  const isIndexing = !!faceStatus?.activeJob
-  const isReady    = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) === 0
-  const hasPartial = !isIndexing && (faceStatus?.indexedPhotos ?? 0) > 0 && (faceStatus?.pendingPhotos ?? 0) > 0
+  const selectedPhotosForPreview = files.filter(f => selectedIds.has(f.fileId))
+  const previewPhotos = previewMode === 'selected' ? selectedPhotosForPreview : sortedDisplayFiles
+  const currentPreviewPhoto = previewPhotos[adminPreviewIdx] as MediaFile | undefined
+
+  // Face index derived — also stops on count parity, not just the job
+  // record, so the spinner doesn't keep rolling if the backend job status
+  // lags a moment behind the counts actually catching up.
+  const isIndexing = !!faceStatus?.activeJob && (faceStatus?.indexedPhotos ?? 0) < (faceStatus?.totalPhotos ?? 0)
   const neverRun   = !isIndexing && (faceStatus?.indexedPhotos ?? 0) === 0
+
+  // Keyboard navigation for the admin photo preview lightbox — placed here
+  // (not with the other effects near the top) because it needs previewPhotos,
+  // which is derived from displayFiles and can't be computed before that.
+  useEffect(() => {
+    if (!showAdminPreview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft')  setAdminPreviewIdx(i => Math.max(0, i - 1))
+      if (e.key === 'ArrowRight') setAdminPreviewIdx(i => Math.min(previewPhotos.length - 1, i + 1))
+      if (e.key === 'Escape')     { setShowAdminPreview(false); setShowPhotoInfo(false) }
+      if (e.key === 'i' || e.key === 'I') setShowPhotoInfo(v => !v)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAdminPreview, previewPhotos.length])
+
+  // Clear stale dimensions immediately when switching photos — otherwise the
+  // previous photo's size would flash briefly before the new image loads.
+  useEffect(() => { setPreviewImgDims(null) }, [currentPreviewPhoto?.fileId])
 
   return (
     <>
-      {editOpen && (
-        <EditEventModal project={project} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onUpdated() }} />
+      {/* ── Rename modal ────────────────────────────────────── */}
+      {renamingFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="text-base font-bold text-text-primary">Rename photo</h3>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveRename() }}
+              className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setRenamingFile(null)} disabled={renameSaving}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted hover:text-text-primary hover:bg-border/40 transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={saveRename} disabled={renameSaving || !renameValue.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-accent text-bg text-sm font-bold hover:bg-accent/90 transition-colors disabled:opacity-60">
+                {renameSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {moveCopyTarget && (
+        <MoveCopyPhotoModal
+          mode={moveCopyTarget.mode}
+          clientName={moveCopyTarget.clientName}
+          files={moveCopyTarget.files}
+          onClose={() => setMoveCopyTarget(null)}
+          onDone={() => { setMoveCopyTarget(null); onSelectionChange(new Set()); loadFiles(); onUpdated() }}
+        />
+      )}
+
+      {/* ── AI Face works against one event's own Rekognition collection at
+          a time — when multiple events are checked in the sidebar, this
+          popup asks the admin to pick just one to continue with, with a
+          dropdown to jump straight to any of the currently checked events
+          instead of going back to the sidebar to uncheck the rest by hand. */}
+      {activeTab === 'faces' && !faceFeatureOff && isMultiSource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5">
+            <div className="text-center space-y-2">
+              <div className="text-4xl">🖼️</div>
+              <p className="text-sm font-bold text-text-primary">Select just one event for AI Face</p>
+              <p className="text-xs text-muted leading-relaxed">
+                AI Face indexing, search, and grouping work on one event at a time. Please uncheck the other events in the sidebar and keep just one selected to continue.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-muted uppercase tracking-wide">Continue with</label>
+              <select
+                value={narrowEventId}
+                onChange={e => setNarrowEventId(e.target.value)}
+                className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/60 transition-colors"
+              >
+                {activeSourceProjects.map(p => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.clientName} · {(p.eventType ?? '').replace(/_/g, ' ')} — {fmtDate(p.eventDate)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => onNarrowSelection?.(narrowEventId)}
+                disabled={!onNarrowSelection}
+                className="w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                Continue with this event
+              </button>
+              <button onClick={() => setActiveTab('photos')}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reindex confirmation — friendly heads-up that this uses the AI
+          search balance, so a stray click doesn't quietly burn credits.
+          Offers "remaining" (cheap, only new/unindexed photos) vs "all"
+          (redoes everything from scratch — e.g. after a quality/settings
+          improvement, or if matches have been looking off). */}
+      {showReindexConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="text-center space-y-2">
+              <div className="text-3xl">✨</div>
+              <p className="text-sm font-bold text-text-primary">Reindex photos for AI?</p>
+              <p className="text-xs text-muted">
+                This scans your gallery for faces so you can search and group photos — it uses a bit of your AI search balance each time. It only ever runs when you tap this, never automatically.
+              </p>
+            </div>
+            <div className="border-t border-border pt-3">
+              <AccuracySlider value={accuracyLevel} onChange={handleAccuracyChange} />
+            </div>
+            <div className="space-y-2">
+              {(faceStatus?.pendingPhotos ?? 0) > 0 && (
+                <button onClick={() => { setShowReindexConfirm(false); triggerFaceIndexing(false) }}
+                  className="w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 transition-colors">
+                  Reindex remaining {faceStatus?.pendingPhotos} photo{faceStatus?.pendingPhotos !== 1 ? 's' : ''}
+                </button>
+              )}
+              <button onClick={() => { setShowReindexConfirm(false); triggerFaceIndexing(true) }}
+                className={(faceStatus?.pendingPhotos ?? 0) > 0
+                  ? 'w-full text-sm border border-accent/40 text-accent font-semibold py-2.5 rounded-xl hover:bg-accent/10 transition-colors'
+                  : 'w-full text-sm bg-accent text-bg font-bold py-2.5 rounded-xl hover:bg-accent/90 transition-colors'}>
+                Reindex all {faceStatus?.totalPhotos ?? 0} photos from scratch
+              </button>
+              <button onClick={() => setShowReindexConfirm(false)}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete-group confirmation — the photos themselves are never
+          touched, only the saved "these belong together" bucket, but it's
+          still real, persisted data (DynamoDB), so a stray click shouldn't
+          be able to remove it silently. */}
+      {confirmDeleteGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="text-center space-y-2">
+              <div className="text-3xl">🗑️</div>
+              <p className="text-sm font-bold text-text-primary">
+                Delete {confirmDeleteGroup.label ? `"${confirmDeleteGroup.label}"` : 'this group'}?
+              </p>
+              <p className="text-xs text-muted">
+                This removes the saved group of {confirmDeleteGroup.photoCount} photo{confirmDeleteGroup.photoCount !== 1 ? 's' : ''} — the photos themselves stay in the gallery untouched.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <button onClick={() => { handleDeleteGroup(confirmDeleteGroup.faceId); setConfirmDeleteGroup(null) }}
+                className="w-full text-sm bg-danger text-white font-bold py-2.5 rounded-xl hover:bg-danger/90 transition-colors">
+                Delete group
+              </button>
+              <button onClick={() => setConfirmDeleteGroup(null)}
+                className="w-full text-sm text-muted font-semibold py-2 hover:text-text-primary transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Guest QR code popup — functional generate/copy/download today;
+          customization options are a placeholder for a future pass. ───── */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowQrModal(false) }}>
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div>
+                <p className="text-sm font-bold text-text-primary">Guest QR Code</p>
+                <p className="text-xs text-muted mt-0.5">Guests scan and find their photos via selfie.</p>
+              </div>
+              <button onClick={() => setShowQrModal(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
+                <select value={qrExpiry} onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
+                  className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60">
+                  <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option>
+                </select>
+                <button onClick={generateQr} disabled={qrGenerating}
+                  className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors">
+                  {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
+                </button>
+              </div>
+              {qrDataUrl && qrGuestUrl && (
+                <div className="flex flex-col items-center gap-4 pt-2">
+                  <div className="bg-white p-3 rounded-2xl shadow-md">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
+                  </div>
+                  {qrExpiresAt && <p className="text-xs text-muted">Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>}
+                  <div className="flex gap-2 w-full">
+                    <button onClick={async () => { if (!qrGuestUrl) return; await navigator.clipboard.writeText(qrGuestUrl); setQrCopied(true); setTimeout(() => setQrCopied(false), 2000) }}
+                      className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                      {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
+                    </button>
+                    <button onClick={() => { if (!qrDataUrl) return; const a = document.createElement('a'); a.href = qrDataUrl; a.download = `guest-qr-${project.projectId}.png`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
+                      className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
+                      ⬇ Download QR
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Allow-original-download toggle — signed into the QR token
+                  itself, so flipping this and regenerating re-signs a fresh
+                  token with the new value (same as changing expiry). */}
+              <label className="flex items-center justify-between gap-3 border border-border rounded-xl px-4 py-3 cursor-pointer">
+                <div>
+                  <p className="text-xs font-semibold text-text-primary">Allow original download</p>
+                  <p className="text-[11px] text-muted mt-0.5">Guests can download the unedited original, not just the final photo</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setQrAllowOriginal(v => !v); setQrDataUrl(null) }}
+                  className={`relative flex-shrink-0 w-10 h-6 rounded-full transition-colors ${qrAllowOriginal ? 'bg-accent' : 'bg-border'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${qrAllowOriginal ? 'translate-x-4' : ''}`} />
+                </button>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Start Sorting picker — pick from the already-loaded AI-enabled
+          photos and save the selection as a group. No selfie, no local
+          upload — just the photo references already in memory. ───────── */}
+      {startSortingOpen && (
+        <StartSortingModal
+          files={files.filter(f => f.faceIndexed)}
+          onClose={() => setStartSortingOpen(false)}
+          onGrouped={(group) => {
+            setFaceGroups(prev => [...(prev ?? []), group].sort((a, b) => b.photoCount - a.photoCount))
+            setStartSortingOpen(false)
+          }}
+          onCreateGroup={async (photoIds, label) => {
+            const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/groups`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ photoIds }),
+            }).then(r => r.json())
+            if (!res.success) return null
+            const group = res.data as StudioFace
+            // Reuses the pre-existing (previously unused) label PATCH route —
+            // best-effort, a failed label save shouldn't lose the group itself.
+            if (label) {
+              await fetch(`/studio/api/admin/projects/${project.projectId}/faces/${group.faceId}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label }),
+              }).catch(() => {})
+              group.label = label
+            }
+            return group
+          }}
+          onFindSimilar={async ({ fileId, faceId, secondFaceId, matchMode, coupleExclusive }) => {
+            const res = await fetch(`/studio/api/admin/projects/${project.projectId}/faces/similar`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fileId, ...(faceId ? { faceId } : {}), ...(secondFaceId ? { secondFaceId } : {}),
+                matchMode, accuracyLevel, ...(coupleExclusive !== undefined ? { coupleExclusive } : {}),
+              }),
+            }).then(r => r.json())
+            if (!res.success) return null
+            return res.data as FindSimilarResult
+          }}
+          accuracyLevel={accuracyLevel}
+          onAccuracyChange={handleAccuracyChange}
+        />
       )}
 
       {/* ── Delete confirmation modal ───────────────────────── */}
@@ -729,52 +1584,187 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
         </div>
       )}
 
-      {/* ── Admin photo preview modal ───────────────────────── */}
-      {showAdminPreview && selectedPhotosForPreview.length > 0 && (
-        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => setShowAdminPreview(false)}>
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <span className="text-white/70 text-sm font-semibold">{adminPreviewIdx + 1} / {selectedPhotosForPreview.length}</span>
-            <span className="text-white font-bold text-base">Selected Photos</span>
-            <button onClick={() => setShowAdminPreview(false)} className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+      {/* ── Admin photo preview modal (lightbox) ──────────────── */}
+      {showAdminPreview && previewPhotos.length > 0 && (
+        <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }}>
+          {/* Header — filename/close on its own row, then a full-width icon
+              toolbar row below, so icons never compete for space with a long
+              filename (that was pushing them off narrow/mobile screens). */}
+          <div className="flex flex-col gap-2 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-white/50 text-xs font-semibold flex-shrink-0">{adminPreviewIdx + 1} / {previewPhotos.length}</span>
+                <span className="text-white font-semibold text-sm truncate">{currentPreviewPhoto?.originalFilename}</span>
+              </div>
+              <button onClick={() => { setShowAdminPreview(false); setShowPhotoInfo(false) }} title="Close"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {currentPreviewPhoto && (
+                <button onClick={() => toggleStarred(currentPreviewPhoto.fileId, currentPreviewPhoto.curationStatus)}
+                  title={currentPreviewPhoto.curationStatus ? 'Unstar (Admin only)' : 'Star (Admin only)'}
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className={`w-4 h-4 ${currentPreviewPhoto.curationStatus ? 'text-yellow-400' : 'text-white'}`}
+                    viewBox="0 0 24 24" fill={currentPreviewPhoto.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                  </svg>
+                </button>
+              )}
+              {currentPreviewPhoto && (
+                <button onClick={() => quickSharePhoto(currentPreviewPhoto.fileId)} title="Quick Share"
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                  </svg>
+                </button>
+              )}
+              {currentPreviewPhoto && (
+                <button onClick={() => downloadPhoto(currentPreviewPhoto.fileId)} title="Download"
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                </button>
+              )}
+              <button onClick={() => setShowPhotoInfo(v => !v)} title="Info (i)"
+                className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl transition-colors ${showPhotoInfo ? 'bg-accent text-bg' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+              </button>
+              {currentPreviewPhoto && (
+                <PhotoActionsMenu
+                  align="right"
+                  trigger={
+                    <span className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white cursor-pointer">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
+                      </svg>
+                    </span>
+                  }
+                  actions={[
+                    {
+                      label: currentPreviewPhoto.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ),
+                      onClick: () => toggleWatermark(currentPreviewPhoto.fileId, !currentPreviewPhoto.watermarkEnabled),
+                    },
+                    {
+                      label: 'Copy filename',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
+                        </svg>
+                      ),
+                      onClick: () => copyFilename(currentPreviewPhoto.originalFilename),
+                    },
+                    {
+                      label: 'Rename',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                        </svg>
+                      ),
+                      onClick: () => { setRenamingFile(currentPreviewPhoto); setRenameValue(currentPreviewPhoto.originalFilename) },
+                    },
+                    {
+                      label: project.coverPhotoFileId === currentPreviewPhoto.fileId ? '✓ Cover Photo' : 'Set as Cover',
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 21h18a1.5 1.5 0 001.5-1.5V4.5A1.5 1.5 0 0021 3H3a1.5 1.5 0 00-1.5 1.5v15A1.5 1.5 0 003 21zM9.75 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
+                        </svg>
+                      ),
+                      onClick: () => setCoverPhoto(currentPreviewPhoto.fileId),
+                    },
+                    {
+                      label: curationMenuLabel(currentPreviewPhoto.curationStatus),
+                      icon: (
+                        <svg fill={currentPreviewPhoto.curationStatus ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                        </svg>
+                      ),
+                      onClick: () => cycleCurationStatus(currentPreviewPhoto.fileId, currentPreviewPhoto.curationStatus),
+                    },
+                    {
+                      label: 'Delete',
+                      danger: true,
+                      icon: (
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                      ),
+                      onClick: () => { setShowAdminPreview(false); deleteFiles([currentPreviewPhoto.fileId]) },
+                    },
+                  ]}
+                />
+              )}
+            </div>
           </div>
-          {/* Main photo + arrows */}
-          <div className="flex-1 flex items-center justify-center overflow-hidden relative"
-            onTouchStart={e => { adminTouchStartX.current = e.touches[0].clientX }}
-            onTouchEnd={e => {
-              const diff = adminTouchStartX.current - e.changedTouches[0].clientX
-              if (Math.abs(diff) < 50) return
-              if (diff > 0) setAdminPreviewIdx(i => Math.min(selectedPhotosForPreview.length - 1, i + 1))
-              else setAdminPreviewIdx(i => Math.max(0, i - 1))
-            }}
-            onClick={e => e.stopPropagation()}>
-            <img key={selectedPhotosForPreview[adminPreviewIdx]?.fileId}
-              src={selectedPhotosForPreview[adminPreviewIdx]?.r2PreviewUrl ?? ''}
-              alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
-            {adminPreviewIdx > 0 && (
-              <button onClick={() => setAdminPreviewIdx(i => i - 1)}
-                className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-            )}
-            {adminPreviewIdx < selectedPhotosForPreview.length - 1 && (
-              <button onClick={() => setAdminPreviewIdx(i => i + 1)}
-                className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
+          {/* Body: main photo + optional info panel */}
+          <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative"
+              onTouchStart={e => { adminTouchStartX.current = e.touches[0].clientX }}
+              onTouchEnd={e => {
+                const diff = adminTouchStartX.current - e.changedTouches[0].clientX
+                if (Math.abs(diff) < 50) return
+                if (diff > 0) setAdminPreviewIdx(i => Math.min(previewPhotos.length - 1, i + 1))
+                else setAdminPreviewIdx(i => Math.max(0, i - 1))
+              }}
+              onClick={e => e.stopPropagation()}>
+              <img key={currentPreviewPhoto?.fileId}
+                src={currentPreviewPhoto?.r2PreviewUrl ?? ''}
+                onLoad={e => setPreviewImgDims({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+                alt="" className="max-h-full max-w-full object-contain select-none" draggable={false} />
+              {adminPreviewIdx > 0 && (
+                <button onClick={() => setAdminPreviewIdx(i => i - 1)}
+                  className="absolute left-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
+                </button>
+              )}
+              {adminPreviewIdx < previewPhotos.length - 1 && (
+                <button onClick={() => setAdminPreviewIdx(i => i + 1)}
+                  className="absolute right-3 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 active:scale-95 transition-all border border-white/20">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {showPhotoInfo && currentPreviewPhoto && (
+              <div className="w-72 flex-shrink-0 bg-card border-l border-border overflow-y-auto p-5 space-y-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-sm font-bold text-text-primary">Photo info</h3>
+                <div className="space-y-3">
+                  {[
+                    ['Filename', currentPreviewPhoto.originalFilename],
+                    ['Size', fmtBytes(currentPreviewPhoto.sizeBytes)],
+                    ['Type', currentPreviewPhoto.mimeType],
+                    ...(previewImgDims ? [['Dimensions', `${previewImgDims.width} × ${previewImgDims.height}`]] : []),
+                    ['Uploaded', fmtDate(currentPreviewPhoto.uploadedAt)],
+                    ['Watermark', currentPreviewPhoto.watermarkEnabled ? 'Applied' : 'Not applied'],
+                    ...(currentPreviewPhoto.editedS3Key || currentPreviewPhoto.editedR2Key ? [['Edited', 'Yes']] : []),
+                    ...(currentPreviewPhoto.faceIndexed ? [['Faces detected', String(currentPreviewPhoto.faceCount ?? 0)]] : []),
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <div className="text-[10px] uppercase tracking-wide text-muted font-semibold">{label}</div>
+                      <div className="text-xs text-text-primary break-words mt-0.5">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
           {/* Thumbnail strip */}
           <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
-            {selectedPhotosForPreview.map((photo, idx) => (
+            {previewPhotos.map((photo, idx) => (
               <button key={photo.fileId} onClick={() => setAdminPreviewIdx(idx)}
                 className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${
                   idx === adminPreviewIdx ? 'border-accent scale-105' : 'border-white/20 opacity-60'}`}>
@@ -782,7 +1772,7 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
               </button>
             ))}
           </div>
-          {selectedPhotosForPreview.length > 1 && (
+          {previewPhotos.length > 1 && !showPhotoInfo && (
             <div className="absolute bottom-[90px] inset-x-0 flex justify-center pointer-events-none">
               <span className="text-white/30 text-xs">← swipe to browse →</span>
             </div>
@@ -793,81 +1783,139 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
       {/* z-20, not z-50 — this is a fullscreen *view*, not a modal, and must never
           paint over the delete-confirm/edit/share modals or global overlays that
           also target z-50; those need to stay reachable while the grid is expanded. */}
-      <div className={expanded
-        ? 'fixed inset-0 z-20 overflow-auto bg-bg'
-        : 'border border-border rounded-2xl overflow-hidden bg-card'
-      }>
+      <div className={`dash-bold-text ${expanded ? 'fixed inset-0 z-20 overflow-auto bg-bg' : ''}`}>
 
         {/* ── Event header ──────────────────────────────────────── */}
-        <div className={`px-5 py-4 flex items-start justify-between gap-4 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-base">{EVENT_ICON[project.eventType] ?? '📷'}</span>
-              <h2 className="text-lg font-bold text-text-primary">{project.eventType.replace(/_/g, ' ')}</h2>
-              <span className="text-sm text-muted font-medium">{project.clientName}</span>
-              <span className={`text-xs font-bold uppercase tracking-wide ${STATUS_COLOR[project.status]}`}>
-                {project.status.replace(/_/g, ' ')}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 text-xs text-muted flex-wrap">
-              <span>{fmtDate(project.eventDate)}</span>
-              {project.eventLocation && <><span>·</span><span>{project.eventLocation}</span></>}
-              {project.clientPhone   && <><span>·</span><span>{project.clientPhone}</span></>}
-              {project.clientEmail   && <><span>·</span><span>{project.clientEmail}</span></>}
-            </div>
+        {/* Event name/date/status and the multi-select-events dropdown were
+            removed — the sidebar already shows all of that (project card +
+            per-event checkboxes), so duplicating it here was just confusing.
+            The tab navigation now lives in this same row instead of its own
+            row below, since that space is free. */}
+        <div className={`px-5 py-3 flex items-center gap-3 border-b border-border ${expanded ? 'sticky top-0 z-10 bg-bg/95 backdrop-blur' : ''}`}>
+          <div className="flex items-center gap-0 flex-shrink-0">
+            {/* "All Photos" tab doubles as the lifecycle filter dropdown — picking
+                a stage both switches to the photos tab and applies that filter,
+                so there's no separate filter icon to find. */}
+            <PhotoActionsMenu
+              align="left"
+              trigger={
+                <button
+                  onClick={() => switchTab('photos')}
+                  className={`flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                    activeTab === 'photos' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
+                  }`}
+                >
+                  {activeTab !== 'photos' || viewFilters.size === 0
+                    ? 'All Photos'
+                    : viewFilters.size === 1
+                      ? PHOTO_SCOPE_LABEL[Array.from(viewFilters)[0]]
+                      : `${viewFilters.size} filters`}
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              }
+              actions={PHOTO_SCOPE_ORDER.map(scope => ({
+                label: PHOTO_SCOPE_LABEL[scope],
+                icon: <PhotoScopeIcon scope={scope} className="w-2.5 h-2.5" />,
+                checked: scope === 'ALL' ? viewFilters.size === 0 : viewFilters.has(scope),
+                onClick: () => { switchTab('photos'); toggleFilterScope(scope) },
+              }))}
+            />
+            {(['faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
+              <button
+                key={tab}
+                onClick={() => switchTab(tab)}
+                className={`flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                  activeTab === tab ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/40'
+                }`}
+              >
+                {tab === 'faces' && (
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                  </svg>
+                )}
+                {tab === 'faces' ? 'AI Face' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {(project.status === 'SELECTION_RECEIVED' || project.status === 'COMPLETED') && (
+
+          {/* Filename search — client-side filter over already-loaded photos */}
+          {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
+            <div className="flex-1 min-w-[100px] max-w-[180px] relative hidden sm:block">
+              <svg className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search photos..."
+                className="w-full pl-8 pr-6 py-1.5 text-xs rounded-lg border border-border bg-bg text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} title="Clear search"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-muted hover:text-text-primary hover:bg-border/60 transition-colors">
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+
+
+          <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+            {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
               <>
-                <button onClick={() => toggleFilter('loved')} disabled={selLoading} title="View photos loved by client"
-                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'loved' ? 'bg-rose-500 text-white shadow-sm' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`}>
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/>
-                  </svg>
-                  {lovedCount !== null ? lovedCount : selLoading ? '…' : ''}
+                <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
+                  {viewMode === 'grid' ? (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                  )}
                 </button>
-                <button onClick={() => toggleFilter('edit')} disabled={selLoading} title="View photos needing edits"
-                  className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors
-                    ${viewFilter === 'edit' ? 'bg-orange-500 text-white shadow-sm' : 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'}`}>
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  {editCount !== null ? editCount : selLoading ? '…' : ''}
-                </button>
+                <PhotoActionsMenu
+                  align="right"
+                  trigger={
+                    <span title="Sort photos"
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg border cursor-pointer transition-colors ${
+                        sortMode !== 'DEFAULT' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10'
+                      }`}>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                      </svg>
+                    </span>
+                  }
+                  actions={(Object.keys(SORT_LABEL) as SortMode[]).map(mode => ({
+                    label: (sortMode === mode ? '✓ ' : '') + SORT_LABEL[mode],
+                    icon: (
+                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                      </svg>
+                    ),
+                    onClick: () => setSortMode(mode),
+                  }))}
+                />
               </>
             )}
-            {project.totalFiles > 0 && project.status !== 'COMPLETED' && !showShareSetup && (
-              <button onClick={() => setShowShareSetup(true)}
-                className="bg-accent text-bg text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-accent/90 transition-colors">
-                Share
-              </button>
-            )}
-            <button onClick={() => setUploadOpen(v => !v)} title="Upload photos"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            <button onClick={() => setShowUploadModal(true)} title="Upload photos"
+              className="h-7 px-2.5 flex items-center gap-1.5 rounded-lg bg-accent text-bg hover:bg-accent/90 transition-colors flex-shrink-0">
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
               </svg>
+              <span className="text-xs font-semibold whitespace-nowrap">Upload</span>
             </button>
             <button onClick={loadFiles} title="Refresh photos"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            <button onClick={generatePreviews} disabled={backfilling} title={backfillMsg ?? 'Generate/update R2 previews for all photos'}
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 disabled:opacity-40 transition-colors">
-              {backfilling
-                ? <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-                : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 9.75h.008v.008H3V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm13.5 0h.008v.008h-.008V9.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM9 3.75h6.75a3 3 0 013 3v10.5a3 3 0 01-3 3H5.25a3 3 0 01-3-3V6.75a3 3 0 013-3H9z" />
-                  </svg>}
-            </button>
-            {backfillMsg && <span className="text-[10px] text-muted font-medium">{backfillMsg}</span>}
-            <button onClick={() => setEditOpen(true)} title="Edit event"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-accent hover:border-accent/40 hover:bg-accent/10 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
             </button>
             {/* Expand / collapse fullscreen */}
@@ -882,92 +1930,328 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                   </svg>
               }
             </button>
-          </div>
-        </div>
 
-        {/* ── Tab navigation ────────────────────────────────────── */}
-        <div className="flex items-center gap-0 border-b border-border px-5">
-          {(['photos', 'faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
-            <button
-              key={tab}
-              onClick={() => switchTab(tab)}
-              className={`text-xs font-semibold px-3 py-2.5 border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-accent text-accent'
-                  : 'border-transparent text-muted hover:text-text-primary hover:border-border'
-              }`}
-            >
-              {tab === 'photos' ? 'All Photos' : tab === 'faces' ? 'Face Index ✨' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Share setup panel ─────────────────────────────────── */}
-        {showShareSetup && (
-          <div className="px-5 py-4 border-b border-border bg-border/10 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-text-primary">Set selection target <span className="font-normal text-muted">(optional)</span></p>
-              <button onClick={() => setShowShareSetup(false)} className="text-muted hover:text-text-primary">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            {/* Close — clears the sidebar selection, replacing the old
+                separate "clientName + Clear" bar above the grid so the
+                grid itself gets that vertical space back. */}
+            {onClose && (
+              <button onClick={onClose} title="Close"
+                className="w-7 h-7 flex items-center justify-center rounded-lg border border-border text-muted hover:text-red-500 hover:border-red-500/40 hover:bg-red-500/10 transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-muted">Min</label>
-                <input type="number" min={0} max={1000} value={selMin}
-                  onChange={e => { const v = Math.min(1000, Math.max(0, Number(e.target.value))); setSelMin(v); if (selMax > 0 && v > selMax) setSelMax(v) }}
-                  className="w-20 bg-bg border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60" />
-              </div>
-              <span className="text-muted text-sm">–</span>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-muted">Max</label>
-                <input type="number" min={0} max={1000} value={selMax}
-                  onChange={e => { const v = Math.min(1000, Math.max(0, Number(e.target.value))); setSelMax(v); if (selMin > v && v > 0) setSelMin(v) }}
-                  className="w-20 bg-bg border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60" />
-              </div>
-              <span className="text-xs text-muted">photos</span>
-            </div>
-            {selectedIds.size > 0 ? (
-              <p className="text-[11px] text-accent font-medium">{selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''} selected — client will only see these</p>
-            ) : (
-              <p className="text-[11px] text-yellow-500">Select photos in the grid first to share specific photos with the client</p>
             )}
-            {shareError && <p className="text-[11px] text-red-500">{shareError}</p>}
-            <div className="flex gap-2">
-              <button onClick={() => { setSelMin(0); setSelMax(0); generateShareLink() }} disabled={sharing}
-                className="text-xs text-muted border border-border px-3 py-1.5 rounded-lg hover:bg-border/40 transition-colors disabled:opacity-50">
-                Skip target
-              </button>
-              <button onClick={generateShareLink} disabled={sharing}
-                className="flex-1 text-xs bg-accent text-bg font-bold py-1.5 rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50">
-                {sharing ? 'Generating…' : selMax > 0 ? `Generate & Share (${selMin}–${selMax})` : 'Generate & Share'}
-              </button>
+          </div>
+        </div>
+
+        {/* ── Selection / filter status bar — small, icon-based, sits right
+            below the header. Empty (not rendered) when nothing is selected
+            and no filter is active. Two mutually exclusive contents: filter
+            chips only (a lifecycle filter is active but nothing individually
+            selected) or the full bulk action set (the moment any photo gets
+            selected — filter chips step aside since Star/Delete/More now
+            apply only to the selection, not the filtered set). */}
+        {((activeTab === 'photos' && (selectedCount > 0 || viewFilters.size > 0)) ||
+          (activeTab === 'faces' && (selectedCount > 0 || !!faceGroupFilter))) && (
+          <div className="px-5 pt-2">
+            <div className="inline-flex items-center gap-1.5 px-1.5 py-1 rounded-xl bg-gradient-to-b from-accent to-accent/85 shadow-[0_3px_10px_-3px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.25)]">
+              {selectedCount === 0 ? (
+                activeTab === 'faces' ? (
+                  <>
+                    <span className="flex items-center gap-1 bg-white/15 text-white rounded-lg px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap ml-1">
+                      Group photos
+                    </span>
+                    <span title="Photos in this group" className="text-[10px] font-semibold text-white/85 px-1.5 whitespace-nowrap">
+                      {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}
+                    </span>
+                    <button onClick={() => setFaceGroupFilter(null)}
+                      className="flex items-center gap-1 text-[11px] font-bold text-white px-2 py-1 rounded-lg hover:bg-white/15 transition-colors">
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                      </svg>
+                      Back to groups
+                    </button>
+                  </>
+                ) : (
+                <>
+                  <div className="flex items-center gap-1 flex-wrap pl-1">
+                    {Array.from(viewFilters).map(scope => (
+                      <span key={scope} title={PHOTO_SCOPE_LABEL[scope]}
+                        className="flex items-center gap-1 bg-white/15 text-white rounded-lg px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap">
+                        <PhotoScopeIcon scope={scope} className="w-2.5 h-2.5 flex-shrink-0" />
+                        {PHOTO_SCOPE_LABEL[scope]}
+                      </span>
+                    ))}
+                  </div>
+                  <span title="Photos matching the active filter" className="text-[10px] font-semibold text-white/85 px-1.5 whitespace-nowrap">
+                    {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}
+                  </span>
+                  <Tooltip label="Clear filter">
+                    <button onClick={() => setViewFilters(new Set())}
+                      className="w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+                </>
+                )
+              ) : (
+                <>
+                  <Tooltip label="Clear selection">
+                    <button onClick={() => onSelectionChange(new Set())}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  <PhotoActionsMenu
+                    align="left"
+                    trigger={
+                      <Tooltip label="Select all">
+                        <span className="flex items-center gap-1 pl-1 pr-1.5 py-1 rounded-lg text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          <span className="text-[11px] font-bold whitespace-nowrap">{selectedCount} selected</span>
+                          <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                          </svg>
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      { label: 'Select all',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
+                        onClick: () => onSelectionChange(new Set(sortedDisplayFiles.map(f => f.fileId))) },
+                      ...(viewFilters.size > 1 ? Array.from(viewFilters).map(scope => ({
+                        label: `Select all ${PHOTO_SCOPE_LABEL[scope]}`,
+                        icon: <PhotoScopeIcon scope={scope} />,
+                        onClick: () => {
+                          const selections = clientSelections?.map(s => s.selection) ?? []
+                          const ids = new Set(resolveScopeFileIds(scope, sortedDisplayFiles, selections, project) ?? [])
+                          onSelectionChange(new Set(sortedDisplayFiles.filter(f => ids.has(f.fileId)).map(f => f.fileId)))
+                        },
+                      })) : []),
+                      ...(isMultiSource ? activeSourceProjects.map(p => ({
+                        label: `Select all — ${(p.eventType ?? '').replace(/_/g, ' ')}`,
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>,
+                        onClick: () => onSelectionChange(new Set(sortedDisplayFiles.filter(f => f.projectId === p.projectId).map(f => f.fileId))),
+                      })) : []),
+                    ]}
+                  />
+
+                  <div className="w-px h-4 bg-white/25 mx-0.5 flex-shrink-0" />
+
+                  {/* Star / unstar — selection only */}
+                  <Tooltip label={allSelectedStarred ? 'Unstar selected' : 'Star selected'}>
+                    <button onClick={bulkToggleStar}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={allSelectedStarred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* AI Sorting / Search — selection only */}
+                  <Tooltip label={bulkAISorting ? 'Starting AI Sorting…' : 'AI Sorting / Search'}>
+                    <button onClick={bulkAISort}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      {bulkAISorting
+                        ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                          </svg>}
+                    </button>
+                  </Tooltip>
+
+                  {/* Quick Share — selection only */}
+                  <Tooltip label="Quick Share selected">
+                    <button onClick={() => openQuickShare()}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* Preview — selection only */}
+                  <Tooltip label="Preview selected">
+                    <button onClick={() => { setPreviewMode('selected'); setAdminPreviewIdx(0); setShowAdminPreview(true) }}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* Watermark — selection only, own dropdown for apply/remove */}
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <Tooltip label="Watermark selected">
+                        <span className="w-6 h-6 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          {bulkWatermarking
+                            ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>}
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      { label: 'Apply Watermark',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+                        onClick: () => bulkApplyWatermark(true) },
+                      { label: 'Remove Watermark',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
+                        onClick: () => bulkApplyWatermark(false) },
+                    ]}
+                  />
+
+                  {/* Delete — selection only */}
+                  <Tooltip label="Delete selected">
+                    <button onClick={() => setDeleteMode('selected')}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-red-500/40 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                      </svg>
+                    </button>
+                  </Tooltip>
+
+                  {/* More — everything else: copy/move to event, download */}
+                  <PhotoActionsMenu
+                    align="right"
+                    trigger={
+                      <Tooltip label="More options">
+                        <span className="w-6 h-6 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer">
+                          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                            <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                          </svg>
+                        </span>
+                      </Tooltip>
+                    }
+                    actions={[
+                      ...(activeTab === 'faces' ? [{
+                        label: savingGroup ? 'Saving…' : 'Save as Group',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>,
+                        onClick: handleSaveGroup,
+                      }] : []),
+                      { label: 'Copy to event…',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>,
+                        onClick: () => setMoveCopyTarget({ mode: 'copy', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
+                      { label: 'Move to event…',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>,
+                        onClick: () => setMoveCopyTarget({ mode: 'move', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
+                      { label: 'Download selected',
+                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
+                        onClick: bulkDownloadSelected },
+                    ]}
+                  />
+                </>
+              )}
             </div>
           </div>
         )}
 
-        {shareUrl && (
-          <div className="px-5 py-3 border-b border-border bg-success/5 flex items-center gap-3">
-            <div className="flex-1 text-xs text-success font-mono truncate">{shareUrl}</div>
-            <button onClick={copyLink} className="text-xs bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0">
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
+        {/* ── AI Face works against one event's own Rekognition collection
+            at a time — indexing, search, and grouping all silently missed
+            a second/third checked event when this tab was used with
+            multiple sidebar events selected. Rather than fan every AI call
+            out across events (tried it — slow, and the UX for cross-event
+            results got messy), a popup (rendered with the other modals,
+            below) asks the admin to pick one to continue with — the tab
+            body itself just stays blank underneath it. */}
+
+        {/* ── AI Face status row — one slim row, same family as the
+            selection/filter bar. Always shown on this tab (unless the
+            feature is off): requested/AI-enabled counts, a thin progress
+            fill only while a run is active, a small re-check icon, and one
+            QR icon that opens the (placeholder-for-now) QR popup. */}
+        {activeTab === 'faces' && !faceFeatureOff && !isMultiSource && (
+          <div className="px-5 pt-2">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-border bg-card">
+              <span className="text-[11px] font-semibold text-muted whitespace-nowrap">
+                {faceStatus?.totalPhotos ?? 0} photos requested
+              </span>
+              <span className="text-[11px] font-bold text-text-primary whitespace-nowrap">
+                {faceStatus?.indexedPhotos ?? 0} AI enabled
+              </span>
+              {isIndexing && (
+                <div className="w-20 h-1.5 rounded-full bg-border overflow-hidden flex-shrink-0">
+                  <div
+                    className="h-full bg-accent rounded-full transition-all"
+                    style={{ width: `${faceStatus && faceStatus.totalPhotos > 0 ? Math.round((faceStatus.indexedPhotos / faceStatus.totalPhotos) * 100) : 0}%` }}
+                  />
+                </div>
+              )}
+              <Tooltip label="Guests scan this to find their own photos by selfie">
+                <button onClick={() => setShowQrModal(true)}
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5h4.5v4.5h-4.5v-4.5zM15.75 4.5h4.5v4.5h-4.5v-4.5zM3.75 15h4.5v4.5h-4.5V15zM15.75 15h1.5v1.5h-1.5V15zM19.5 15h.75v.75h-.75V15zM15.75 18h.75v.75h-.75V18zM18 18.75h.75v.75H18v-.75zM6 6.75h1.5v1.5H6v-1.5zM18 6.75h1.5v1.5H18v-1.5zM6 17.25h1.5v1.5H6v-1.5z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold whitespace-nowrap">Selfie Search Link</span>
+                </button>
+              </Tooltip>
+              {/* Reindex — kept right next to Start Sorting since they're
+                  the two "do something" actions on this tab. Always confirms
+                  first (uses AI search balance) so a stray click can't
+                  trigger a run by accident. */}
+              <Tooltip label={neverRun ? 'Enable AI for all photos' : 'Check for new photos'}>
+                <button onClick={() => setShowReindexConfirm(true)} disabled={faceTriggering || isIndexing}
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0 disabled:opacity-50">
+                  {isIndexing || faceTriggering
+                    ? <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    : <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>}
+                  <span className="text-[11px] font-semibold whitespace-nowrap">{isIndexing ? 'Reindexing…' : 'Reindex'}</span>
+                </button>
+              </Tooltip>
+              {!faceGroupFilter && (
+                <button onClick={() => setStartSortingOpen(true)}
+                  className="h-6 px-2 flex items-center gap-1 rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold whitespace-nowrap">Start Sorting</span>
+                </button>
+              )}
+            </div>
+            {faceError && (
+              <div className="flex items-center gap-2 px-3 py-2 mt-2 rounded-xl text-xs font-semibold bg-red-500/10 text-red-500">
+                {faceError}
+                <button onClick={() => setFaceError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── Upload zone ───────────────────────────────────────── */}
-        {uploadOpen && activeTab === 'photos' && (
-          <div className="mx-5 my-4 border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-accent/50 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files) }}>
-            <div className="text-3xl mb-2">📸</div>
-            <div className="text-sm font-semibold text-text-primary">Drop photos here or click to upload</div>
-            <div className="text-xs text-muted mt-1">JPG, PNG, WEBP, MP4 · Max 10GB per file</div>
-            <input ref={fileInputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={e => handleFiles(e.target.files)} />
+        {/* ── Quick Share — unified popup, replaces the old inline panel ── */}
+        {quickShareError && (
+          <div className="px-5 py-2.5 border-b border-border bg-danger/10 flex items-center gap-2">
+            <p className="flex-1 text-[11px] text-danger">{quickShareError}</p>
+            <button onClick={() => setQuickShareError(null)} className="text-danger/70 hover:text-danger text-xs font-semibold flex-shrink-0">Dismiss ×</button>
           </div>
+        )}
+        {showQuickShare && (
+          <QuickShareModal
+            projects={quickShareProjects}
+            explicitFileIdsByProject={quickShareFileIdsByProject}
+            showSelectionRange
+            onClose={() => setShowQuickShare(false)}
+          />
+        )}
+
+        {/* ── Upload popup ──────────────────────────────────────── */}
+        {showUploadModal && (
+          <UploadModal
+            currentProject={project}
+            onClose={() => setShowUploadModal(false)}
+            onFilesChosen={(files, targetProjectId) => handleFiles(files, targetProjectId)}
+          />
         )}
 
         {/* ── Upload progress ───────────────────────────────────── */}
@@ -1023,13 +2307,16 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
         {/* ══ TAB CONTENT ══════════════════════════════════════════ */}
 
-        {/* ── All Photos tab ────────────────────────────────────── */}
-        {activeTab === 'photos' && (
+        {/* ── All Photos / AI Face tab — the AI Face tab reuses this exact
+            same grid+bar, scoped to faceIndexed files via displayFiles. ── */}
+        {(activeTab === 'photos' || (activeTab === 'faces' && !isMultiSource)) && (
           <div className={`px-5 pb-5 ${expanded ? 'max-w-7xl mx-auto' : ''}`}>
             {loading ? (
               <div className="flex justify-center py-8">
                 <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
               </div>
+            ) : activeTab === 'faces' && !faceGroupFilter && displayFiles.length === 0 ? (
+              <p className="text-xs text-muted text-center py-6">No AI-enabled photos yet — tap the refresh icon above first.</p>
             ) : files.length === 0 ? (
               <p className="text-xs text-muted text-center py-6">No photos yet — upload above to get started.</p>
             ) : (
@@ -1040,66 +2327,170 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                     <button onClick={() => setDeleteError(null)} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Dismiss ×</button>
                   </div>
                 )}
-                {viewFilter !== 'all' && (
-                  <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold mb-3
-                    ${viewFilter === 'loved' ? 'bg-rose-500/10 text-rose-500' : 'bg-orange-500/10 text-orange-500'}`}>
-                    {viewFilter === 'loved'
-                      ? <><svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.593c-5.63-5.539-11-10.297-11-14.402 0-3.791 3.068-5.191 5.281-5.191 1.312 0 4.151.501 5.719 4.457 1.59-3.968 4.464-4.447 5.726-4.447 2.54 0 5.274 1.621 5.274 5.181 0 4.069-5.136 8.625-11 14.402z"/></svg> Loved by client</>
-                      : <><svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg> Needs editing</>}
-                    <span className="font-normal text-current/70">— {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''}</span>
-                    <button onClick={() => setViewFilter('all')} className="ml-auto font-normal opacity-60 hover:opacity-100 transition-opacity">Clear ×</button>
-                  </div>
-                )}
 
-                {/* Grid toolbar */}
-                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-muted">
-                    {viewFilter !== 'all' ? `${displayFiles.length} of ${files.length}` : `${files.length}`} photos
-                  </span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {(() => {
-                      const allSel = displayFiles.length > 0 && displayFiles.every(f => selectedIds.has(f.fileId))
+
+                {/* Face groups strip — floating photo-stack cards. AI Face tab
+                    only, hidden once drilled into a specific group. */}
+                {activeTab === 'faces' && !faceGroupFilter && faceGroups && faceGroups.length > 0 && (
+                  <div className="flex items-center gap-4 overflow-x-auto pb-3 mb-3 border-b border-border">
+                    {faceGroups.map(group => {
+                      const groupPhotos = group.photoIds
+                        .map(id => files.find(f => f.fileId === id))
+                        .filter((f): f is MediaFile => !!f)
+                      const stack = pickStableRandom(groupPhotos, group.faceId, 4)
+                      // If some of this group's saved photoIds aren't in the
+                      // currently loaded files (rare — e.g. deleted since),
+                      // the stack will show fewer than photoCount; the count
+                      // label below always reflects the real saved total.
+                      const missing = group.photoIds.length - groupPhotos.length
                       return (
-                        <button
-                          onClick={() => allSel ? onSelectionChange(new Set()) : onSelectionChange(new Set(displayFiles.map(f => f.fileId)))}
-                          className={`text-xs border px-2 py-1 rounded-lg transition-colors ${allSel ? 'text-accent border-accent/40 bg-accent/10 hover:bg-accent/20' : 'text-muted hover:text-text-primary border-border hover:bg-border/40'}`}>
-                          {allSel ? 'Deselect All' : 'Select All'}
-                        </button>
+                        <div key={group.faceId} className="relative flex-shrink-0 group/gc">
+                          <button
+                            onClick={() => setFaceGroupFilter({ faceId: group.faceId, fileIds: new Set(group.photoIds) })}
+                            className="relative w-28 h-24 flex-shrink-0"
+                          >
+                            {stack.length === 0 ? (
+                              <div className="absolute inset-0 w-20 h-20 mx-auto rounded-xl border-2 border-dashed border-border flex items-center justify-center text-[10px] text-muted text-center px-1">
+                                Photos not loaded
+                              </div>
+                            ) : stack.map((f, i) => (
+                              <div
+                                key={f.fileId}
+                                className="absolute top-0 left-1/2 w-20 h-20 rounded-xl overflow-hidden border-2 border-card shadow-[0_8px_20px_-6px_rgba(0,0,0,0.45)] transition-transform group-hover/gc:-translate-y-1.5"
+                                style={{
+                                  transform: `translateX(-50%) rotate(${(i - (stack.length - 1) / 2) * 12}deg) translateX(${(i - (stack.length - 1) / 2) * 20}px)`,
+                                  zIndex: i,
+                                }}
+                              >
+                                {f.r2PreviewUrl
+                                  ? <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                                  : <div className="w-full h-full bg-border/40" />}
+                              </div>
+                            ))}
+                          </button>
+                          <div className="mt-1 text-center">
+                            {group.label && (
+                              <div className="text-[11px] font-bold text-text-primary truncate px-1">{group.label}</div>
+                            )}
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[10px] font-semibold text-muted whitespace-nowrap">
+                                {group.photoCount} photo{group.photoCount !== 1 ? 's' : ''}
+                              </span>
+                              {missing > 0 && (
+                                <span title={`${missing} of this group's photos aren't currently loaded`} className="text-[9px] text-yellow-500 font-bold">⚠</span>
+                              )}
+                              <button onClick={() => setConfirmDeleteGroup(group)} title="Delete group"
+                                className="w-3.5 h-3.5 flex items-center justify-center rounded text-muted/60 hover:text-red-500 transition-colors">
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       )
-                    })()}
-                    <button onClick={() => setDeleteMode('all')}
-                      className="text-xs text-red-500/60 hover:text-red-500 border border-border px-2 py-1 rounded-lg hover:border-red-500/30 hover:bg-red-500/5 transition-colors">
-                      Delete All
-                    </button>
-                    {/* Zoom */}
-                    <div className="flex items-center gap-1 ml-1">
-                      <button onClick={() => setZoomLevel(v => Math.min(10, v + 1))} title="Zoom out"
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" />
-                        </svg>
-                      </button>
-                      <input type="range" min={2} max={10} value={12 - zoomLevel} onChange={e => setZoomLevel(12 - Number(e.target.value))} className="w-20 h-1 cursor-pointer accent-accent" />
-                      <button onClick={() => setZoomLevel(v => Math.max(2, v - 1))} title="Zoom in"
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted hover:text-text-primary hover:bg-border/60 transition-colors flex-shrink-0">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                        </svg>
-                      </button>
-                    </div>
+                    })}
                   </div>
-                </div>
-
-                {selectedCount === 0 && viewFilter === 'all' && (
-                  <p className="text-[10px] text-muted/60 mb-2">Click to select · Drag on empty space to select multiple</p>
                 )}
 
-                {/* Grid */}
-                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : '520px' }}>
-                  <div ref={gridRef} className="relative select-none"
-                    style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '5px' }}
+                {/* Grid / List + floating zoom bar — fills down to roughly
+                    the bottom of the viewport instead of stopping short,
+                    while keeping its own independent scrollbar. Offset
+                    shrunk from 130px since the tab row merged into the
+                    header this session, freeing up vertical space above. */}
+                <div className="vayu-scroll overflow-y-auto rounded-xl" style={{ maxHeight: expanded ? 'none' : 'calc(100vh - 90px)' }}>
+                  <div className="flex items-start gap-3">
+
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                    {viewMode === 'list' ? (
+                      <div className="space-y-1 pt-[14px] pl-[14px] pr-[14px]">
+                        {sortedDisplayFiles.map((f, idx) => {
+                          const isSelected = selectedIds.has(f.fileId)
+                          const isBeingIndexed = isIndexing && !f.faceIndexed
+                          return (
+                            <div key={f.fileId}
+                              onClick={() => { if (!isBeingIndexed) togglePhoto(f.fileId) }}
+                              onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl transition-colors ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'} ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
+                              <div className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors
+                                ${isSelected ? 'bg-accent border-accent text-bg' : 'border-muted'}`}>
+                                {isSelected && (
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                              <div className="relative w-11 h-11 rounded-lg overflow-hidden bg-border/40 flex-shrink-0">
+                                {f.r2PreviewUrl
+                                  ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
+                                      className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
+                                  : <div className="w-full h-full flex items-center justify-center text-muted text-sm">📄</div>}
+                                {isBeingIndexed && (
+                                  <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
+                                    <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm text-text-primary truncate">{f.originalFilename}</div>
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  {/* Original file size — the thumbnail is the watermarked preview, so this
+                                      is the only place the admin sees the real original's size. */}
+                                  <span className="text-[10px] text-muted font-medium">{fmtBytes(f.sizeBytes)}</span>
+                                  {f.curationStatus && (
+                                    <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent/15 text-accent">{f.curationStatus}</span>
+                                  )}
+                                  {(f.editedS3Key || f.editedR2Key) && <span className="text-[9px] text-muted">Edited</span>}
+                                  {f.watermarkEnabled && <span className="text-[9px] text-muted">Watermarked</span>}
+                                  {isMultiSource && (
+                                    <span className="text-[9px] font-semibold text-accent uppercase">
+                                      {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <button onClick={e => { e.stopPropagation(); downloadPhoto(f.fileId) }} title="Download"
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </button>
+                              <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }} title="Delete"
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                </svg>
+                              </button>
+                              <button onClick={e => { e.stopPropagation(); cycleCurationStatus(f.fileId, f.curationStatus) }} title={curationMenuLabel(f.curationStatus)}
+                                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg text-muted hover:text-accent hover:bg-accent/10 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-6 6m6-6l6 6" />
+                                </svg>
+                              </button>
+                              <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
+                                <PhotoActionsMenu
+                                  align="right"
+                                  trigger={
+                                    <span className="w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-text-primary hover:bg-border/50 cursor-pointer">
+                                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="5" r="1.75" /><circle cx="12" cy="12" r="1.75" /><circle cx="12" cy="19" r="1.75" />
+                                      </svg>
+                                    </span>
+                                  }
+                                  actions={buildPhotoMenuActions(f, idx)}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                  <div ref={gridRef} className="relative select-none pt-[14px] pl-[14px] pr-[14px]"
+                    style={{ display: 'grid', gridTemplateColumns: `repeat(${zoomLevel}, minmax(0, 1fr))`, gap: '14px' }}
                     onMouseDown={handleGridMouseDown}>
-                    {displayFiles.map(f => {
+                    {sortedDisplayFiles.map((f, idx) => {
                       const isSelected  = selectedIds.has(f.fileId)
                       // A file sits at 'UPLOADING' for the first several
                       // seconds of any legitimate upload — only treat it as
@@ -1108,68 +2499,129 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                         && (Date.now() - new Date(f.uploadedAt).getTime()) > STALE_UPLOAD_MS
                       const isGenuineFailure = f.processingStatus === 'FAILED'
                       const isFailed    = isGenuineFailure || isStaleUpload
+                      // A (re)index run marks every not-yet-indexed photo as
+                      // faceIndexed:false until the Lambda gets to it — while
+                      // a run is active, show those specific photos as busy
+                      // (blurred + spinner, not clickable) anywhere they
+                      // appear in the gallery, not just the AI Face tab.
+                      const isBeingIndexed = isIndexing && !f.faceIndexed
                       const editComment = editCommentMap.get(f.fileId)
                       return (
-                        <div key={f.fileId} data-fileid={f.fileId} onClick={() => togglePhoto(f.fileId)}
-                          className={`relative aspect-square rounded-lg overflow-hidden bg-card border cursor-pointer transition-all duration-100
-                            ${isSelected ? 'border-accent ring-2 ring-accent/40 scale-[0.95]' : 'border-border hover:border-border/60'}`}>
-                          {f.r2PreviewUrl
-                            ? <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" draggable={false} />
-                            : <div className="w-full h-full flex items-center justify-center">
-                                {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
-                                  ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
-                                  : <span className="text-muted text-lg">📄</span>}
-                              </div>}
-                          {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
-                            <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
-                              <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                        <div key={f.fileId} data-fileid={f.fileId}
+                          onClick={() => { if (!isBeingIndexed) handleTileClick(f.fileId) }}
+                          onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                          className={`group rounded-lg overflow-hidden bg-card border transition-all duration-150 shadow-md hover:shadow-xl hover:-translate-y-0.5
+                            ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'}
+                            ${isSelected ? 'border-accent ring-2 ring-accent/40' : 'border-border hover:border-border/80'}`}>
+                          {/* Frame's top strip — real space above the photo, not overlaid on it */}
+                          {!isFailed && (
+                            <div data-no-drag="true" onClick={e => e.stopPropagation()}
+                              className="flex items-center justify-between px-1 h-7 bg-border/25">
+                              <button onClick={() => toggleStarred(f.fileId, f.curationStatus)}
+                                title={f.curationStatus ? 'Unstar (Admin only)' : 'Star (Admin only)'}
+                                className={`flex items-center justify-center p-1 -m-1 rounded-md transition-colors ${f.curationStatus ? 'text-yellow-400' : 'text-black hover:text-black/70'}`}>
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill={f.curationStatus ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.75}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                                </svg>
+                              </button>
+                              {isMultiSource && (
+                                <span className="flex-1 min-w-0 text-center text-[9px] font-semibold text-muted uppercase truncate px-1">
+                                  {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
+                                </span>
+                              )}
+                              <PhotoActionsMenu
+                                align="right"
+                                trigger={
+                                  <span className="text-black hover:text-black/70 cursor-pointer text-xs leading-none tracking-widest">
+                                    •••
+                                  </span>
+                                }
+                                actions={buildPhotoMenuActions(f, idx)}
+                              />
                             </div>
                           )}
-                          {isFailed && (
-                            <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
-                              {retryingIds.has(f.fileId) ? (
-                                <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                              ) : isGenuineFailure ? (
-                                <>
-                                  <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
-                                    title="Retry processing"
-                                    className="w-7 h-7 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors">
-                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                    </svg>
-                                  </button>
-                                  <span className="text-[8px] text-muted font-medium">Tap to retry</span>
-                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
-                                    Remove
-                                  </button>
-                                </>
-                              ) : (
-                                // isStaleUpload — the raw upload itself never finished, so there
-                                // are no bytes in R2 to retry a watermark against. Only real
-                                // recovery is removing this record and re-selecting the file.
-                                <>
-                                  <span className="text-[8px] text-muted font-medium text-center leading-tight">Upload didn't finish</span>
-                                  <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
-                                    className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
-                                    Remove
-                                  </button>
-                                </>
+
+                          {/* Photo, inset with a thin frame on the sides/bottom */}
+                          <div className="p-1 pt-0">
+                            <div className="relative aspect-square rounded overflow-hidden bg-bg">
+                              {f.r2PreviewUrl
+                                ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
+                                    className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
+                                : <div className="w-full h-full flex items-center justify-center">
+                                    {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
+                                      ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
+                                      : <span className="text-muted text-lg">📄</span>}
+                                  </div>}
+                              {f.processingStatus === 'PROCESSING' && f.r2PreviewUrl && (
+                                <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
+                                  <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                </div>
+                              )}
+                              {isFailed && (
+                                <div className="absolute inset-0 bg-bg/85 backdrop-blur-[1px] flex flex-col items-center justify-center gap-1.5 p-1">
+                                  {retryingIds.has(f.fileId) ? (
+                                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  ) : isGenuineFailure ? (
+                                    <>
+                                      <button onClick={e => { e.stopPropagation(); retryFile(f.fileId) }}
+                                        title="Retry processing"
+                                        className="w-7 h-7 flex items-center justify-center rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors">
+                                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      </button>
+                                      <span className="text-[8px] text-muted font-medium">Tap to retry</span>
+                                      <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                        className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                        Remove
+                                      </button>
+                                    </>
+                                  ) : (
+                                    // isStaleUpload — the raw upload itself never finished, so there
+                                    // are no bytes in R2 to retry a watermark against. Only real
+                                    // recovery is removing this record and re-selecting the file.
+                                    <>
+                                      <span className="text-[8px] text-muted font-medium text-center leading-tight">Upload didn't finish</span>
+                                      <button onClick={e => { e.stopPropagation(); deleteFiles([f.fileId]) }}
+                                        className="text-[8px] text-muted/60 hover:text-red-400 transition-colors underline">
+                                        Remove
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                              {isBeingIndexed && !isFailed && (
+                                <div className="absolute inset-0 bg-bg/50 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1">
+                                  <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                                  <span className="text-[8px] text-muted font-semibold">AI processing…</span>
+                                </div>
+                              )}
+                              {/* Always-visible checkbox (not just on hover/selected) — a reliable,
+                                  drag-free way to build a multi-selection: just click each photo
+                                  you want, one at a time. No need to hunt for empty space to drag. */}
+                              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center shadow transition-colors
+                                ${isSelected ? 'bg-accent' : 'bg-black/35 border border-white/70'}`}>
+                                {isSelected && (
+                                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                              {f.watermarkEnabled && (
+                                <span className="absolute bottom-1 left-1 flex items-center gap-0.5 bg-black/55 text-white text-[8px] font-semibold px-1.5 py-0.5 rounded-md leading-tight">
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  Watermarked
+                                </span>
+                              )}
+                              {editComment && (
+                                <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
+                                  {editComment}
+                                </div>
                               )}
                             </div>
-                          )}
-                          {isSelected && (
-                            <div className="absolute top-1 left-1 w-4 h-4 bg-accent rounded-full flex items-center justify-center shadow">
-                              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                          )}
-                          {editComment && (
-                            <div className="absolute bottom-0 inset-x-0 bg-orange-900/90 px-1.5 py-1 text-[8px] text-orange-200 leading-tight line-clamp-2">
-                              {editComment}
-                            </div>
-                          )}
+                          </div>
                         </div>
                       )
                     })}
@@ -1178,131 +2630,11 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
                         style={{ left: dragRect.left, top: dragRect.top, width: dragRect.width, height: dragRect.height }} />
                     )}
                   </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Face Index tab ────────────────────────────────────── */}
-        {activeTab === 'faces' && (
-          <div className="px-5 py-5 space-y-5">
-            {faceLoading ? (
-              <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
-            ) : faceFeatureOff ? (
-              <div className="text-center py-10 space-y-3">
-                <div className="text-5xl">🔒</div>
-                <p className="text-sm font-bold text-text-primary">AI Face Search</p>
-                <p className="text-xs text-muted">This feature is not enabled on your plan.</p>
-              </div>
-            ) : (
-              <>
-                {/* Trigger button */}
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-bold text-text-primary">Face Index</p>
-                    <p className="text-xs text-muted mt-0.5">Index faces so guests can find their photos by selfie.</p>
-                  </div>
-                  {!isIndexing && (
-                    <button onClick={triggerFaceIndexing} disabled={faceTriggering}
-                      className="flex items-center gap-2 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors flex-shrink-0">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
-                      </svg>
-                      {neverRun ? 'Generate Face Index' : faceTriggering ? 'Starting…' : 'Re-index'}
-                    </button>
-                  )}
-                </div>
-
-                {faceError && <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">{faceError}</div>}
-
-                {isIndexing && (
-                  <div className="bg-accent/10 border border-accent/30 rounded-xl px-5 py-4 flex items-center gap-4">
-                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-text-primary">{faceStatus?.activeJob?.status === 'PENDING' ? 'Queued…' : 'Indexing faces…'}</p>
-                      <p className="text-xs text-muted mt-0.5">This runs in the background.</p>
-                    </div>
-                  </div>
-                )}
-
-                {faceStatus && (
-                  <div className="border border-border rounded-2xl divide-y divide-border overflow-hidden">
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <span className="text-sm text-muted">Photos indexed</span>
-                      <span className="text-sm font-bold text-text-primary">{faceStatus.indexedPhotos} / {faceStatus.totalPhotos}</span>
-                    </div>
-                    <div className="px-5 py-3 flex items-center justify-between">
-                      <span className="text-sm text-muted">Status</span>
-                      <span className={`text-sm font-bold ${isIndexing ? 'text-accent' : isReady ? 'text-success' : hasPartial ? 'text-yellow-400' : 'text-muted'}`}>
-                        {isIndexing ? 'Indexing…' : isReady ? '✓ Ready for guest search' : hasPartial ? `${faceStatus.pendingPhotos} pending` : 'Not indexed yet'}
-                      </span>
-                    </div>
-                    {faceStatus.lastCompletedAt && (
-                      <div className="px-5 py-3 flex items-center justify-between">
-                        <span className="text-sm text-muted">Last indexed</span>
-                        <span className="text-sm text-text-primary">{new Date(faceStatus.lastCompletedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                      </div>
                     )}
-                  </div>
-                )}
-
-                {neverRun && !faceError && !faceLoading && (
-                  <div className="border border-dashed border-border rounded-2xl p-8 text-center space-y-3">
-                    <div className="text-4xl">🔍</div>
-                    <p className="text-sm font-bold text-text-primary">No faces indexed yet</p>
-                    <p className="text-xs text-muted">Guests can upload a selfie to find their photos once you run the index.</p>
-                  </div>
-                )}
-
-                {isReady && (
-                  <div className="bg-success/5 border border-success/20 rounded-2xl px-5 py-4 space-y-1">
-                    <p className="text-sm font-bold text-success">✓ Face index ready</p>
-                    <p className="text-xs text-muted">Guests can now tap <strong className="text-text-primary">Find My Photos</strong> in the gallery.</p>
-                  </div>
-                )}
-
-                {/* QR code generator */}
-                {(isReady || hasPartial) && (
-                  <div className="border border-border rounded-2xl overflow-hidden">
-                    <div className="px-5 py-4 border-b border-border bg-border/10">
-                      <p className="text-sm font-bold text-text-primary">Guest QR Code</p>
-                      <p className="text-xs text-muted mt-0.5">Guests scan and find their photos via selfie.</p>
-                    </div>
-                    <div className="px-5 py-4 space-y-4">
-                      <div className="flex items-center gap-3">
-                        <label className="text-xs text-muted font-semibold flex-shrink-0">Expires in</label>
-                        <select value={qrExpiry} onChange={e => { setQrExpiry(Number(e.target.value) as 12 | 24 | 48); setQrDataUrl(null) }}
-                          className="bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent/60">
-                          <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option>
-                        </select>
-                        <button onClick={generateQr} disabled={qrGenerating}
-                          className="flex-1 bg-accent text-bg text-sm font-bold py-2 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors">
-                          {qrGenerating ? 'Generating…' : qrDataUrl ? 'Regenerate QR' : 'Generate QR Code'}
-                        </button>
-                      </div>
-                      {qrDataUrl && qrGuestUrl && (
-                        <div className="flex flex-col items-center gap-4 pt-2">
-                          <div className="bg-white p-3 rounded-2xl shadow-md">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={qrDataUrl} alt="Guest QR Code" width={200} height={200} />
-                          </div>
-                          {qrExpiresAt && <p className="text-xs text-muted">Expires {new Date(qrExpiresAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>}
-                          <div className="flex gap-2 w-full">
-                            <button onClick={async () => { if (!qrGuestUrl) return; await navigator.clipboard.writeText(qrGuestUrl); setQrCopied(true); setTimeout(() => setQrCopied(false), 2000) }}
-                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
-                              {qrCopied ? '✓ Copied!' : '🔗 Copy Link'}
-                            </button>
-                            <button onClick={() => { if (!qrDataUrl) return; const a = document.createElement('a'); a.href = qrDataUrl; a.download = `guest-qr-${project.projectId}.png`; document.body.appendChild(a); a.click(); document.body.removeChild(a) }}
-                              className="flex-1 text-xs border border-border text-muted font-semibold py-2.5 rounded-xl hover:bg-border/40 transition-colors">
-                              ⬇ Download QR
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
-                )}
+                </div>
+
               </>
             )}
           </div>
@@ -1567,55 +2899,6 @@ export default function EventSection({ project, onUpdated, selectedIds, onSelect
 
       </div>{/* end card */}
 
-      {/* ── Floating selection pill (admin grid) ──────────────── */}
-      {selectedCount > 0 && activeTab === 'photos' && !hidePill && (
-        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
-          <div className="bg-card/85 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm">
-            <div className="flex items-center gap-1 px-2 py-2.5">
-
-              {/* × clear */}
-              <button onClick={() => onSelectionChange(new Set())}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Clear selection">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-
-              {/* Count */}
-              <span className="flex-1 text-sm font-bold text-text-primary">{selectedCount} selected</span>
-
-              {/* 👁 Preview */}
-              <button onClick={() => { setAdminPreviewIdx(0); setShowAdminPreview(true) }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-border/60 transition-colors text-muted hover:text-text-primary" aria-label="Preview selected">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </button>
-
-              {/* Divider */}
-              <div className="w-px h-6 bg-border/60 flex-shrink-0" />
-
-              {/* 🗑 Delete selected */}
-              <button onClick={() => setDeleteMode('selected')}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-red-500/15 transition-colors text-red-500/70 hover:text-red-500" aria-label="Delete selected">
-                <svg className="w-4.5 h-4.5 w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
-              </button>
-
-              {/* 📤 Share (opens share setup) */}
-              <button onClick={() => { setShowShareSetup(true) }}
-                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-accent/15 transition-colors text-accent/70 hover:text-accent" aria-label="Share with client">
-                <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                </svg>
-              </button>
-
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

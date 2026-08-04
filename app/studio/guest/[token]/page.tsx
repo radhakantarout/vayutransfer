@@ -3,20 +3,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
+import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
 
 interface GuestPhoto {
   fileId:      string
   previewUrl:  string
   filename:    string
   downloadUrl: string
+  sizeBytes:   number
 }
 
 interface ProjectInfo {
-  eventType:  string
-  clientName: string
-  eventDate:  string
-  studioName: string
-  expiresAt:  string
+  eventType:             string
+  clientName:            string
+  eventDate:             string
+  studioName:            string
+  expiresAt:             string
+  allowOriginalDownload: boolean
 }
 
 type Stage = 'LOADING' | 'IDLE' | 'CAPTURING' | 'SEARCHING' | 'RESULTS' | 'NO_MATCH' | 'NO_FACE' | 'EXPIRED' | 'ERROR'
@@ -26,14 +29,21 @@ const EVENT_ICON: Record<string, string> = {
   PRE_WEDDING: '📸', BIRTHDAY: '🎂', CORPORATE: '🏢', SCHOOL: '🎒', OTHER: '📷',
 }
 
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
 export default function GuestPage() {
   const { token } = useParams<{ token: string }>()
 
   const [stage, setStage]           = useState<Stage>('LOADING')
   const [project, setProject]       = useState<ProjectInfo | null>(null)
   const [photos, setPhotos]         = useState<GuestPhoto[]>([])
-  const [activePhoto, setActivePhoto] = useState<GuestPhoto | null>(null)
-  const [shareToast, setShareToast] = useState(false)
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [downloadChoicePhoto, setDownloadChoicePhoto] = useState<GuestPhoto | null>(null)
   const [errorMsg, setErrorMsg]     = useState('')
 
   const videoRef     = useRef<HTMLVideoElement>(null)
@@ -124,23 +134,28 @@ export default function GuestPage() {
     }
   }
 
-  const handleShare = async (photo: GuestPhoto) => {
-    const shareUrl = `${location.origin}/studio/api/guest/${token}/download/${photo.fileId}`
-    const shareData = { title: photo.filename, url: shareUrl }
-    try {
-      if (navigator.share && (navigator.canShare ? navigator.canShare(shareData) : true)) {
-        await navigator.share(shareData)
-      } else {
-        await navigator.clipboard.writeText(shareUrl)
-        setShareToast(true)
-        setTimeout(() => setShareToast(false), 2500)
-      }
-    } catch {
-      // User cancelled share — ignore
-    }
+  // Single hidden-anchor download, optionally requesting the pristine
+  // original — the download route only honors ?original=true when the
+  // signed guest token itself allows it, so this is safe to always send.
+  const triggerDownload = (fileId: string, original = false) => {
+    const a = document.createElement('a')
+    a.href = `/studio/api/guest/${token}/download/${fileId}${original ? '?original=true' : ''}`
+    a.download = ''
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
   }
 
-  const reset = () => { stopCamera(); setPhotos([]); setActivePhoto(null); setErrorMsg(''); setStage('IDLE') }
+  const handleDownloadRequest = (photo: GuestPhoto) => {
+    if (project?.allowOriginalDownload) setDownloadChoicePhoto(photo)
+    else triggerDownload(photo.fileId)
+  }
+
+  const reset = () => {
+    stopCamera(); setPhotos([]); setLightboxIdx(null); setErrorMsg(''); setStage('IDLE')
+  }
+
+  const lightboxPhotos: LightboxPhoto[] = photos.map(p => ({ fileId: p.fileId, previewUrl: p.previewUrl, filename: p.filename }))
 
   if (stage === 'EXPIRED') return (
     <div className="min-h-screen bg-bg flex items-center justify-center px-4">
@@ -158,7 +173,7 @@ export default function GuestPage() {
     </div>
   )
 
-  const eventLabel = project ? project.eventType.replace(/_/g, ' ') : ''
+  const eventLabel = project ? (project.eventType ?? '').replace(/_/g, ' ') : ''
   const eventDate  = project
     ? new Date(project.eventDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
     : ''
@@ -168,100 +183,52 @@ export default function GuestPage() {
 
       <InAppBrowserGuard />
 
-      {/* Share toast */}
-      {shareToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-text-primary text-bg text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg">
-          Link copied!
-        </div>
+      {/* Photo lightbox — download only, no star/info/share (guest role) */}
+      {lightboxIdx !== null && lightboxPhotos.length > 0 && (
+        <PhotoLightbox
+          photos={lightboxPhotos}
+          index={lightboxIdx}
+          onIndexChange={setLightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+          role="guest"
+          onDownload={(p) => {
+            const photo = photos.find(ph => ph.fileId === p.fileId)
+            if (photo) handleDownloadRequest(photo)
+          }}
+        />
       )}
 
-      {/* Photo detail bottom sheet */}
-      {activePhoto && (
+      {/* Download choice sheet — only shown when the studio has enabled
+          original downloads for this QR link; otherwise Download fires
+          immediately with no sheet at all. */}
+      {downloadChoicePhoto && (
         <div
-          className="fixed inset-0 z-50 flex flex-col justify-end"
-          onClick={() => setActivePhoto(null)}
+          className="fixed inset-0 z-[80] flex flex-col justify-end"
+          onClick={() => setDownloadChoicePhoto(null)}
         >
-          <div className="absolute inset-0 bg-black/80" />
+          <div className="absolute inset-0 bg-black/70" />
           <div
-            className="relative bg-card rounded-t-3xl overflow-hidden flex flex-col"
-            style={{ maxHeight: '92vh' }}
+            className="relative bg-card rounded-t-3xl overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
-            {/* Drag handle */}
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 bg-border rounded-full" />
             </div>
-
-            {/* Close button */}
-            <button
-              onClick={() => setActivePhoto(null)}
-              className="absolute top-3 right-3 w-8 h-8 bg-black/20 hover:bg-black/40 rounded-full flex items-center justify-center transition-colors"
-              aria-label="Close"
-            >
-              <svg className="w-4 h-4 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            {/* Photo preview */}
-            <div className="bg-black flex items-center justify-center overflow-hidden" style={{ height: '55vmax', maxHeight: '62vh' }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={activePhoto.previewUrl}
-                alt={activePhoto.filename}
-                className="max-w-full max-h-full object-contain"
-                draggable={false}
-              />
-            </div>
-
-            {/* File name */}
-            <p className="px-5 pt-4 pb-2 text-sm text-muted truncate">
-              {activePhoto.filename}
-            </p>
-
-            {/* Action buttons */}
-            <div className="flex items-center justify-center gap-6 px-6 py-4 pb-safe">
-              {/* View full size */}
-              <a
-                href={activePhoto.downloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex flex-col items-center gap-2"
-              >
-                <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
-                  <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </div>
-                <span className="text-xs text-muted font-medium">View</span>
-              </a>
-
-              {/* Download */}
-              <a
-                href={`/studio/api/guest/${token}/download/${activePhoto.fileId}`}
-                download={activePhoto.filename}
-                className="flex flex-col items-center gap-2"
-              >
-                <div className="w-16 h-16 bg-accent/15 hover:bg-accent/25 rounded-2xl flex items-center justify-center transition-colors">
-                  <svg className="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                  </svg>
-                </div>
-                <span className="text-xs text-accent font-semibold">Download</span>
-              </a>
-
-              {/* Share */}
+            <p className="text-center text-sm font-bold text-text-primary pt-2 pb-3">Download photo</p>
+            <div className="px-5 pb-safe pb-6 space-y-2">
               <button
-                onClick={() => handleShare(activePhoto)}
-                className="flex flex-col items-center gap-2"
+                onClick={() => { triggerDownload(downloadChoicePhoto.fileId, false); setDownloadChoicePhoto(null) }}
+                className="w-full flex items-center justify-between gap-3 bg-accent text-bg font-bold px-4 py-3.5 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all"
               >
-                <div className="w-16 h-16 bg-border/50 hover:bg-border rounded-2xl flex items-center justify-center transition-colors">
-                  <svg className="w-7 h-7 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-                  </svg>
-                </div>
-                <span className="text-xs text-muted font-medium">Share</span>
+                <span>Download</span>
+                <span className="text-xs font-semibold opacity-80">{fmtBytes(downloadChoicePhoto.sizeBytes)}</span>
+              </button>
+              <button
+                onClick={() => { triggerDownload(downloadChoicePhoto.fileId, true); setDownloadChoicePhoto(null) }}
+                className="w-full flex items-center justify-between gap-3 border border-border text-text-primary font-semibold px-4 py-3.5 rounded-2xl hover:bg-border/40 active:scale-[0.98] transition-all"
+              >
+                <span>Download Original</span>
+                <span className="text-xs font-semibold text-muted">{fmtBytes(downloadChoicePhoto.sizeBytes)}</span>
               </button>
             </div>
           </div>
@@ -320,27 +287,35 @@ export default function GuestPage() {
 
         {/* CAPTURING — camera */}
         {stage === 'CAPTURING' && (
-          <div className="space-y-4">
-            <div className="relative rounded-2xl overflow-hidden bg-black aspect-[3/4] max-h-[70vh]">
+          <div className="space-y-5">
+            <div className="relative rounded-3xl overflow-hidden bg-black aspect-[3/4] max-h-[70vh] shadow-2xl shadow-accent/10">
               <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-40 h-52 rounded-full border-2 border-white/50 border-dashed" />
+                <div className="w-40 h-52 rounded-full border-2 border-accent/70 border-dashed" />
               </div>
-              <p className="absolute bottom-4 left-0 right-0 text-center text-white/70 text-xs">Position your face in the oval</p>
+              <div className="absolute top-3 inset-x-0 flex justify-center pointer-events-none">
+                <span className="bg-black/50 backdrop-blur text-white/90 text-[11px] font-semibold px-3 py-1.5 rounded-full">
+                  Position your face in the oval
+                </span>
+              </div>
             </div>
             <canvas ref={canvasRef} className="hidden" />
-            <button
-              onClick={captureAndSearch}
-              className="w-full bg-accent text-bg text-base font-bold py-4 rounded-2xl hover:bg-accent/90 active:scale-[0.98] transition-all"
-            >
-              Take Photo
-            </button>
-            <button
-              onClick={() => { stopCamera(); setStage('IDLE') }}
-              className="w-full text-sm text-muted hover:text-text-primary transition-colors py-2"
-            >
-              Cancel
-            </button>
+            {/* Camera-app shutter button — small, circular, centered */}
+            <div className="flex flex-col items-center gap-3">
+              <button
+                onClick={captureAndSearch}
+                aria-label="Take photo"
+                className="w-16 h-16 rounded-full border-[3px] border-accent/40 flex items-center justify-center active:scale-95 transition-transform"
+              >
+                <span className="w-12 h-12 rounded-full bg-accent" />
+              </button>
+              <button
+                onClick={() => { stopCamera(); setStage('IDLE') }}
+                className="text-sm text-muted hover:text-text-primary transition-colors py-1"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
@@ -384,11 +359,11 @@ export default function GuestPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-text-primary">✨ {photos.length} photos found</h2>
-                <p className="text-xs text-muted mt-0.5">Tap any photo to view, download or share</p>
+                <p className="text-xs text-muted mt-0.5">Tap any photo to view and download</p>
               </div>
               <button
                 onClick={reset}
-                className="flex-shrink-0 text-xs text-muted hover:text-text-primary transition-colors border border-border px-3 py-1.5 rounded-xl"
+                className="flex-shrink-0 text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
               >
                 New search
               </button>
@@ -396,10 +371,10 @@ export default function GuestPage() {
 
             {/* Photo grid */}
             <div className="grid grid-cols-3 gap-1">
-              {photos.map(photo => (
+              {photos.map((photo, idx) => (
                 <button
                   key={photo.fileId}
-                  onClick={() => setActivePhoto(photo)}
+                  onClick={() => setLightboxIdx(idx)}
                   className="relative aspect-square bg-border/30 rounded-xl overflow-hidden group active:scale-[0.95] transition-transform"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -410,7 +385,6 @@ export default function GuestPage() {
                     loading="lazy"
                     draggable={false}
                   />
-                  {/* Hover/tap overlay with eye icon */}
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 group-active:bg-black/30 transition-colors flex items-center justify-center">
                     <div className="opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity">
                       <svg className="w-6 h-6 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -424,7 +398,7 @@ export default function GuestPage() {
             </div>
 
             <p className="text-[11px] text-muted/50 text-center pb-2">
-              Tap any photo · Download or share individually
+              Tap any photo to view and download
             </p>
           </div>
         )}

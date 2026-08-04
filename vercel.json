@@ -3,6 +3,10 @@
     {
       "path": "/studio/api/cron/storage-check",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/studio/api/cron/scheduled-deletes",
+      "schedule": "0 4 * * *"
     }
   ]
 }

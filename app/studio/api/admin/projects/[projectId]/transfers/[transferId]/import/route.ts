@@ -52,7 +52,9 @@ export async function POST(
       sizeBytes: transfer.sizeBytes,
       storageBackend: 'R2',
       r2Key: transfer.r2Key,
-      watermarkEnabled: true,
+      // Clean by default, same as any other upload — the admin applies
+      // watermark explicitly when they want it, not automatically on import.
+      watermarkEnabled: false,
       displayOrder: Date.now(),
       uploadedAt: now,
       processingStatus: process.env.WATERMARK_LAMBDA_ARN ? 'PROCESSING' : 'READY',
@@ -60,12 +62,16 @@ export async function POST(
     }
     await studioPutItem(TABLES.mediafiles, mediaFile as unknown as Record<string, unknown>)
 
+    // Guarded with attribute_exists — UpdateItem upserts by default, so without
+    // this a project deleted before the import completes would silently
+    // resurrect a bare-bones ghost project record.
     await studioUpdateItem(
       TABLES.projects,
       { studioId, projectId },
       'ADD totalFiles :one SET updatedAt = :now, #s = :active',
       { ':one': 1, ':now': now, ':active': 'ACTIVE' },
-      { '#s': 'status' }
+      { '#s': 'status' },
+      'attribute_exists(studioId)'
     )
 
     if (process.env.WATERMARK_LAMBDA_ARN) {
@@ -75,7 +81,7 @@ export async function POST(
         studioId,
         sourceKey: transfer.r2Key,
         sourceBackend: 'R2',
-        watermarkEnabled: true,
+        watermarkEnabled: mediaFile.watermarkEnabled,
         fileType,
       }).catch((err: unknown) => console.error('[watermark-lambda invoke]', err))
     }

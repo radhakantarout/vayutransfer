@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
     // Sort by createdAt descending, return last 10
     const sorted = transactions
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
       .slice(0, 10)
 
     return NextResponse.json<ApiResponse<Transaction[]>>({
