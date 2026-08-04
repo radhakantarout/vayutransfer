@@ -343,7 +343,7 @@ export default function ProjectDetailPage() {
         <div className="flex gap-1 mb-6 border-b border-border">
           {[
             { label: 'All Photos', href: `/studio/dashboard/projects/${projectId}` },
-            { label: 'People ✨', href: `/studio/dashboard/projects/${projectId}/faces` },
+            { label: 'People ✨', href: `/studio/dashboard/overview?projectSelect=${projectId}` },
             { label: 'Selections', href: `/studio/dashboard/projects/${projectId}/selections` },
             { label: 'Raw Transfers', href: `/studio/dashboard/projects/${projectId}/transfers` },
           ].map(tab => (
