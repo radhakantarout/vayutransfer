@@ -592,6 +592,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.replace('/studio/dashboard/overview')
   }, [searchParams, projects, router])
 
+  // Deep-link straight into one project's real AI Face tab (the flat grid +
+  // groups UI only this EventSection-based view has — the old standalone
+  // /projects/[id]/faces page never got that built and only shows a bare
+  // progress card). Mirrors the clientSelect effect above.
+  useEffect(() => {
+    const projectSelect = searchParams.get('projectSelect')
+    if (!projectSelect || projects.length === 0) return
+    const project = projects.find(p => p.projectId === projectSelect && !p.isPlaceholder)
+    if (!project) return
+    setSelectedIds([project.projectId])
+    setFocusedClient(project.clientName)
+    setSidebarView('projects')
+    setPendingActiveTab('faces')
+    router.replace('/studio/dashboard/overview')
+  }, [searchParams, projects, router])
+
   // Keep the Dashboard tab's highlight in sync with direct navigation/refresh
   // (e.g. visiting /overview straight from a bookmark) — clicking Recent/
   // Starred/Projects afterwards doesn't change the URL, so it won't re-fire
@@ -1369,6 +1385,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onNarrowSelection={(projectId) => { setPendingActiveTab('faces'); setSelectedIds([projectId]) }}
                 initialTab={pendingActiveTab ?? undefined}
                 onActiveTabChange={setCurrentActiveTab}
+                onAiCreditsChanged={loadStats}
               />
             )}
           </div>

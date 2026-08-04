@@ -191,6 +191,11 @@ interface Props {
   // parent, which persists it to sessionStorage so a browser refresh can
   // restore the admin to the same tab via initialTab above.
   onActiveTabChange?: (tab: ActiveTab) => void
+  // Fires once each time an active face-indexing job transitions to done —
+  // lets the parent refresh its own AI-search-credits sidebar widget, which
+  // otherwise only ever loads once on mount and goes stale the moment any
+  // indexing run actually consumes credits.
+  onAiCreditsChanged?: () => void
   // Lets a parent-level bulk action (the global selection pill's star
   // toggle) patch curationStatus straight into this component's own `files`
   // state instantly, instead of waiting on a full loadFiles() re-fetch —
@@ -206,6 +211,7 @@ export default function EventSection({
   onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
   externalCurationUpdate, onNarrowSelection, initialTab, onActiveTabChange,
+  onAiCreditsChanged,
 }: Props) {
   const pathname = usePathname()
 
@@ -549,6 +555,17 @@ export default function EventSection({
     const t = setInterval(() => { loadFaceStatus(); loadFiles() }, 6000)
     return () => clearInterval(t)
   }, [faceStatus?.activeJob, faceStatus?.indexedPhotos, faceStatus?.totalPhotos, loadFaceStatus, loadFiles])
+
+  // Fires onAiCreditsChanged exactly once per indexing run, the moment
+  // activeJob transitions from truthy to falsy — the Lambda increments
+  // aiSearchCreditsUsed server-side as it goes, but nothing was ever telling
+  // the parent's sidebar widget (loaded once on mount) to re-fetch it.
+  const wasIndexingRef = useRef(false)
+  useEffect(() => {
+    const isIndexingNow = !!faceStatus?.activeJob
+    if (wasIndexingRef.current && !isIndexingNow) onAiCreditsChanged?.()
+    wasIndexingRef.current = isIndexingNow
+  }, [faceStatus?.activeJob, onAiCreditsChanged])
 
   const triggerFaceIndexing = async (forceAll?: boolean) => {
     setFaceTriggering(true); setFaceError(null)
