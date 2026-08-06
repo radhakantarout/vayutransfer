@@ -33,6 +33,8 @@ export async function getOrCreateWallet(sessionId: string, skipDevSeed = false):
     balance: devSeedBalance,
     totalLoaded: devSeedBalance,
     totalSpent: 0,
+    freeQuotaUsedBytes: 0,
+    freeQuotaMonthKey: new Date().toISOString().slice(0, 7),
     createdAt: now,
     updatedAt: now,
   }
@@ -54,6 +56,46 @@ export async function getWalletBalance(walletId: string): Promise<number> {
   const wallet = await getItem<Wallet>(WALLETS_TABLE, { walletId })
   if (!wallet) throw new Error('WALLET_NOT_FOUND')
   return wallet.balance
+}
+
+function currentMonthKey(): string {
+  const d = new Date()
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+// Free bytes already used this calendar month — lazily treated as 0 once
+// freeQuotaMonthKey no longer matches the current month, no cron needed to
+// "reset" it. Older wallet records without these fields also read as 0.
+export async function getFreeQuotaUsedBytes(walletId: string): Promise<number> {
+  const wallet = await getItem<Wallet>(WALLETS_TABLE, { walletId })
+  if (!wallet) throw new Error('WALLET_NOT_FOUND')
+  if (wallet.freeQuotaMonthKey !== currentMonthKey()) return 0
+  return wallet.freeQuotaUsedBytes ?? 0
+}
+
+// Records that `bytes` worth of free-quota transfer just happened. Rolls
+// the counter over to the new month automatically if the wallet's last
+// recorded month has passed.
+export async function consumeFreeQuota(walletId: string, bytes: number): Promise<void> {
+  const monthKey = currentMonthKey()
+  const wallet = await getItem<Wallet>(WALLETS_TABLE, { walletId })
+  if (!wallet) throw new Error('WALLET_NOT_FOUND')
+
+  if (wallet.freeQuotaMonthKey !== monthKey) {
+    await updateItem(
+      WALLETS_TABLE,
+      { walletId },
+      'SET freeQuotaUsedBytes = :b, freeQuotaMonthKey = :m, updatedAt = :now',
+      { ':b': bytes, ':m': monthKey, ':now': new Date().toISOString() }
+    )
+  } else {
+    await updateItem(
+      WALLETS_TABLE,
+      { walletId },
+      'SET freeQuotaUsedBytes = freeQuotaUsedBytes + :b, updatedAt = :now',
+      { ':b': bytes, ':now': new Date().toISOString() }
+    )
+  }
 }
 
 export async function deductFromWallet(

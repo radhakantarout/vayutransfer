@@ -60,6 +60,9 @@ export default function Navbar() {
             {session && (
               <Link href="/transfers" className="text-muted hover:text-text-primary transition-colors">My Transfers</Link>
             )}
+            {session && (
+              <Link href="/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
+            )}
             <a
               href={STUDIO_URL}
               className="flex items-center gap-1.5 text-accent hover:text-accent/80 font-semibold transition-colors"

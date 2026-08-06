@@ -4,52 +4,48 @@ export default function PricingPage() {
   return (
     <main className="max-w-4xl mx-auto px-4 py-16">
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-extrabold text-text-primary">Simple, Transparent Pricing</h1>
-        <p className="text-muted mt-3 text-lg">Pay only for what you use. No subscriptions. No hidden fees.</p>
+        <h1 className="text-4xl font-extrabold text-text-primary">Simple, Honest Pricing</h1>
+        <p className="text-muted mt-3 text-lg">10 GB free every month. After that, pay only for what you send.</p>
       </div>
 
-      {/* Pricing slabs */}
+      {/* Free quota */}
+      <div className="bg-success/5 border border-success/30 rounded-2xl p-6 mb-6 text-center">
+        <div className="text-3xl font-extrabold text-success">10 GB free, every month</div>
+        <p className="text-muted mt-2 text-sm max-w-lg mx-auto">
+          Send up to 3 GB in a single transfer for free, as long as you're within your 10 GB
+          monthly allowance. It refills automatically at the start of every month — no card, no catch.
+        </p>
+      </div>
+
+      {/* Flat rate */}
+      <div className="bg-card border border-border rounded-2xl p-6 mb-10 text-center">
+        <div className="text-sm text-muted mb-1">After your free 10 GB is used</div>
+        <div className="text-3xl font-extrabold text-accent">₹4.99 <span className="text-lg font-semibold text-text-primary">per GB</span></div>
+        <p className="text-muted mt-2 text-sm max-w-lg mx-auto">
+          That's it — one price. However many people download your file, however many times,
+          right up until your link expires. No extra charges, ever.
+        </p>
+      </div>
+
+      {/* How it works */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden mb-10">
         <div className="px-6 py-4 border-b border-border bg-bg/50">
-          <h2 className="font-bold text-text-primary">Storage — Pay Per Transfer</h2>
+          <h2 className="font-bold text-text-primary">How it works</h2>
         </div>
         <div className="divide-y divide-border">
           {[
-            { range: 'Under 500 MB', rate: 'Free', note: '' },
-            { range: '500 MB – 2 GB', rate: '₹5 / GB', note: '' },
-            { range: '2 GB – 5 GB', rate: '₹4 / GB', note: 'Volume discount' },
-            { range: '5 GB – 10 GB', rate: '₹3 / GB', note: 'Best rate' },
-          ].map((row) => (
-            <div key={row.range} className="flex items-center justify-between px-6 py-4">
-              <span className="text-text-primary text-sm">{row.range}</span>
-              <div className="text-right">
-                <span className="font-bold text-accent">{row.rate}</span>
-                {row.note && <div className="text-xs text-muted">{row.note}</div>}
+            { title: 'Recharge your wallet', desc: 'Add money once, use it whenever you send files.' },
+            { title: 'Upload & share', desc: 'We tell you the price before you upload — no surprises after.' },
+            { title: 'They download, free', desc: 'Anyone with the link can download as many times as they need.' },
+          ].map((row, i) => (
+            <div key={row.title} className="flex items-start gap-4 px-6 py-4">
+              <div className="w-7 h-7 rounded-full bg-accent/10 text-accent font-bold text-sm flex items-center justify-center flex-shrink-0">
+                {i + 1}
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Download slots */}
-      <div className="bg-card border border-border rounded-2xl overflow-hidden mb-10">
-        <div className="px-6 py-4 border-b border-border bg-bg/50">
-          <h2 className="font-bold text-text-primary">Max Downloads — Priced by File Size</h2>
-          <p className="text-xs text-muted mt-1">Choose how many people can download your file</p>
-        </div>
-        <div className="divide-y divide-border">
-          {[
-            { range: 'Under 500 MB',  slot: 'Free', free: true },
-            { range: '500 MB – 2 GB', slot: '₹14',  free: false },
-            { range: '2 GB – 5 GB',   slot: '₹47',  free: false },
-            { range: '5 GB – 10 GB',  slot: '₹101', free: false },
-          ].map((row) => (
-            <div key={row.range} className="flex items-center justify-between px-6 py-4 text-sm">
-              <span className="text-text-primary">{row.range}</span>
-              {row.free
-                ? <span className="font-bold text-success">Free</span>
-                : <span className="font-bold text-accent">{row.slot} / slot</span>
-              }
+              <div>
+                <div className="font-semibold text-text-primary text-sm">{row.title}</div>
+                <div className="text-muted text-sm">{row.desc}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -57,11 +53,16 @@ export default function PricingPage() {
 
       {/* Example */}
       <div className="bg-accent/5 border border-accent/20 rounded-2xl p-6 mb-10">
-        <h3 className="font-bold text-text-primary mb-4">Example: 1 GB file, 3 downloads</h3>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between"><span className="text-muted">Storage (1 GB at ₹5/GB)</span><span className="text-text-primary">₹5.00</span></div>
-          <div className="flex justify-between"><span className="text-muted">3 downloads allowed (3 × ₹14 — 500MB–2GB tier)</span><span className="text-text-primary">₹42.00</span></div>
-          <div className="border-t border-border pt-2 flex justify-between font-bold"><span className="text-text-primary">Total</span><span className="text-accent">₹47.00</span></div>
+        <h3 className="font-bold text-text-primary mb-4">Example</h3>
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-muted">2 GB wedding video, first transfer this month</span>
+            <span className="font-semibold text-success">Free</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted">5 GB project files</span>
+            <span className="font-semibold text-text-primary">₹24.95</span>
+          </div>
         </div>
       </div>
 

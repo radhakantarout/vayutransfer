@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { calculatePrice } from '@/lib/pricing'
-import { deductFromWallet, getWalletBalance } from '@/lib/wallet'
+import { deductFromWallet, getWalletBalance, getFreeQuotaUsedBytes, consumeFreeQuota } from '@/lib/wallet'
 import { getItem, putItem, queryItems } from '@/lib/aws/dynamodb'
-import { initiateMultipartUpload, getS3Key } from '@/lib/aws/s3'
+import { initiateUpload, getObjectKey, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
 import { logAudit } from '@/lib/audit'
 import {
   MAX_FILE_SIZE_GB,
   MULTIPART_CHUNK_SIZE_BYTES,
   RATE_LIMIT_UPLOADS_PER_HOUR,
+  EXPIRY_DAY_OPTIONS,
+  DEFAULT_EXPIRY_DAYS,
 } from '@/constants/pricing'
 import type { ApiResponse, Transfer, Wallet, AuditEvent } from '@/types'
 
@@ -18,16 +20,19 @@ export async function POST(req: NextRequest) {
       walletId?: string
       fileName?: string
       fileSizeBytes?: number
-      downloadSlots?: number
       recipientEmails?: string[]
       contentType?: string
+      expiryDays?: number
     }
 
-    const { walletId, fileName, fileSizeBytes, downloadSlots, recipientEmails, contentType } = body
+    const { walletId, fileName, fileSizeBytes, recipientEmails, contentType } = body
+    const expiryDays = EXPIRY_DAY_OPTIONS.includes(body.expiryDays as typeof EXPIRY_DAY_OPTIONS[number])
+      ? body.expiryDays!
+      : DEFAULT_EXPIRY_DAYS
 
-    if (!walletId || !fileName || !fileSizeBytes || !downloadSlots) {
+    if (!walletId || !fileName || !fileSizeBytes) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: 'MISSING_PARAMS', message: 'walletId, fileName, fileSizeBytes, downloadSlots are required' },
+        { success: false, error: 'MISSING_PARAMS', message: 'walletId, fileName, fileSizeBytes are required' },
         { status: 400 }
       )
     }
@@ -76,11 +81,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Calculate price and check balance
-    const pricing = calculatePrice(fileSizeBytes, downloadSlots)
+    // Calculate price (free-quota-aware) and check balance
+    const freeUsedBytes = await getFreeQuotaUsedBytes(walletId)
+    const pricing = calculatePrice(fileSizeBytes, freeUsedBytes)
     const balance = await getWalletBalance(walletId)
 
-    if (balance < pricing.totalPaise) {
+    if (!pricing.isFree && balance < pricing.totalPaise) {
       return NextResponse.json<ApiResponse<never>>(
         {
           success: false,
@@ -93,16 +99,24 @@ export async function POST(req: NextRequest) {
 
     // Generate IDs
     const fileId = uuidv4()
-    const s3Key = getS3Key(fileId, fileName)
+    const objectKey = getObjectKey(fileId, fileName)
 
-    // Deduct wallet BEFORE generating upload URL (zero loss guarantee)
-    await deductFromWallet(walletId, pricing.totalPaise, fileId)
+    // Deduct wallet (or consume free quota) BEFORE generating upload URL
+    // (zero loss guarantee)
+    if (pricing.isFree) {
+      await consumeFreeQuota(walletId, fileSizeBytes)
+    } else {
+      await deductFromWallet(walletId, pricing.totalPaise, fileId)
+    }
 
-    // Initiate multipart upload on S3
-    const uploadId = await initiateMultipartUpload(s3Key, contentType ?? 'application/octet-stream')
+    // Initiate multipart upload — new uploads always go to NEW_UPLOAD_BACKEND
+    const uploadId = await initiateUpload(NEW_UPLOAD_BACKEND, objectKey, contentType ?? 'application/octet-stream')
 
-    // Save transfer record
-    const expiryHours = parseInt(process.env.DEFAULT_EXPIRY_HOURS ?? '24', 10)
+    // Save transfer record — expiryTime is always createdAt + expiryDays,
+    // anchored to this initiate timestamp (not completedAt), which is also
+    // the more conservative bound relative to the R2 bucket's own 20-day-
+    // from-object-creation delete rule (initiate always happens slightly
+    // before the object actually finishes uploading).
     const now = new Date().toISOString()
     const transfer: Transfer = {
       fileId,
@@ -110,15 +124,15 @@ export async function POST(req: NextRequest) {
       fileName,
       fileSizeBytes,
       billableGB: pricing.billableGB,
-      downloadSlots,
       downloadsUsed: 0,
       recipientEmails,
       amountDeducted: pricing.totalPaise,
-      storageCostPaise: pricing.storageCostPaise,
-      downloadCostPaise: pricing.downloadCostPaise,
+      isFreeTransfer: pricing.isFree,
       status: 'pending',
-      s3Key,
-      expiryTime: new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString(),
+      storageBackend: NEW_UPLOAD_BACKEND,
+      ...(NEW_UPLOAD_BACKEND === 'R2' ? { r2Key: objectKey } : { s3Key: objectKey }),
+      expiryDays,
+      expiryTime: new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
     }
 
@@ -136,9 +150,7 @@ export async function POST(req: NextRequest) {
         fileName,
         fileSizeBytes,
         billableGB: pricing.billableGB,
-        downloadSlots,
-        storageCostPaise: pricing.storageCostPaise,
-        downloadCostPaise: pricing.downloadCostPaise,
+        isFreeTransfer: pricing.isFree,
         totalDeductedPaise: pricing.totalPaise,
         balanceBeforePaise: balance,
         balanceAfterPaise: balance - pricing.totalPaise,
@@ -159,7 +171,7 @@ export async function POST(req: NextRequest) {
       data: {
         fileId,
         uploadId,
-        s3Key,
+        s3Key: objectKey, // wire-protocol field name kept as-is (client just treats it as an opaque key); the actual backend is looked up server-side from the transfer record on every subsequent call
         totalChunks,
         chunkSizeBytes: MULTIPART_CHUNK_SIZE_BYTES,
         priceBreakdown: pricing,

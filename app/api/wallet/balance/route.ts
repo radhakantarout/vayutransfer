@@ -2,14 +2,34 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth/next'
 import { v4 as uuidv4 } from 'uuid'
-import { getOrCreateWallet } from '@/lib/wallet'
+import { getOrCreateWallet, getFreeQuotaUsedBytes } from '@/lib/wallet'
 import { getUserById } from '@/lib/users'
 import { getItem } from '@/lib/aws/dynamodb'
 import { authOptions } from '@/lib/auth'
 import { formatPaise } from '@/lib/pricing'
+import { FREE_QUOTA_MONTHLY_BYTES } from '@/constants/pricing'
 import type { ApiResponse, Wallet } from '@/types'
 
 const WALLETS_TABLE = process.env.DYNAMO_WALLETS_TABLE ?? 'vayu-wallets'
+
+interface BalanceResponse {
+  walletId: string
+  balancePaise: number
+  balanceFormatted: string
+  freeQuotaUsedBytes: number
+  freeQuotaRemainingBytes: number
+}
+
+async function toBalanceResponse(wallet: Wallet): Promise<BalanceResponse> {
+  const freeQuotaUsedBytes = await getFreeQuotaUsedBytes(wallet.walletId)
+  return {
+    walletId: wallet.walletId,
+    balancePaise: wallet.balance,
+    balanceFormatted: formatPaise(wallet.balance),
+    freeQuotaUsedBytes,
+    freeQuotaRemainingBytes: Math.max(0, FREE_QUOTA_MONTHLY_BYTES - freeQuotaUsedBytes),
+  }
+}
 
 export async function GET(_req: NextRequest) {
   try {
@@ -21,33 +41,17 @@ export async function GET(_req: NextRequest) {
       if (user) {
         const wallet = await getItem<Wallet>(WALLETS_TABLE, { walletId: user.walletId })
         if (wallet) {
-          return NextResponse.json<ApiResponse<{
-            walletId: string
-            balancePaise: number
-            balanceFormatted: string
-          }>>({
+          return NextResponse.json<ApiResponse<BalanceResponse>>({
             success: true,
-            data: {
-              walletId: wallet.walletId,
-              balancePaise: wallet.balance,
-              balanceFormatted: formatPaise(wallet.balance),
-            },
+            data: await toBalanceResponse(wallet),
           })
         }
       }
       // User record missing — create wallet tied to their Google userId
       const wallet = await getOrCreateWallet(session.user.id)
-      return NextResponse.json<ApiResponse<{
-        walletId: string
-        balancePaise: number
-        balanceFormatted: string
-      }>>({
+      return NextResponse.json<ApiResponse<BalanceResponse>>({
         success: true,
-        data: {
-          walletId: wallet.walletId,
-          balancePaise: wallet.balance,
-          balanceFormatted: formatPaise(wallet.balance),
-        },
+        data: await toBalanceResponse(wallet),
       })
     }
 
@@ -59,17 +63,9 @@ export async function GET(_req: NextRequest) {
 
     const wallet = await getOrCreateWallet(sessionId!)
 
-    const response = NextResponse.json<ApiResponse<{
-      walletId: string
-      balancePaise: number
-      balanceFormatted: string
-    }>>({
+    const response = NextResponse.json<ApiResponse<BalanceResponse>>({
       success: true,
-      data: {
-        walletId: wallet.walletId,
-        balancePaise: wallet.balance,
-        balanceFormatted: formatPaise(wallet.balance),
-      },
+      data: await toBalanceResponse(wallet),
     })
 
     if (isNewSession) {

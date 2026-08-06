@@ -1,33 +1,36 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import JSZip from 'jszip'
 import { useSession, signIn } from 'next-auth/react'
 import { useWallet } from '@/lib/wallet-context'
 import { useUpload } from '@/lib/upload-context'
 import UploadZone from '@/components/UploadZone'
 import PriceCalculator from '@/components/PriceCalculator'
+import FilePreviewPanel from '@/components/FilePreviewPanel'
 import UploadProgress from '@/components/UploadProgress'
 import EmailTagInput from '@/components/EmailTagInput'
+import { LockIcon, FolderIcon } from '@/components/icons'
+import { EXPIRY_DAY_OPTIONS, DEFAULT_EXPIRY_DAYS, MAX_FILE_SIZE_GB } from '@/constants/pricing'
 import type { PriceBreakdown, FileEntry } from '@/types'
 
-type PageState = 'idle' | 'pricing' | 'preparing' | 'uploading'
+type PageState = 'idle' | 'pricing' | 'uploading'
 
-const MAX_ZIP_BYTES = 5 * 1024 * 1024 * 1024
+const MAX_TOTAL_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 
 export default function HomePage() {
   const [entries, setEntries] = useState<FileEntry[]>([])
-  const [zipProgress, setZipProgress] = useState(0)
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
   const [pageState, setPageState] = useState<PageState>('idle')
   const [recipientEmails, setRecipientEmails] = useState<string[]>([])
+  const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS)
   const [agreedToTerms, setAgreedToTerms] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentUploadId, setCurrentUploadId] = useState<string | null>(null)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
   const { data: session } = useSession()
-  const { walletId, balancePaise, refreshBalance } = useWallet()
-  const { uploads, startUpload, abortUpload, minimizeUpload } = useUpload()
+  const { walletId, balancePaise, freeQuotaUsedBytes, refreshBalance } = useWallet()
+  const { uploads, startUpload, startBatchUpload, abortUpload, minimizeUpload } = useUpload()
 
   const currentUpload = uploads.find(u => u.id === currentUploadId) ?? null
 
@@ -59,38 +62,21 @@ export default function HomePage() {
     if (newEntries.length === 0) {
       setPageState('idle')
       setPricing(null)
+      setSelectedPath(null)
     } else {
       setPageState('pricing')
+      if (!newEntries.some((e) => e.path === selectedPath)) setSelectedPath(newEntries[0].path)
     }
   }
 
-  const handleUpload = async () => {
+  const handleUpload = () => {
     if (!entries.length || !pricing || !walletId) return
     setError(null)
 
-    let fileToUpload: File
+    const id = entries.length === 1
+      ? startUpload(entries[0].file, pricing, walletId, recipientEmails, expiryDays)
+      : startBatchUpload(entries, pricing, walletId, recipientEmails, expiryDays)
 
-    if (entries.length === 1) {
-      fileToUpload = entries[0].file
-    } else {
-      setPageState('preparing')
-      setZipProgress(0)
-      try {
-        const zip = new JSZip()
-        for (const { file, path } of entries) zip.file(path, file)
-        const blob = await zip.generateAsync(
-          { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
-          (meta) => setZipProgress(Math.round(meta.percent))
-        )
-        fileToUpload = new File([blob], 'package.zip', { type: 'application/zip' })
-      } catch {
-        setError('Failed to create zip package. Please try again.')
-        setPageState('pricing')
-        return
-      }
-    }
-
-    const id = startUpload(fileToUpload, pricing, walletId, recipientEmails)
     setCurrentUploadId(id)
     setPageState('uploading')
   }
@@ -104,6 +90,7 @@ export default function HomePage() {
     setPricing(null)
     setRecipientEmails([])
     setAgreedToTerms(false)
+    setSelectedPath(null)
   }
 
   const handleMinimize = () => {
@@ -114,6 +101,7 @@ export default function HomePage() {
     setPricing(null)
     setRecipientEmails([])
     setAgreedToTerms(false)
+    setSelectedPath(null)
   }
 
   const canUpload =
@@ -121,7 +109,7 @@ export default function HomePage() {
     walletId &&
     balancePaise >= pricing.totalPaise &&
     agreedToTerms &&
-    (!isBundle || totalSizeBytes <= MAX_ZIP_BYTES)
+    totalSizeBytes <= MAX_TOTAL_BYTES
 
   return (
     <div className="min-h-screen bg-bg w-full overflow-x-hidden">
@@ -194,7 +182,9 @@ export default function HomePage() {
           <div className="space-y-4">
             <UploadZone onFilesSelect={handleFilesSelect} entries={entries} />
             <div className="bg-card border border-border rounded-xl p-6 flex flex-col items-center gap-4 text-center">
-              <div className="text-3xl">🔒</div>
+              <div className="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+                <LockIcon className="w-6 h-6" />
+              </div>
               <div>
                 <p className="text-text-primary font-semibold text-lg">Sign in to upload</p>
                 <p className="text-muted text-sm mt-1">Get ₹50 free credit instantly</p>
@@ -219,19 +209,50 @@ export default function HomePage() {
         {pageState === 'pricing' && entries.length > 0 && session && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             <div className="space-y-4">
-              <UploadZone onFilesSelect={handleFilesSelect} entries={entries} />
+              <UploadZone
+                onFilesSelect={handleFilesSelect}
+                entries={entries}
+                selectedPath={selectedPath}
+                onSelectPath={setSelectedPath}
+              />
 
               {isBundle && (
                 <div className="flex items-center gap-2 text-xs text-muted bg-card border border-border rounded-lg px-3 py-2">
-                  <span>🗜️</span>
+                  <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>
-                    {entries.length} files will be bundled into{' '}
-                    <strong className="text-text-primary">package.zip</strong> before uploading
+                    {entries.length} files upload individually — no zipping, folder structure preserved
                   </span>
                 </div>
               )}
 
               <EmailTagInput emails={recipientEmails} onChange={setRecipientEmails} />
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted flex-shrink-0">Link stays active for</span>
+                <div className="flex gap-1.5">
+                  {EXPIRY_DAY_OPTIONS.map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setExpiryDays(days)}
+                      className={`text-xs font-medium px-3 py-1 rounded-full border transition-colors ${
+                        expiryDays === days
+                          ? 'bg-accent/10 border-accent text-accent'
+                          : 'border-border text-muted hover:border-accent/50 hover:text-text-primary'
+                      }`}
+                    >
+                      {days}d
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <PriceCalculator
+                fileSizeBytes={totalSizeBytes}
+                walletBalancePaise={balancePaise}
+                freeQuotaUsedBytes={freeQuotaUsedBytes}
+                onPricingChange={setPricing}
+              />
 
               <label className="flex items-start gap-3 cursor-pointer select-none">
                 <input
@@ -265,38 +286,13 @@ export default function HomePage() {
                   : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
                   ? 'Add credits to upload'
                   : isBundle
-                  ? `Bundle & Upload ${entries.length} files`
+                  ? `Upload ${entries.length} files`
                   : 'Upload & Generate Link'}
               </button>
             </div>
 
             <div className="md:sticky md:top-24">
-              <PriceCalculator
-                fileSizeBytes={totalSizeBytes}
-                walletBalancePaise={balancePaise}
-                onPricingChange={setPricing}
-              />
-            </div>
-          </div>
-        )}
-
-        {pageState === 'preparing' && (
-          <div className="bg-card border border-border rounded-xl p-10 flex flex-col items-center gap-5">
-            <div className="text-5xl animate-pulse">🗜️</div>
-            <div className="text-center">
-              <div className="font-semibold text-text-primary text-lg">Preparing package…</div>
-              <div className="text-muted text-sm mt-1">
-                Compressing {entries.length} files into package.zip
-              </div>
-            </div>
-            <div className="w-full max-w-xs space-y-1">
-              <div className="w-full bg-bg rounded-full h-2 overflow-hidden">
-                <div
-                  className="h-full bg-accent rounded-full transition-all duration-200"
-                  style={{ width: `${zipProgress}%` }}
-                />
-              </div>
-              <div className="text-center text-accent font-bold text-sm">{zipProgress}%</div>
+              <FilePreviewPanel entries={entries} selectedPath={selectedPath} />
             </div>
           </div>
         )}

@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { MAX_FILE_SIZE_GB } from '@/constants/pricing'
+import { FileTypeIcon, UploadCloudIcon, FolderIcon, CloseIcon } from '@/components/icons'
 import type { FileEntry } from '@/types'
 
-const BLOCK_BYTES = 5 * 1024 * 1024 * 1024   // 5 GB
+const BLOCK_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 const WARN_BYTES  = 2 * 1024 * 1024 * 1024   // 2 GB
 
 function formatBytes(bytes: number): string {
@@ -11,17 +13,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
-
-function fileIcon(entry: FileEntry): string {
-  const t = entry.file.type
-  if (t.startsWith('image/')) return '🖼️'
-  if (t.startsWith('video/')) return '🎬'
-  if (t.startsWith('audio/')) return '🎵'
-  if (t.includes('pdf'))      return '📕'
-  if (t.includes('zip') || t.includes('rar') || t.includes('7z')) return '🗜️'
-  if (entry.path.includes('/')) return '📁'
-  return '📄'
 }
 
 // Reads all entries from a directory reader (batches of ≤100)
@@ -64,9 +55,11 @@ interface Props {
   onFilesSelect: (entries: FileEntry[]) => void
   entries?: FileEntry[]
   disabled?: boolean
+  selectedPath?: string | null
+  onSelectPath?: (path: string) => void
 }
 
-export default function UploadZone({ onFilesSelect, entries: entriesProp, disabled }: Props) {
+export default function UploadZone({ onFilesSelect, entries: entriesProp, disabled, selectedPath, onSelectPath }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [entries, setEntries] = useState<FileEntry[]>(entriesProp ?? [])
@@ -131,41 +124,51 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   // ── Files selected view ──────────────────────────────────────────────────
   if (entries.length > 0) {
     return (
-      <div className={`border-2 border-dashed rounded-xl overflow-hidden transition-all duration-200 ${
-        isOverBlock ? 'border-danger' : isOverWarn ? 'border-yellow-500/60' : 'border-success'
+      <div className={`border rounded-2xl overflow-hidden transition-all duration-200 shadow-sm ${
+        isOverBlock ? 'border-danger' : isOverWarn ? 'border-yellow-500/60' : 'border-border'
       }`}>
         {/* Scrollable file list */}
-        <div className="max-h-52 overflow-y-auto divide-y divide-border">
-          {entries.map((entry) => (
-            <div key={entry.path} className="flex items-center gap-3 px-4 py-2">
-              <span className="text-base flex-shrink-0">{fileIcon(entry)}</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-text-primary truncate">{entry.path}</div>
-              </div>
-              <span className="text-xs text-muted flex-shrink-0">{formatBytes(entry.file.size)}</span>
-              <button
-                onClick={() => removeEntry(entry.path)}
-                className="text-muted hover:text-danger transition-colors text-base leading-none flex-shrink-0"
+        <div className="max-h-56 overflow-y-auto divide-y divide-border">
+          {entries.map((entry) => {
+            const isSelected = selectedPath === entry.path
+            return (
+              <div
+                key={entry.path}
+                onClick={() => onSelectPath?.(entry.path)}
+                className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${onSelectPath ? 'cursor-pointer' : ''} ${
+                  isSelected ? 'bg-accent/10' : 'hover:bg-bg'
+                }`}
               >
-                ×
-              </button>
-            </div>
-          ))}
+                <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-accent/20 text-accent' : 'bg-bg text-muted'}`}>
+                  <FileTypeIcon fileName={entry.path} isFolder={entry.path.includes('/')} className="w-4 h-4" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-xs truncate ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>{entry.path}</div>
+                </div>
+                <span className="text-xs text-muted flex-shrink-0">{formatBytes(entry.file.size)}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); removeEntry(entry.path) }}
+                  className="text-muted hover:text-danger transition-colors flex-shrink-0 p-0.5"
+                >
+                  <CloseIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )
+          })}
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-3 bg-card/50 border-t border-border space-y-2">
+        <div className="px-4 py-3 bg-bg/50 border-t border-border space-y-2">
           {isOverBlock && (
-            <p className="text-xs text-danger">Package exceeds 5 GB browser limit. Remove some files or upload individually.</p>
+            <p className="text-xs text-danger">Selection exceeds the {MAX_FILE_SIZE_GB} GB limit. Remove some files.</p>
           )}
           {isOverWarn && (
-            <p className="text-xs text-yellow-400">⚠️ Large package — zipping may be slow on some devices.</p>
+            <p className="text-xs text-yellow-400">Large selection — upload may take a while on slow connections.</p>
           )}
 
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted">
               {entries.length} {entries.length === 1 ? 'file' : 'files'} · {formatBytes(totalBytes)}
-              {entries.length > 1 && <span className="text-accent ml-1">· will be zipped</span>}
             </span>
             <button onClick={() => emit([])} className="text-xs text-danger hover:underline">
               Clear all
@@ -199,7 +202,7 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   return (
     <div
       className={`
-        relative border-2 border-dashed rounded-xl p-10 text-center
+        relative border-2 border-dashed rounded-2xl p-10 text-center
         transition-all duration-200 select-none
         ${dragOver ? 'border-accent bg-accent/5 scale-[1.01]' : 'border-border bg-card hover:border-accent/60'}
         ${disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}
@@ -213,8 +216,8 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
       <input ref={folderRef} type="file" className="hidden" onChange={onInputChange} webkitdirectory="" />
 
       <div className="space-y-4">
-        <div className="text-5xl">
-          {scanning ? '⏳' : dragOver ? '📂' : '☁️'}
+        <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center transition-colors ${dragOver ? 'bg-accent/20 text-accent' : 'bg-accent/10 text-accent'}`}>
+          {dragOver ? <FolderIcon className="w-8 h-8" /> : <UploadCloudIcon className="w-8 h-8" />}
         </div>
         <div className="text-text-primary font-semibold text-lg">
           {scanning ? 'Scanning folders…' : dragOver ? 'Drop to add' : 'Drag & drop files or folders'}
@@ -226,13 +229,13 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
                 onClick={(e) => { e.stopPropagation(); filesRef.current?.click() }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-accent/10 hover:bg-accent/20 border border-accent/30 text-accent text-sm font-medium rounded-lg transition-colors"
               >
-                📄 Add Files
+                <FileTypeIcon fileName="" className="w-4 h-4" /> Add Files
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); folderRef.current?.click() }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-accent/10 hover:bg-accent/20 border border-accent/30 text-accent text-sm font-medium rounded-lg transition-colors"
               >
-                📁 Add Folder
+                <FolderIcon className="w-4 h-4" /> Add Folder
               </button>
             </div>
             <div className="text-muted text-sm">up to 10 GB · any file type · folder structure preserved</div>

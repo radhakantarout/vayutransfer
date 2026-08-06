@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getItem, updateItem } from '@/lib/aws/dynamodb'
-import { abortMultipartUpload } from '@/lib/aws/s3'
+import { abortUpload, transferKey } from '@/lib/aws/storage'
 import { refundWallet } from '@/lib/wallet'
 import { formatPaise } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
@@ -42,8 +42,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Abort S3 multipart upload
-    await abortMultipartUpload(s3Key, uploadId)
+    // Abort the multipart upload — uses the transfer record's own
+    // authoritative key/backend, not the client-supplied s3Key.
+    await abortUpload(transfer.storageBackend, transferKey(transfer), uploadId)
 
     // Mark transfer as failed
     await updateItem(

@@ -5,6 +5,7 @@ import {
   PutCommand,
   UpdateCommand,
   QueryCommand,
+  DeleteCommand,
 } from '@aws-sdk/lib-dynamodb'
 import type { NativeAttributeValue } from '@aws-sdk/lib-dynamodb'
 
@@ -77,4 +78,28 @@ export async function queryItems<T>(
     })
   )
   return (result.Items as T[]) ?? []
+}
+
+// Query on the table's own primary key (partition [+ sort] key) — no GSI.
+// e.g. every TransferFile row for one batchId, where batchId is the HASH key.
+export async function queryByPK<T>(
+  table: string,
+  keyConditionExpression: string,
+  expressionAttributeValues: Record<string, NativeAttributeValue>
+): Promise<T[]> {
+  const result = await docClient.send(
+    new QueryCommand({
+      TableName: table,
+      KeyConditionExpression: keyConditionExpression,
+      ExpressionAttributeValues: expressionAttributeValues,
+    })
+  )
+  return (result.Items as T[]) ?? []
+}
+
+export async function deleteItem(
+  table: string,
+  key: Record<string, NativeAttributeValue>
+): Promise<void> {
+  await docClient.send(new DeleteCommand({ TableName: table, Key: key }))
 }
