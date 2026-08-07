@@ -230,6 +230,44 @@ export function PlusCircleIcon(props: IconProps) {
   )
 }
 
+export function RefreshIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 4v6h6" />
+      <path d="M20 20v-6h-6" />
+      <path d="M4.5 15a8 8 0 0 0 14.5 3" />
+      <path d="M19.5 9A8 8 0 0 0 5 6" />
+    </svg>
+  )
+}
+
+export function WalletIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v3" />
+      <path d="M3 7v10a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H16a2 2 0 1 0 0 4h5" />
+    </svg>
+  )
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" />
+      <path d="M4.5 6h.01" /><path d="M4.5 12h.01" /><path d="M4.5 18h.01" />
+    </svg>
+  )
+}
+
+export function ArrowRightIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M5 12h14" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
+  )
+}
+
 const EXT_ICON: Record<string, (props: IconProps) => JSX.Element> = {
   jpg: ImageIcon, jpeg: ImageIcon, png: ImageIcon, gif: ImageIcon, webp: ImageIcon, svg: ImageIcon, bmp: ImageIcon, avif: ImageIcon,
   mp4: VideoIcon, webm: VideoIcon, mov: VideoIcon, m4v: VideoIcon,

@@ -1,9 +1,17 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
+import { Inter, Sora } from 'next/font/google'
 import './globals.css'
 import Providers from '@/components/Providers'
 import { ConditionalNavbar, ConditionalFooter } from '@/components/ConditionalNavbar'
 import UploadWidget from '@/components/UploadWidget'
+
+// Self-hosted via next/font (built at compile time, no CDN/CSP dependency).
+// Inter was previously referenced by name only in globals.css with nothing
+// actually loading it — this fixes that silent fallback. Sora is a display
+// face for the home page's headlines only (applied via --font-display).
+const inter = Inter({ subsets: ['latin'], variable: '--font-body', display: 'swap' })
+const sora = Sora({ subsets: ['latin'], weight: ['600', '700', '800'], variable: '--font-display', display: 'swap' })
 
 export const metadata: Metadata = {
   title: 'VayuTransfer — Secure File Transfer. Prepaid. No surprises.',
@@ -32,7 +40,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t==='dark')document.documentElement.classList.add('dark')}catch(e){}` }} />
+        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t!=='light')document.documentElement.classList.add('dark')}catch(e){document.documentElement.classList.add('dark')}` }} />
         {!isStudioDomain && (
           <script
             type="application/ld+json"
@@ -51,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           />
         )}
       </head>
-      <body className="min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full">
+      <body className={`${inter.variable} ${sora.variable} min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full font-sans`}>
         <Providers>
           {!isStudioDomain && <ConditionalNavbar />}
           <div className="flex-1">{children}</div>
