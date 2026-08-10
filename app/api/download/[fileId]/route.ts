@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { getItem, updateItem, putItem } from '@/lib/aws/dynamodb'
-import { generateDownloadPresignedUrl } from '@/lib/aws/s3'
+import { getDownloadPresignedUrl, getKeyDownloadPresignedUrl } from '@/lib/aws/storage'
+import { getTransferFiles, transferFileKey } from '@/lib/transferBatch'
 import { logAudit } from '@/lib/audit'
+import { MAX_DOWNLOADS_PER_LINK } from '@/constants/pricing'
 import type { ApiResponse, Transfer, Download } from '@/types'
 
 // ─── GET — file info only, no counter increment ───────────────────────────
-// Called on page load to display file name, size, slots remaining, expiry.
+// Called on page load to display file name, size, expiry. Downloads are
+// unlimited from the user's point of view until the link expires — no
+// "slots" concept is ever surfaced here.
 export async function GET(
   _req: NextRequest,
   { params }: { params: { fileId: string } }
@@ -30,13 +34,6 @@ export async function GET(
     )
   }
 
-  if (transfer.status === 'exhausted' || transfer.downloadsUsed >= transfer.downloadSlots) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: 'DOWNLOAD_LIMIT_REACHED', message: 'All download slots have been used' },
-      { status: 410 }
-    )
-  }
-
   if (transfer.status !== 'active') {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: 'FILE_NOT_READY', message: 'File is not available for download' },
@@ -44,28 +41,36 @@ export async function GET(
     )
   }
 
+  // Batch transfers additionally list their files (name/size/path only —
+  // no keys, no URLs) so the download page can render the list up front.
+  const files = transfer.fileCount
+    ? (await getTransferFiles(transfer))
+        .filter((f) => f.status !== 'failed')
+        .map((f) => ({ fileId: f.fileId, fileName: f.fileName, relativePath: f.relativePath, fileSizeBytes: f.fileSizeBytes }))
+    : undefined
+
   return NextResponse.json<ApiResponse<{
     fileName: string
     fileSizeBytes: number
-    downloadsUsed: number
-    downloadSlots: number
-    downloadsRemaining: number
     expiryTime: string
+    fileCount?: number
+    files?: { fileId: string; fileName: string; relativePath?: string; fileSizeBytes: number }[]
   }>>({
     success: true,
     data: {
       fileName: transfer.fileName,
       fileSizeBytes: transfer.fileSizeBytes,
-      downloadsUsed: transfer.downloadsUsed,
-      downloadSlots: transfer.downloadSlots,
-      downloadsRemaining: transfer.downloadSlots - transfer.downloadsUsed,
       expiryTime: transfer.expiryTime,
+      fileCount: transfer.fileCount,
+      files,
     },
   })
 }
 
 // ─── POST — actual download: increments counter, returns presigned URL ─────
-// Called only when the user clicks "Download File".
+// Called only when the user clicks "Download File". downloadsUsed keeps
+// counting purely for the activity feed; MAX_DOWNLOADS_PER_LINK is a
+// silent abuse ceiling, never shown to the user as a configurable limit.
 export async function POST(
   req: NextRequest,
   { params }: { params: { fileId: string } }
@@ -95,7 +100,6 @@ export async function POST(
   const baseRecord: Omit<Download, 'outcome'> = {
     downloadId, fileId, walletId: transfer.walletId, attemptedAt,
     downloadsUsedAtTime: transfer.downloadsUsed,
-    downloadsAllowedAtTime: transfer.downloadSlots,
     userAgent, ipHash, countryCode,
   }
 
@@ -108,11 +112,11 @@ export async function POST(
     )
   }
 
-  if (transfer.status === 'exhausted' || transfer.downloadsUsed >= transfer.downloadSlots) {
+  if (transfer.downloadsUsed >= MAX_DOWNLOADS_PER_LINK) {
     await putItem(downloadsTable, { ...baseRecord, outcome: 'exhausted' })
-    void logAudit({ eventType: 'DOWNLOAD_BLOCKED_EXHAUSTED', actor: 'user', outcome: 'failure', walletId: transfer.walletId, fileId, downloadId, metadata: { downloadsUsed: transfer.downloadsUsed, downloadSlots: transfer.downloadSlots } })
+    void logAudit({ eventType: 'DOWNLOAD_BLOCKED_EXHAUSTED', actor: 'user', outcome: 'failure', walletId: transfer.walletId, fileId, downloadId, metadata: { downloadsUsed: transfer.downloadsUsed } })
     return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: 'DOWNLOAD_LIMIT_REACHED', message: 'All download slots have been used' },
+      { success: false, error: 'DOWNLOAD_LIMIT_REACHED', message: 'This link has reached its download limit' },
       { status: 410 }
     )
   }
@@ -124,30 +128,43 @@ export async function POST(
     )
   }
 
-  // Atomic increment with optimistic lock
+  // Atomic increment with optimistic lock, still guarded by the silent
+  // abuse ceiling so a burst of concurrent requests can't blow past it.
   const newDownloadsUsed = transfer.downloadsUsed + 1
   try {
     await updateItem(
       transfersTable,
       { fileId },
       'SET downloadsUsed = downloadsUsed + :one',
-      { ':one': 1, ':current': transfer.downloadsUsed },
-      'downloadsUsed = :current'
+      { ':one': 1, ':current': transfer.downloadsUsed, ':max': MAX_DOWNLOADS_PER_LINK },
+      'downloadsUsed = :current AND downloadsUsed < :max'
     )
   } catch {
     return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: 'DOWNLOAD_LIMIT_REACHED', message: 'All download slots have been used' },
+      { success: false, error: 'DOWNLOAD_LIMIT_REACHED', message: 'This link has reached its download limit' },
       { status: 410 }
     )
   }
 
-  // Mark exhausted when last slot is consumed
-  if (newDownloadsUsed >= transfer.downloadSlots) {
-    await updateItem(transfersTable, { fileId }, 'SET #status = :exhausted', { ':exhausted': 'exhausted' }, undefined, { '#status': 'status' })
-    void logAudit({ eventType: 'LINK_EXHAUSTED', actor: 'system', outcome: 'success', walletId: transfer.walletId, fileId, metadata: { downloadSlots: transfer.downloadSlots } })
-  }
+  // Batch transfers spend exactly one visit for the whole selection — every
+  // file's presigned URL is generated and returned together from this one
+  // POST. The client then triggers each file's raw browser download
+  // itself; nothing is zipped server- or client-side.
+  const batchFiles = transfer.fileCount
+    ? await Promise.all(
+        (await getTransferFiles(transfer))
+          .filter((f) => f.status !== 'failed')
+          .map(async (f) => ({
+            fileId: f.fileId,
+            fileName: f.fileName,
+            relativePath: f.relativePath,
+            fileSizeBytes: f.fileSizeBytes,
+            downloadUrl: await getKeyDownloadPresignedUrl(f.storageBackend, transferFileKey(f), f.fileName),
+          }))
+      )
+    : undefined
 
-  const downloadUrl = await generateDownloadPresignedUrl(transfer.s3Key, transfer.fileName)
+  const downloadUrl = batchFiles ? undefined : await getDownloadPresignedUrl(transfer)
 
   await putItem(downloadsTable, { ...baseRecord, outcome: 'success', downloadsUsedAtTime: newDownloadsUsed })
 
@@ -160,26 +177,25 @@ export async function POST(
     metadata: {
       fileName: transfer.fileName,
       fileSizeBytes: transfer.fileSizeBytes,
+      fileCount: transfer.fileCount,
       downloadsUsed: newDownloadsUsed,
-      downloadsAllowed: transfer.downloadSlots,
-      downloadsRemaining: transfer.downloadSlots - newDownloadsUsed,
       minutesToExpiry,
     },
   })
 
   return NextResponse.json<ApiResponse<{
-    downloadUrl: string
+    downloadUrl?: string
+    files?: { fileId: string; fileName: string; relativePath?: string; fileSizeBytes: number; downloadUrl: string }[]
     fileName: string
     fileSizeBytes: number
-    downloadsRemaining: number
     expiryTime: string
   }>>({
     success: true,
     data: {
       downloadUrl,
+      files: batchFiles,
       fileName: transfer.fileName,
       fileSizeBytes: transfer.fileSizeBytes,
-      downloadsRemaining: transfer.downloadSlots - newDownloadsUsed,
       expiryTime: transfer.expiryTime,
     },
   })

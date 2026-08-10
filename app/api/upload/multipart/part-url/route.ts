@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getItem } from '@/lib/aws/dynamodb'
-import { generatePartPresignedUrl } from '@/lib/aws/s3'
+import { getPartPresignedUrl, transferKey } from '@/lib/aws/storage'
 import type { ApiResponse, Transfer } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -40,7 +40,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const presignedUrl = await generatePartPresignedUrl(s3Key, uploadId, partNumber)
+    // Ignores the client-supplied s3Key for the actual call — uses the
+    // transfer record's own authoritative key (via transferKey), so a
+    // stale/mismatched client value can never route to the wrong object.
+    const presignedUrl = await getPartPresignedUrl(transfer.storageBackend, transferKey(transfer), uploadId, partNumber)
 
     return NextResponse.json<ApiResponse<{
       presignedUrl: string

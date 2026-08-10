@@ -110,8 +110,7 @@ export async function sendTransferLinkEmail(
   recipient: string,
   fileName: string,
   downloadUrl: string,
-  expiryTime: string,
-  downloadsAllowed: number
+  expiryTime: string
 ): Promise<void> {
   const expiry = new Date(expiryTime).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -132,7 +131,7 @@ export async function sendTransferLinkEmail(
 
     <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
       <div style="font-weight:600;margin-bottom:4px;">${fileName}</div>
-      <div style="color:#5A7090;font-size:14px;">${downloadsAllowed} download${downloadsAllowed !== 1 ? 's' : ''} allowed · Expires ${expiry} IST</div>
+      <div style="color:#5A7090;font-size:14px;">Expires ${expiry} IST</div>
     </div>
 
     <a href="${downloadUrl}"
@@ -141,8 +140,7 @@ export async function sendTransferLinkEmail(
     </a>
 
     <div style="color:#5A7090;font-size:12px;line-height:1.6;">
-      This link expires on ${expiry} IST or after ${downloadsAllowed} download${downloadsAllowed !== 1 ? 's' : ''}, whichever comes first.
-      Do not share this link with others unless intended.
+      This link expires on ${expiry} IST. Do not share this link with others unless intended.
     </div>
   </div>
 </body>
@@ -158,7 +156,125 @@ export async function sendTransferLinkEmail(
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: {
-            Data: `Your file "${fileName}" is ready.\n\nDownload here: ${downloadUrl}\n\nExpires: ${expiry} IST | Downloads allowed: ${downloadsAllowed}`,
+            Data: `Your file "${fileName}" is ready.\n\nDownload here: ${downloadUrl}\n\nExpires: ${expiry} IST`,
+            Charset: 'UTF-8',
+          },
+        },
+      },
+    })
+  )
+}
+
+// Someone is trying to fulfill the requester's receive-link but their
+// wallet balance is too low to cover it — sent at most once per hour per
+// request (see lastTopupNudgeAt) so a stuck/retrying uploader can't spam
+// the requester's inbox.
+export async function sendReceiveInsufficientBalanceEmail(
+  email: string,
+  neededPaise: number,
+  havePaise: number,
+  topupUrl: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Add funds to receive a file</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;">Someone is trying to send you a file</h2>
+
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <span style="color:#5A7090;">Needed</span>
+        <span>${formatPaise(neededPaise)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;">
+        <span>Your balance</span>
+        <span style="color:#FF6B6B;">${formatPaise(havePaise)}</span>
+      </div>
+    </div>
+
+    <a href="${topupUrl}"
+       style="display:block;background:#00C6FF;color:#0B0F1A;text-align:center;padding:14px;border-radius:8px;font-weight:700;font-size:16px;text-decoration:none;margin-bottom:24px;">
+      Add Funds Now
+    </a>
+
+    <div style="color:#5A7090;font-size:12px;line-height:1.6;">
+      They're waiting on your receive link — add funds and they can finish uploading right away.
+    </div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuTransfer <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: { Data: `Add funds to receive your file — need ${formatPaise(neededPaise)}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: {
+            Data: `Someone is trying to send you a file via your receive link.\n\nNeeded: ${formatPaise(neededPaise)}\nYour balance: ${formatPaise(havePaise)}\n\nAdd funds: ${topupUrl}`,
+            Charset: 'UTF-8',
+          },
+        },
+      },
+    })
+  )
+}
+
+// The receive-link was fulfilled — the requester now has the file(s) in
+// their own account.
+export async function sendFileReceivedEmail(
+  email: string,
+  fileName: string,
+  fileCount: number,
+  downloadUrl: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>You received a file</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;color:#00E5A0;">You received a file!</h2>
+
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
+      <div style="font-weight:600;">${fileName}</div>
+      ${fileCount > 1 ? `<div style="color:#5A7090;font-size:14px;margin-top:4px;">${fileCount} files</div>` : ''}
+    </div>
+
+    <a href="${downloadUrl}"
+       style="display:block;background:#00C6FF;color:#0B0F1A;text-align:center;padding:14px;border-radius:8px;font-weight:700;font-size:16px;text-decoration:none;margin-bottom:24px;">
+      View & Download
+    </a>
+
+    <div style="color:#5A7090;font-size:12px;">
+      This was uploaded through a receive link you shared. It's now saved to your account.
+    </div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuTransfer <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: { Data: `You received ${fileCount > 1 ? `${fileCount} files` : `"${fileName}"`}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: {
+            Data: `You received a file via your receive link.\n\n${fileName}${fileCount > 1 ? ` (${fileCount} files)` : ''}\n\nView & download: ${downloadUrl}`,
             Charset: 'UTF-8',
           },
         },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getItem, updateItem } from '@/lib/aws/dynamodb'
-import { completeMultipartUpload } from '@/lib/aws/s3'
+import { completeUpload, transferKey } from '@/lib/aws/storage'
 import { sendTransferLinkEmail } from '@/lib/aws/ses'
 import { logAudit } from '@/lib/audit'
 import type { ApiResponse, Transfer } from '@/types'
@@ -39,19 +39,21 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Complete the S3 multipart upload
-    await completeMultipartUpload(s3Key, uploadId, parts)
+    // Complete the multipart upload — uses the transfer record's own
+    // authoritative key/backend, not the client-supplied s3Key.
+    await completeUpload(transfer.storageBackend, transferKey(transfer), uploadId, parts)
 
     const now = new Date().toISOString()
-    const expiryHours = parseInt(process.env.DEFAULT_EXPIRY_HOURS ?? '24', 10)
-    const expiryTime = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString()
+    // expiryTime was already set at initiate time (createdAt + expiryDays)
+    // — completion just activates the transfer, it doesn't move the clock.
+    const expiryTime = transfer.expiryTime
 
     // Mark transfer as active
     await updateItem(
       transfersTable,
       { fileId },
-      'SET #status = :active, expiryTime = :expiry, completedAt = :now',
-      { ':active': 'active', ':expiry': expiryTime, ':now': now },
+      'SET #status = :active, completedAt = :now',
+      { ':active': 'active', ':now': now },
       undefined,
       { '#status': 'status' }
     )
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
     // Send email to all recipients
     const recipients = transfer.recipientEmails ?? []
     for (const email of recipients) {
-      sendTransferLinkEmail(email, transfer.fileName, shareableLink, expiryTime, transfer.downloadSlots)
+      sendTransferLinkEmail(email, transfer.fileName, shareableLink, expiryTime)
         .catch((err) => console.error('[ses] email send failed to', email, err))
     }
 
@@ -76,7 +78,6 @@ export async function POST(req: NextRequest) {
       metadata: {
         fileName: transfer.fileName,
         fileSizeBytes: transfer.fileSizeBytes,
-        downloadSlots: transfer.downloadSlots,
         expiryTime,
         shareableLink,
         recipientEmailsSent: transfer.recipientEmails?.length ?? 0,

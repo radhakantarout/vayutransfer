@@ -5,9 +5,15 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
-import { getDownloadSlotCostPaise, formatPaise } from '@/lib/pricing'
+import { getExtensionCostPaise, formatPaise } from '@/lib/pricing'
+import { EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
+import RequestFileModal from '@/components/RequestFileModal'
+import ReceiveRequestsPanel from '@/components/ReceiveRequestsPanel'
+import { FileTypeIcon, PackageIcon, InboxIcon, CopyIcon, ShareIcon, ClockIcon, DownloadIcon, PlusCircleIcon, CheckCircleIcon } from '@/components/icons'
 import type { Transfer } from '@/types'
+
+const EXTEND_TARGETS = [...EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD] as const
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -15,15 +21,14 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-function statusColor(s: Transfer['status']) {
-  if (s === 'active') return 'text-success'
-  if (s === 'expired' || s === 'failed') return 'text-danger'
-  if (s === 'exhausted') return 'text-yellow-400'
-  return 'text-muted'
-}
-
-function perSlotCost(fileSizeBytes: number): number {
-  return getDownloadSlotCostPaise(fileSizeBytes)
+function statusBadge(status: Transfer['status'], expired: boolean) {
+  if (expired) return { label: 'Expired', cls: 'bg-danger/10 text-danger' }
+  switch (status) {
+    case 'active': return { label: 'Active', cls: 'bg-success/10 text-success' }
+    case 'failed': return { label: 'Failed', cls: 'bg-danger/10 text-danger' }
+    case 'pending': return { label: 'Uploading…', cls: 'bg-accent/10 text-accent' }
+    default: return { label: status, cls: 'bg-bg text-muted' }
+  }
 }
 
 export default function TransfersPage() {
@@ -38,11 +43,20 @@ export default function TransfersPage() {
   // Share state
   const [sharingFor, setSharingFor] = useState<string | null>(null)
 
-  // Slot-buying state
-  const [buyingFor, setBuyingFor] = useState<string | null>(null)
-  const [slotsToAdd, setSlotsToAdd] = useState(1)
-  const [buying, setBuying] = useState(false)
-  const [buyError, setBuyError] = useState<string | null>(null)
+  // Activity (download history) state — lazy-loaded per transfer, cached
+  // once fetched so re-toggling open doesn't re-fetch.
+  const [activityFor, setActivityFor] = useState<string | null>(null)
+  const [activityData, setActivityData] = useState<Record<string, { downloadId: string; attemptedAt: string; outcome: string; countryCode?: string }[]>>({})
+  const [activityLoading, setActivityLoading] = useState<string | null>(null)
+
+  // Extend-expiry state
+  const [extendingFor, setExtendingFor] = useState<string | null>(null)
+  const [extending, setExtending] = useState(false)
+  const [extendError, setExtendError] = useState<string | null>(null)
+
+  // Receive-link ("request a file") state
+  const [showRequestModal, setShowRequestModal] = useState(false)
+  const [receiveRefreshKey, setReceiveRefreshKey] = useState(0)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login')
@@ -67,40 +81,41 @@ export default function TransfersPage() {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  const openBuySlots = (fileId: string) => {
-    setBuyingFor(fileId)
-    setSlotsToAdd(1)
-    setBuyError(null)
-  }
-
-  const closeBuySlots = () => {
-    setBuyingFor(null)
-    setBuyError(null)
-  }
-
-  const confirmBuySlots = async (fileId: string) => {
-    setBuying(true)
-    setBuyError(null)
+  const toggleActivity = async (fileId: string) => {
+    if (activityFor === fileId) { setActivityFor(null); return }
+    setActivityFor(fileId)
+    if (activityData[fileId]) return // already fetched, just show it
+    setActivityLoading(fileId)
     try {
-      const res = await fetch(`/api/transfers/${fileId}/add-slots`, {
+      const res = await fetch(`/api/transfers/${fileId}/activity`).then((r) => r.json())
+      if (res.success) setActivityData((prev) => ({ ...prev, [fileId]: res.data.attempts }))
+    } finally {
+      setActivityLoading(null)
+    }
+  }
+
+  const confirmExtend = async (fileId: string, targetDays: number) => {
+    setExtending(true)
+    setExtendError(null)
+    try {
+      const res = await fetch(`/api/transfers/${fileId}/extend-expiry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slots: slotsToAdd }),
+        body: JSON.stringify({ targetDays }),
       })
       const data = await res.json()
       if (!data.success) {
-        setBuyError(data.message ?? 'Failed to add slots')
+        setExtendError(data.message ?? 'Failed to extend')
         return
       }
-      // Refresh transfers list and wallet balance
       const refreshed = await fetch('/api/transfers').then((r) => r.json())
       if (refreshed.success) setTransfers(refreshed.data)
       refreshBalance()
-      closeBuySlots()
+      setExtendingFor(null)
     } catch {
-      setBuyError('Network error — please try again')
+      setExtendError('Network error — please try again')
     } finally {
-      setBuying(false)
+      setExtending(false)
     }
   }
 
@@ -114,15 +129,37 @@ export default function TransfersPage() {
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-10">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-text-primary">My Transfers</h1>
-        <Link
-          href="/"
-          className="bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
-        >
-          + New Transfer
-        </Link>
+      <div className="flex items-center justify-between mb-8 gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary">My Transfers</h1>
+          <p className="text-sm text-muted mt-0.5">Links you've shared and files you've received</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowRequestModal(true)}
+            className="flex items-center gap-1.5 bg-card border border-border text-text-primary text-sm font-semibold px-4 py-2 rounded-xl hover:border-accent/60 hover:shadow-sm transition-all"
+          >
+            <InboxIcon className="w-4 h-4" />
+            Request a File
+          </button>
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 hover:shadow-md transition-all"
+          >
+            <PlusCircleIcon className="w-4 h-4" />
+            New Transfer
+          </Link>
+        </div>
       </div>
+
+      {showRequestModal && (
+        <RequestFileModal
+          onClose={() => setShowRequestModal(false)}
+          onCreated={() => setReceiveRefreshKey((k) => k + 1)}
+        />
+      )}
+
+      <ReceiveRequestsPanel refreshKey={receiveRefreshKey} />
 
       {loading && (
         <div className="flex justify-center py-20">
@@ -136,10 +173,12 @@ export default function TransfersPage() {
 
       {!loading && !error && transfers.length === 0 && (
         <div className="text-center py-20 space-y-4">
-          <div className="text-5xl">📂</div>
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+            <PackageIcon className="w-8 h-8" />
+          </div>
           <div className="text-text-primary font-semibold text-lg">No transfers yet</div>
           <div className="text-muted text-sm">Upload your first file to get a shareable link</div>
-          <Link href="/" className="inline-block bg-accent text-bg text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-2">
+          <Link href="/" className="inline-block bg-accent text-bg text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors mt-2">
             Upload a File
           </Link>
         </div>
@@ -149,64 +188,89 @@ export default function TransfersPage() {
         <div className="space-y-3">
           {transfers.map((t) => {
             const expired = t.status === 'expired' || new Date(t.expiryTime) < new Date()
-            const canExtend = !expired && (t.status === 'active' || t.status === 'exhausted')
-            const isOpen = buyingFor === t.fileId
             const isSharing = sharingFor === t.fileId
+            const isActivityOpen = activityFor === t.fileId
+            const attempts = activityData[t.fileId]
             const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
             const shareLink = `${appUrl}/download/${t.fileId}`
-            const costPerSlot = perSlotCost(t.fileSizeBytes)
-            const totalCost = costPerSlot * slotsToAdd
+            const badge = statusBadge(t.status, expired)
+
+            // Expiry extension — deliberately allowed even once expired-by-time,
+            // as long as the target still lands before the file's real
+            // physical delete (createdAt + MAX_EXPIRY_DAYS_FROM_UPLOAD).
+            const currentExpiryDays = t.expiryDays ?? EXPIRY_DAY_OPTIONS[0]
+            const extendTargets = EXTEND_TARGETS.filter((d) => d > currentExpiryDays)
+            const maxPossibleExpiry = new Date(t.createdAt).getTime() + MAX_EXPIRY_DAYS_FROM_UPLOAD * 24 * 60 * 60 * 1000
+            const canExtendExpiry = t.status !== 'failed' && extendTargets.length > 0 && maxPossibleExpiry > Date.now()
+            const isExtending = extendingFor === t.fileId
+            const extensionUnitCost = getExtensionCostPaise(t.fileSizeBytes)
 
             return (
-              <div key={t.fileId} className="bg-card border border-border rounded-2xl p-5 space-y-3">
+              <div key={t.fileId} className="bg-card border border-border rounded-2xl p-5 space-y-3 hover:border-accent/30 hover:shadow-sm transition-all">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-text-primary truncate">{t.fileName}</span>
-                      <span className={`text-xs font-medium capitalize ${statusColor(expired ? 'expired' : t.status)}`}>
-                        {expired ? 'expired' : t.status}
-                      </span>
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 text-accent flex items-center justify-center flex-shrink-0">
+                      {t.fileCount ? <PackageIcon className="w-5 h-5" /> : <FileTypeIcon fileName={t.fileName} className="w-5 h-5" />}
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-muted mt-1 flex-wrap">
-                      <span>{formatBytes(t.fileSizeBytes)}</span>
-                      <span>·</span>
-                      <span>{t.downloadsUsed}/{t.downloadSlots} downloads used</span>
-                      <span>·</span>
-                      <span>{formatPaise(t.amountDeducted)} spent</span>
-                      <span>·</span>
-                      <span>{new Date(t.createdAt).toLocaleDateString('en-IN')}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-text-primary truncate">{t.fileName}</span>
+                        <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-xs text-muted mt-1 flex-wrap">
+                        <span>{formatBytes(t.fileSizeBytes)}</span>
+                        <span>·</span>
+                        <span>{t.downloadsUsed} download{t.downloadsUsed !== 1 ? 's' : ''}</span>
+                        <span>·</span>
+                        <span className={t.isFreeTransfer ? 'text-success font-medium' : ''}>
+                          {t.isFreeTransfer ? 'Free' : formatPaise(t.amountDeducted)}
+                        </span>
+                        <span>·</span>
+                        <span>{new Date(t.createdAt).toLocaleDateString('en-IN')}</span>
+                        <span>·</span>
+                        <span>{expired ? 'expired' : 'expires'} {new Date(t.expiryTime).toLocaleDateString('en-IN')}</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
                     {!expired && t.status === 'active' && (
                       <button
                         onClick={() => copyLink(t.fileId)}
-                        className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                        title="Copy link"
+                        className="flex items-center gap-1.5 text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
                       >
-                        {copied === t.fileId ? 'Copied!' : 'Copy Link'}
+                        {copied === t.fileId ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
+                        {copied === t.fileId ? 'Copied' : 'Copy'}
                       </button>
                     )}
                     {!expired && t.status === 'active' && (
                       <button
                         onClick={() => setSharingFor(isSharing ? null : t.fileId)}
                         title="Share"
-                        className={`px-2.5 py-1.5 border rounded-lg text-xs transition-colors ${isSharing ? 'bg-accent/10 border-accent text-accent' : 'border-border text-muted hover:border-accent hover:text-accent'}`}
+                        className={`p-1.5 border rounded-lg transition-colors ${isSharing ? 'bg-accent/10 border-accent text-accent' : 'border-border text-muted hover:border-accent hover:text-accent'}`}
                       >
-                        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                        </svg>
+                        <ShareIcon className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    {canExtend && (
+                    {canExtendExpiry && (
                       <button
-                        onClick={() => isOpen ? closeBuySlots() : openBuySlots(t.fileId)}
-                        className="text-xs bg-card hover:bg-border text-muted hover:text-text-primary border border-border px-3 py-1.5 rounded-lg transition-colors font-medium"
+                        onClick={() => { setExtendError(null); setExtendingFor(isExtending ? null : t.fileId) }}
+                        title={expired ? 'Revive link' : 'Extend'}
+                        className={`p-1.5 border rounded-lg transition-colors ${isExtending ? 'bg-accent/10 border-accent text-accent' : 'border-border text-muted hover:border-accent hover:text-accent'}`}
                       >
-                        {isOpen ? 'Cancel' : '+ Slots'}
+                        <ClockIcon className="w-3.5 h-3.5" />
                       </button>
                     )}
+                    <button
+                      onClick={() => toggleActivity(t.fileId)}
+                      title="Activity"
+                      className={`p-1.5 border rounded-lg transition-colors ${isActivityOpen ? 'bg-accent/10 border-accent text-accent' : 'border-border text-muted hover:border-accent hover:text-accent'}`}
+                    >
+                      <DownloadIcon className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
@@ -217,46 +281,63 @@ export default function TransfersPage() {
                   </div>
                 )}
 
-                {/* Inline slot buyer */}
-                {isOpen && (
+                {/* Inline expiry extender */}
+                {isExtending && (
                   <div className="border-t border-border pt-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-text-primary font-medium">Allow more downloads</span>
-                      <span className="text-xs text-muted">{formatPaise(costPerSlot)}/slot</span>
+                    <div className="text-sm text-text-primary font-medium">
+                      {expired ? 'Revive this link — extend its retention' : 'Extend link retention'}
                     </div>
-
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setSlotsToAdd(Math.max(1, slotsToAdd - 1))}
-                        className="w-8 h-8 rounded-lg border border-border text-text-primary hover:bg-border transition-colors font-bold text-lg leading-none"
-                      >
-                        −
-                      </button>
-                      <span className="text-text-primary font-semibold w-8 text-center">{slotsToAdd}</span>
-                      <button
-                        onClick={() => setSlotsToAdd(Math.min(20, slotsToAdd + 1))}
-                        className="w-8 h-8 rounded-lg border border-border text-text-primary hover:bg-border transition-colors font-bold text-lg leading-none"
-                      >
-                        +
-                      </button>
-                      <span className="text-muted text-sm ml-1">
-                        = <span className="text-text-primary font-semibold">{formatPaise(totalCost)}</span> from wallet
-                      </span>
+                    <div className="flex flex-wrap gap-2">
+                      {extendTargets.map((days) => {
+                        const steps = EXTEND_TARGETS.indexOf(days) - EXTEND_TARGETS.indexOf(currentExpiryDays as typeof EXTEND_TARGETS[number])
+                        const cost = extensionUnitCost * Math.max(1, steps)
+                        return (
+                          <button
+                            key={days}
+                            onClick={() => confirmExtend(t.fileId, days)}
+                            disabled={extending}
+                            className="text-xs border border-border rounded-lg px-3 py-2 text-left hover:border-accent/60 transition-colors disabled:opacity-50"
+                          >
+                            <div className="font-semibold text-text-primary">{days} days total</div>
+                            <div className="text-muted">{cost > 0 ? formatPaise(cost) : 'Free'}</div>
+                          </button>
+                        )
+                      })}
                     </div>
-
-                    {buyError && (
+                    <p className="text-[11px] text-muted">
+                      Retention is measured from the original upload, capped at {MAX_EXPIRY_DAYS_FROM_UPLOAD} days for safety.
+                    </p>
+                    {extendError && (
                       <div className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">
-                        {buyError}
+                        {extendError}
                       </div>
                     )}
+                  </div>
+                )}
 
-                    <button
-                      onClick={() => confirmBuySlots(t.fileId)}
-                      disabled={buying}
-                      className="w-full bg-accent text-bg font-semibold py-2.5 rounded-xl text-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {buying ? 'Processing…' : `Confirm — Pay ${formatPaise(totalCost)}`}
-                    </button>
+                {/* Inline activity — every download attempt against this link */}
+                {isActivityOpen && (
+                  <div className="border-t border-border pt-3 space-y-2">
+                    {activityLoading === t.fileId ? (
+                      <div className="text-xs text-muted">Loading…</div>
+                    ) : !attempts || attempts.length === 0 ? (
+                      <div className="text-xs text-muted">No download attempts yet.</div>
+                    ) : (
+                      attempts.map((a) => (
+                        <div key={a.downloadId} className="flex items-center justify-between text-xs">
+                          <span className={
+                            a.outcome === 'success' ? 'text-success' :
+                            a.outcome === 'expired' || a.outcome === 'invalid' ? 'text-danger' : 'text-yellow-500'
+                          }>
+                            {a.outcome === 'success' ? 'Downloaded' : a.outcome === 'expired' ? 'Blocked — expired' : a.outcome === 'exhausted' ? 'Blocked — link limit reached' : 'Blocked — invalid'}
+                            {a.countryCode ? ` · ${a.countryCode}` : ''}
+                          </span>
+                          <span className="text-muted">
+                            {new Date(a.attemptedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+                          </span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
               </div>

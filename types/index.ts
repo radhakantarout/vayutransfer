@@ -24,6 +24,11 @@ export type AuditEventType =
   | 'WEBHOOK_REJECTED'
   | 'USER_CREATED'
   | 'SLOTS_ADDED'
+  | 'EXPIRY_EXTENDED'
+  | 'RECEIVE_REQUEST_CREATED'
+  | 'RECEIVE_UPLOAD_STARTED'
+  | 'RECEIVE_UPLOAD_COMPLETED'
+  | 'RECEIVE_INSUFFICIENT_BALANCE'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -33,27 +38,112 @@ export interface Wallet {
   balance: number       // paise
   totalLoaded: number   // paise, lifetime
   totalSpent: number    // paise, lifetime
+  // Free-tier usage tracking (see constants/pricing.ts): bytes transferred
+  // for free this calendar month, reset lazily whenever freeQuotaMonthKey
+  // no longer matches the current month — no cron needed. Both fields are
+  // optional because older wallet records predate this and are treated as
+  // "0 used, needs reset" on first read (see lib/wallet.ts).
+  freeQuotaUsedBytes?: number
+  freeQuotaMonthKey?: string    // "YYYY-MM"
   createdAt: string     // ISO string
   updatedAt: string     // ISO string
 }
 
+// A Transfer is the shareable LINK/batch — one wallet deduction (or free),
+// one expiry, downloads unlimited until expiry (a silent abuse ceiling is
+// enforced but never surfaced as a "slot count" to the user). It can hold
+// 1..N raw files.
+//
+// Pre-batch-model records (created before this field existed) implicitly
+// ARE the one file they describe: their own fileName/fileSizeBytes/
+// storageBackend/s3Key/r2Key are that single file's real info, and no
+// TransferFile rows exist for them. fileCount is undefined/1 for these.
+//
+// Batch records (fileCount >= 1, created by the batch upload flow) always
+// have exactly fileCount matching TransferFile rows (keyed by this
+// Transfer's fileId as their batchId) — fileName here becomes a display
+// label ("3 files") and fileSizeBytes becomes the total across all of them;
+// neither is a real single object's info once a batch exists, so nothing
+// should read storageBackend/s3Key/r2Key off a batch Transfer directly —
+// always resolve those per-file via TransferFile instead. See
+// lib/transferBatch.ts for the read-path that branches on this.
 export interface Transfer {
   fileId: string
   walletId: string
   fileName: string
   fileSizeBytes: number
   billableGB: number
-  downloadSlots: number
+  // Informational only — how many times this link has been opened for
+  // download. Not a cap; see MAX_DOWNLOADS_PER_LINK in constants/pricing.ts
+  // for the silent abuse ceiling enforced separately.
   downloadsUsed: number
   recipientEmails?: string[]
-  amountDeducted: number        // paise
-  storageCostPaise: number
-  downloadCostPaise: number
-  status: 'pending' | 'active' | 'expired' | 'exhausted' | 'failed'
-  s3Key: string
+  amountDeducted: number        // paise — 0 for a free-quota transfer
+  // True if this transfer landed inside the monthly free quota (see
+  // constants/pricing.ts) and cost nothing — kept for the activity feed's
+  // "Free" badge, not used in any pricing calculation after the fact.
+  isFreeTransfer: boolean
+  status: 'pending' | 'active' | 'expired' | 'failed'
+  // S3->R2 migration: every record has exactly one of these two populated,
+  // matching storageBackend. Existing pre-migration records only ever have
+  // s3Key; new uploads only ever get r2Key. See lib/aws/storage.ts.
+  // For a batch (fileCount set), these describe nothing real — see above.
+  storageBackend: 'S3' | 'R2'
+  s3Key?: string
+  r2Key?: string
+  // Present only on batch transfers — see the type-level comment above.
+  fileCount?: number
+  // The currently-active retention choice (3/7/15/19 days from createdAt) —
+  // expiryTime is always createdAt + expiryDays, recomputed on extension.
+  // Capped at MAX_EXPIRY_DAYS_FROM_UPLOAD (19), always inside the R2
+  // bucket's hard 20-day-from-upload delete rule with a 1-day margin.
+  expiryDays: number
   expiryTime: string            // ISO string
   createdAt: string             // ISO string
   completedAt?: string          // ISO string
+}
+
+// One raw file within a batch Transfer. PK batchId (= the owning
+// Transfer's fileId), SK fileId (its own globally-unique id) — a Query on
+// batchId lists every file in the batch, no GSI needed.
+export interface TransferFile {
+  batchId: string
+  fileId: string
+  fileName: string
+  relativePath?: string         // preserves folder structure on multi-file/folder uploads
+  fileSizeBytes: number
+  contentType: string
+  storageBackend: 'S3' | 'R2'
+  s3Key?: string
+  r2Key?: string
+  uploadId?: string             // set once the multipart upload for this file has started
+  status: 'pending' | 'uploaded' | 'failed'
+  createdAt: string             // ISO string
+}
+
+// A shareable link the wallet owner sends to someone ELSE, asking them to
+// upload a file back. Payment works exactly like a normal send: nothing is
+// reserved at creation, the wallet is deducted only once the uploader picks
+// files and the real total size is known — just resolved from requestId
+// instead of a client-supplied walletId, since the uploader has no wallet
+// of their own. If the balance is short, the uploader is blocked and the
+// requester gets a throttled "add funds" email instead of the upload
+// silently failing.
+export interface ReceiveRequest {
+  requestId: string
+  walletId: string
+  requesterEmail: string
+  message?: string
+  status: 'pending' | 'uploading' | 'fulfilled' | 'expired' | 'cancelled'
+  // Set once an upload has actually started — points at the batch Transfer
+  // (its fileId doubles as the batchId) created for this request.
+  resultFileId?: string
+  // Throttles the insufficient-balance nudge email to once per hour so a
+  // stuck/retrying uploader can't spam the requester's inbox.
+  lastTopupNudgeAt?: string
+  expiryTime: string            // ISO string — link stops accepting uploads after this
+  createdAt: string             // ISO string
+  fulfilledAt?: string          // ISO string
 }
 
 export interface Transaction {
@@ -74,9 +164,10 @@ export interface Download {
   fileId: string
   walletId: string
   attemptedAt: string           // ISO string
+  // 'exhausted' now only means the silent MAX_DOWNLOADS_PER_LINK abuse
+  // ceiling was hit, not a user-configured limit.
   outcome: 'success' | 'expired' | 'exhausted' | 'invalid'
   downloadsUsedAtTime: number
-  downloadsAllowedAtTime: number
   userAgent?: string
   ipHash: string                // SHA256 of IP, never raw IP
   countryCode?: string
@@ -110,12 +201,10 @@ export interface FileEntry {
 
 export interface PriceBreakdown {
   billableGB: number
-  storageCostPaise: number
-  downloadSlots: number
-  downloadCostPaise: number
+  isFree: boolean                // true if this fits the monthly free quota
+  freeQuotaRemainingBytes: number // free bytes left this month, post-this-transfer if isFree
   totalPaise: number
-  totalFormatted: string        // e.g. "₹44.00"
-  slabApplied: string           // e.g. "flat rate" | "₹29/GB" | "₹25/GB" | "₹22/GB"
+  totalFormatted: string        // e.g. "₹44.00", "Free"
   marginPercent: number
 }
 

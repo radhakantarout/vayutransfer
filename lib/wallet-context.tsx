@@ -5,6 +5,8 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 interface WalletContextType {
   walletId: string | null
   balancePaise: number
+  freeQuotaUsedBytes: number
+  freeQuotaRemainingBytes: number
   refreshBalance: () => void
   topupOpen: boolean
   openTopup: () => void
@@ -14,6 +16,8 @@ interface WalletContextType {
 const WalletContext = createContext<WalletContextType>({
   walletId: null,
   balancePaise: 0,
+  freeQuotaUsedBytes: 0,
+  freeQuotaRemainingBytes: 0,
   refreshBalance: () => {},
   topupOpen: false,
   openTopup: () => {},
@@ -23,6 +27,8 @@ const WalletContext = createContext<WalletContextType>({
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [walletId, setWalletId] = useState<string | null>(null)
   const [balancePaise, setBalancePaise] = useState(0)
+  const [freeQuotaUsedBytes, setFreeQuotaUsedBytes] = useState(0)
+  const [freeQuotaRemainingBytes, setFreeQuotaRemainingBytes] = useState(0)
   const [topupOpen, setTopupOpen] = useState(false)
 
   const fetchBalance = useCallback(async () => {
@@ -32,6 +38,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (data.success) {
         setWalletId(data.data.walletId)
         setBalancePaise(data.data.balancePaise)
+        setFreeQuotaUsedBytes(data.data.freeQuotaUsedBytes ?? 0)
+        setFreeQuotaRemainingBytes(data.data.freeQuotaRemainingBytes ?? 0)
       }
     } catch {}
   }, [])
@@ -42,6 +50,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     <WalletContext.Provider value={{
       walletId,
       balancePaise,
+      freeQuotaUsedBytes,
+      freeQuotaRemainingBytes,
       refreshBalance: fetchBalance,
       topupOpen,
       openTopup: () => setTopupOpen(true),

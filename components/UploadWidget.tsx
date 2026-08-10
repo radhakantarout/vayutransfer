@@ -27,10 +27,12 @@ function UploadCard({
   upload,
   onAbort,
   onDismiss,
+  onRetry,
 }: {
   upload: ActiveUpload
   onAbort: () => void
   onDismiss: () => void
+  onRetry: () => void
 }) {
   const [copied, setCopied] = useState(false)
   const [showShare, setShowShare] = useState(false)
@@ -119,14 +121,20 @@ function UploadCard({
       )}
 
       {upload.status === 'failed' && (
-        <div className="text-xs text-danger/80">{upload.error ?? 'Upload failed'}</div>
+        <div className="space-y-1.5">
+          <div className="text-xs text-danger/80">{upload.error ?? 'Upload failed'} — resumes from where it left off</div>
+          <div className="flex gap-3">
+            <button onClick={onRetry} className="text-accent text-xs font-semibold hover:underline">Retry</button>
+            <button onClick={onAbort} className="text-danger text-xs hover:underline">Cancel & refund</button>
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
 export default function UploadWidget() {
-  const { uploads, abortUpload, dismissUpload } = useUpload()
+  const { uploads, abortUpload, dismissUpload, retryUpload } = useUpload()
   const [collapsed, setCollapsed] = useState(false)
 
   // Only show uploads the user has explicitly minimized — done/failed non-minimized ones stay on the page
@@ -170,6 +178,7 @@ export default function UploadWidget() {
               upload={upload}
               onAbort={() => abortUpload(upload.id)}
               onDismiss={() => dismissUpload(upload.id)}
+              onRetry={() => retryUpload(upload.id)}
             />
           ))}
         </div>

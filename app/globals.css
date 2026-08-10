@@ -31,7 +31,6 @@ html.dark {
 body {
   background-color: rgb(var(--bg));
   color: rgb(var(--text));
-  font-family: Inter, system-ui, sans-serif;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -46,6 +45,63 @@ body {
 .dash-bold-text .text-muted {
   color: rgb(var(--text));
   font-weight: 700;
+}
+
+/* VayuTransfer home hero — files "carried on the wind" from one side of
+   the page to the other. Pure CSS motion-path animation, decorative only,
+   lives in its own stacking region above the real dropzone (not layered
+   over it), so it can never interfere with actual drag/drop. */
+.wind-stage {
+  position: relative;
+  height: 220px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent);
+}
+.wind-stage svg { width: 100%; height: 100%; display: block; }
+.wind-path { fill: none; stroke: url(#windPathGrad); stroke-width: 1.4; opacity: 0.55; }
+.wind-path.wind-path-2 { opacity: 0.28; }
+
+.wind-chip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  background: rgb(var(--card));
+  border: 1px solid rgb(var(--border));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--accent));
+  box-shadow: 0 10px 24px -10px rgba(0, 0, 0, 0.35);
+  offset-path: path('M -20 160 C 200 40, 380 220, 600 80 S 960 40, 1180 130');
+  offset-rotate: 0deg;
+  animation: wind-flow 9s linear infinite;
+}
+.wind-chip svg { width: 18px; height: 18px; }
+.wind-chip.wc-1 { animation-delay: 0s; }
+.wind-chip.wc-2 { animation-delay: -2.2s; }
+.wind-chip.wc-3 { animation-delay: -4.4s; }
+.wind-chip.wc-4 { animation-delay: -6.6s; }
+
+@keyframes wind-flow {
+  0%   { offset-distance: 0%;   opacity: 0; transform: scale(0.7); }
+  6%   { opacity: 1; transform: scale(1); }
+  92%  { opacity: 1; transform: scale(1); }
+  100% { offset-distance: 100%; opacity: 0; transform: scale(0.7); }
+}
+
+/* No motion-path support (older browsers) — hide rather than show static,
+   stuck-in-the-corner icons. Respect reduced-motion the same way. */
+@supports not (offset-path: none) {
+  .wind-chip { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wind-chip { animation: none; opacity: 0; }
+}
+@media (max-width: 760px) {
+  .wind-stage { display: none; }
 }
 
 /* VayuStudio — floating photo grid animations */
