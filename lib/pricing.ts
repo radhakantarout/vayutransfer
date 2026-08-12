@@ -1,8 +1,6 @@
 import type { PriceBreakdown } from '@/types'
 import {
   FLAT_RATE_PAISE_PER_GB,
-  FREE_QUOTA_MONTHLY_BYTES,
-  FREE_TRANSFER_MAX_BYTES,
   EXTENSION_RATE_PAISE_PER_GB,
   ESTIMATED_AWS_COST_PER_GB_PAISE,
   RAZORPAY_FEE_PERCENT,
@@ -23,17 +21,12 @@ export function getExtensionCostPaise(fileSizeBytes: number): number {
   return Math.round(billableGB * EXTENSION_RATE_PAISE_PER_GB)
 }
 
-// A transfer is free only if it's both under the per-transfer cap AND
-// still fits inside what's left of the monthly free quota — crossing
-// either line means the whole transfer is charged at the flat rate, not
-// just the portion over the line (see constants/pricing.ts for why).
-export function calculatePrice(fileSizeBytes: number, freeQuotaUsedBytesThisMonth: number): PriceBreakdown {
+// Every transfer costs its exact size × the flat per-GB rate — no free
+// tier, no monthly quota, no per-transfer cap. A new signup's ₹50 bonus is
+// just ordinary wallet balance, spent down like any top-up.
+export function calculatePrice(fileSizeBytes: number): PriceBreakdown {
   const billableGB = roundUpToTenthGB(bytesToGB(fileSizeBytes))
-
-  const freeQuotaRemainingBytes = Math.max(0, FREE_QUOTA_MONTHLY_BYTES - freeQuotaUsedBytesThisMonth)
-  const isFree = fileSizeBytes <= FREE_TRANSFER_MAX_BYTES && fileSizeBytes <= freeQuotaRemainingBytes
-
-  const totalPaise = isFree ? 0 : Math.round(billableGB * FLAT_RATE_PAISE_PER_GB)
+  const totalPaise = Math.round(billableGB * FLAT_RATE_PAISE_PER_GB)
 
   const awsCostPaise = estimateAWSCost(fileSizeBytes)
   const razorpayFeePaise = Math.round(totalPaise * (RAZORPAY_FEE_PERCENT / 100))
@@ -43,10 +36,8 @@ export function calculatePrice(fileSizeBytes: number, freeQuotaUsedBytesThisMont
 
   return {
     billableGB,
-    isFree,
-    freeQuotaRemainingBytes: isFree ? freeQuotaRemainingBytes - fileSizeBytes : freeQuotaRemainingBytes,
     totalPaise,
-    totalFormatted: isFree ? 'Free' : formatPaise(totalPaise),
+    totalFormatted: formatPaise(totalPaise),
     marginPercent,
   }
 }

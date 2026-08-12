@@ -24,8 +24,8 @@ export default function AboutPage() {
         </p>
         <p className="text-muted leading-relaxed">
           VayuTransfer flips that. You load a wallet with credits and only pay when you actually
-          transfer something. Storage under 500 MB is free. Larger files are priced per GB.
-          You choose how many people can download — priced by file size. No idle charges. No credit card on file month after month.
+          transfer something — a flat ₹4.99/GB, calculated to the exact size of what you send.
+          No idle charges. No credit card on file month after month.
         </p>
         <p className="text-muted leading-relaxed">
           We built this to be the simplest, most honest file transfer service for individuals,

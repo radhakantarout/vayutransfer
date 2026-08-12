@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getItem, updateItem } from '@/lib/aws/dynamodb'
 import { createBatchTransfer, type IncomingBatchFile } from '@/lib/transferBatch'
-import { getWalletBalance, getFreeQuotaUsedBytes } from '@/lib/wallet'
+import { getWalletBalance } from '@/lib/wallet'
 import { sendReceiveInsufficientBalanceEmail } from '@/lib/aws/ses'
 import { logAudit } from '@/lib/audit'
 import { calculatePrice } from '@/lib/pricing'
@@ -64,8 +64,7 @@ export async function POST(
       })
     } catch (err) {
       if (err instanceof Error && err.message === 'INSUFFICIENT_BALANCE') {
-        const freeUsedBytes = await getFreeQuotaUsedBytes(receiveRequest.walletId)
-        const pricing = calculatePrice(totalSizeBytes, freeUsedBytes)
+        const pricing = calculatePrice(totalSizeBytes)
         const balance = await getWalletBalance(receiveRequest.walletId)
 
         const nudgeDue = !receiveRequest.lastTopupNudgeAt

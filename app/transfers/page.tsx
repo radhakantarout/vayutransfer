@@ -224,9 +224,7 @@ export default function TransfersPage() {
                         <span>·</span>
                         <span>{t.downloadsUsed} download{t.downloadsUsed !== 1 ? 's' : ''}</span>
                         <span>·</span>
-                        <span className={t.isFreeTransfer ? 'text-success font-medium' : ''}>
-                          {t.isFreeTransfer ? 'Free' : formatPaise(t.amountDeducted)}
-                        </span>
+                        <span>{formatPaise(t.amountDeducted)}</span>
                         <span>·</span>
                         <span>{new Date(t.createdAt).toLocaleDateString('en-IN')}</span>
                         <span>·</span>

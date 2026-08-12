@@ -5,25 +5,24 @@ export default function PricingPage() {
     <main className="max-w-4xl mx-auto px-4 py-16">
       <div className="text-center mb-12">
         <h1 className="text-4xl font-extrabold text-text-primary">Simple, Honest Pricing</h1>
-        <p className="text-muted mt-3 text-lg">10 GB free every month. After that, pay only for what you send.</p>
-      </div>
-
-      {/* Free quota */}
-      <div className="bg-success/5 border border-success/30 rounded-2xl p-6 mb-6 text-center">
-        <div className="text-3xl font-extrabold text-success">10 GB free, every month</div>
-        <p className="text-muted mt-2 text-sm max-w-lg mx-auto">
-          Send up to 3 GB in a single transfer for free, as long as you're within your 10 GB
-          monthly allowance. It refills automatically at the start of every month — no card, no catch.
-        </p>
+        <p className="text-muted mt-3 text-lg">One flat rate, calculated to the exact size of what you send. No tiers, no monthly limits.</p>
       </div>
 
       {/* Flat rate */}
-      <div className="bg-card border border-border rounded-2xl p-6 mb-10 text-center">
-        <div className="text-sm text-muted mb-1">After your free 10 GB is used</div>
+      <div className="bg-card border border-border rounded-2xl p-6 mb-6 text-center">
+        <div className="text-sm text-muted mb-1">Every transfer, any size</div>
         <div className="text-3xl font-extrabold text-accent">₹4.99 <span className="text-lg font-semibold text-text-primary">per GB</span></div>
         <p className="text-muted mt-2 text-sm max-w-lg mx-auto">
-          That's it — one price. However many people download your file, however many times,
-          right up until your link expires. No extra charges, ever.
+          That's it — one price, calculated precisely for the exact size you send (send 100MB, pay for 100MB).
+          However many people download your file, however many times, right up until your link expires. No extra charges, ever.
+        </p>
+      </div>
+
+      {/* Free credit */}
+      <div className="bg-success/5 border border-success/30 rounded-2xl p-6 mb-10 text-center">
+        <div className="text-3xl font-extrabold text-success">₹50 free credit for new accounts</div>
+        <p className="text-muted mt-2 text-sm max-w-lg mx-auto">
+          Sign in with Google and start with ₹50 in your wallet — enough for your first real transfers. No card, no catch, never expires.
         </p>
       </div>
 
@@ -35,7 +34,7 @@ export default function PricingPage() {
         <div className="divide-y divide-border">
           {[
             { title: 'Recharge your wallet', desc: 'Add money once, use it whenever you send files.' },
-            { title: 'Upload & share', desc: 'We tell you the price before you upload — no surprises after.' },
+            { title: 'Upload & share', desc: 'We calculate the exact price for your file size before you upload — no surprises after.' },
             { title: 'They download, free', desc: 'Anyone with the link can download as many times as they need.' },
           ].map((row, i) => (
             <div key={row.title} className="flex items-start gap-4 px-6 py-4">
@@ -56,8 +55,12 @@ export default function PricingPage() {
         <h3 className="font-bold text-text-primary mb-4">Example</h3>
         <div className="space-y-3 text-sm">
           <div className="flex justify-between">
-            <span className="text-muted">2 GB wedding video, first transfer this month</span>
-            <span className="font-semibold text-success">Free</span>
+            <span className="text-muted">100 MB design files</span>
+            <span className="font-semibold text-text-primary">₹0.50</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted">2 GB wedding video</span>
+            <span className="font-semibold text-text-primary">₹9.98</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">5 GB project files</span>

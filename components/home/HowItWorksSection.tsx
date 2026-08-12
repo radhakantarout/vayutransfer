@@ -2,7 +2,7 @@ const STEPS = [
   {
     n: '01',
     title: 'Upload',
-    body: 'Drag in files, a whole folder, or ask someone else to send you one. First 10GB every month is free — after that it’s a flat ₹4.99/GB, and that’s the only charge, ever.',
+    body: 'Drag in files, a whole folder, or ask someone else to send you one. Every transfer is a flat ₹4.99/GB of its exact size — that’s the only charge, ever. New accounts start with ₹50 free credit.',
   },
   {
     n: '02',

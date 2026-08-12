@@ -6,7 +6,7 @@ const FEATURES = [
   { icon: RefreshIcon, title: 'Auto-resume uploads', body: 'Connection drops mid-upload? It picks up exactly where it left off — nothing restarts from zero.' },
   { icon: EyeIcon, title: 'Live file preview', body: 'See images, video, audio, PDFs, text, and Word documents before you even click upload.' },
   { icon: ListIcon, title: 'My Transfers', body: 'Every link you’ve sent — status, downloads, days left — tracked in one place you can check anytime.' },
-  { icon: WalletIcon, title: '10GB free every month', body: 'No credit card required to start. After that it’s one flat rate — no plans to compare, no upsells.' },
+  { icon: WalletIcon, title: '₹50 free credit to start', body: 'No credit card required. After that it’s one flat rate, ₹4.99/GB — no plans to compare, no upsells.' },
 ]
 
 export default function FeaturesSection() {

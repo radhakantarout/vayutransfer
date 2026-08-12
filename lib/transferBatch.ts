@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getItem, putItem, queryByPK, updateItem } from '@/lib/aws/dynamodb'
 import { initiateUpload, getBatchObjectKey, transferKey, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
 import { calculatePrice } from '@/lib/pricing'
-import { deductFromWallet, getWalletBalance, getFreeQuotaUsedBytes, consumeFreeQuota } from '@/lib/wallet'
+import { deductFromWallet, getWalletBalance } from '@/lib/wallet'
 import { MULTIPART_CHUNK_SIZE_BYTES } from '@/constants/pricing'
 import type { PriceBreakdown, Transfer, TransferFile, Wallet } from '@/types'
 
@@ -52,17 +52,12 @@ export async function createBatchTransfer(params: {
   if (!wallet) throw new Error('WALLET_NOT_FOUND')
 
   const totalSizeBytes = files.reduce((sum, f) => sum + f.fileSizeBytes, 0)
-  const freeUsedBytes = await getFreeQuotaUsedBytes(walletId)
-  const pricing = calculatePrice(totalSizeBytes, freeUsedBytes)
+  const pricing = calculatePrice(totalSizeBytes)
   const balanceBeforePaise = await getWalletBalance(walletId)
-  if (!pricing.isFree && balanceBeforePaise < pricing.totalPaise) throw new Error('INSUFFICIENT_BALANCE')
+  if (balanceBeforePaise < pricing.totalPaise) throw new Error('INSUFFICIENT_BALANCE')
 
   const batchId = uuidv4()
-  if (pricing.isFree) {
-    await consumeFreeQuota(walletId, totalSizeBytes)
-  } else {
-    await deductFromWallet(walletId, pricing.totalPaise, batchId)
-  }
+  await deductFromWallet(walletId, pricing.totalPaise, batchId)
 
   const now = new Date().toISOString()
 
@@ -107,7 +102,6 @@ export async function createBatchTransfer(params: {
     downloadsUsed: 0,
     recipientEmails,
     amountDeducted: pricing.totalPaise,
-    isFreeTransfer: pricing.isFree,
     status: 'pending',
     storageBackend: NEW_UPLOAD_BACKEND,
     fileCount: files.length,

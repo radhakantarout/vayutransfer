@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { MAX_FILE_SIZE_GB } from '@/constants/pricing'
 import { FileTypeIcon, UploadCloudIcon, FolderIcon, CloseIcon } from '@/components/icons'
 import DuplicateFilesModal from '@/components/DuplicateFilesModal'
+import PastTransferDuplicateModal from '@/components/PastTransferDuplicateModal'
 import type { FileEntry } from '@/types'
 
 const BLOCK_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
@@ -78,17 +79,42 @@ interface Props {
   disabled?: boolean
   selectedPath?: string | null
   onSelectPath?: (path: string) => void
+  // Opt-in — checks a newly-added single file against the caller's own past
+  // ACTIVE transfers (server-side, by exact fileName+size) and offers "Use
+  // existing link" / "Replace" / "Cancel". Off by default since it only
+  // makes sense for the main upload flow (checking against MY past
+  // transfers) — not the receive-link uploader, who has no wallet of their
+  // own to check against.
+  enableDuplicateCheck?: boolean
 }
 
-export default function UploadZone({ onFilesSelect, entries: entriesProp, disabled, selectedPath, onSelectPath }: Props) {
+interface PastDuplicateMatch {
+  fileId: string
+  shareableLink: string
+  createdAt: string
+  expiryTime: string
+}
+
+export default function UploadZone({ onFilesSelect, entries: entriesProp, disabled, selectedPath, onSelectPath, enableDuplicateCheck }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [entries, setEntries] = useState<FileEntry[]>(entriesProp ?? [])
   // Set only while a just-added batch has name collisions against what's
   // already selected, awaiting the user's Overwrite/Keep both/Cancel choice.
   const [pendingAdd, setPendingAdd] = useState<{ incoming: FileEntry[]; prev: FileEntry[] } | null>(null)
+  // Set only while a just-added single file matches a past ACTIVE transfer
+  // from this same wallet, awaiting Use-existing/Replace/Cancel.
+  const [crossDuplicate, setCrossDuplicate] = useState<{ entry: FileEntry; prev: FileEntry[]; match: PastDuplicateMatch } | null>(null)
+  const [replacing, setReplacing] = useState(false)
   const filesRef = useRef<HTMLInputElement>(null)
   const folderRef = useRef<HTMLInputElement>(null)
+  // Guards the async check-duplicate/invalidate calls against calling
+  // setState after this component has unmounted.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   // Restore entries when re-mounted in pricing layout
   useEffect(() => {
@@ -96,6 +122,29 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   }, [entriesProp])
 
   const emit = useCallback((updated: FileEntry[]) => {
+    setEntries(updated)
+    onFilesSelect(updated)
+  }, [onFilesSelect])
+
+  // Fire-and-continue: checks a single newly-added file against the
+  // wallet's own past ACTIVE transfers. On no match (or on any error —
+  // failing open rather than blocking upload over a non-critical check),
+  // merges the file in as normal; on a match, pauses and surfaces the
+  // Use-existing/Replace/Cancel choice instead.
+  const checkPastDuplicate = useCallback(async (entry: FileEntry, prev: FileEntry[]) => {
+    try {
+      const res = await fetch(
+        `/api/transfers/check-duplicate?fileName=${encodeURIComponent(entry.file.name)}&fileSizeBytes=${entry.file.size}`
+      ).then((r) => r.json())
+      if (!mountedRef.current) return
+      if (res.success && res.data?.duplicate) {
+        setCrossDuplicate({ entry, prev, match: res.data })
+        return
+      }
+    } catch {
+      if (!mountedRef.current) return
+    }
+    const updated = [...prev, entry]
     setEntries(updated)
     onFilesSelect(updated)
   }, [onFilesSelect])
@@ -110,11 +159,35 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
         setPendingAdd({ incoming, prev })
         return prev
       }
+      if (enableDuplicateCheck && incoming.length === 1) {
+        checkPastDuplicate(incoming[0], prev)
+        return prev // merge happens once the async check resolves
+      }
       const updated = [...prev, ...incoming]
       onFilesSelect(updated)
       return updated
     })
-  }, [onFilesSelect])
+  }, [onFilesSelect, enableDuplicateCheck, checkPastDuplicate])
+
+  const dismissCrossDuplicate = () => setCrossDuplicate(null)
+
+  const replaceCrossDuplicate = useCallback(async () => {
+    if (!crossDuplicate) return
+    setReplacing(true)
+    try {
+      await fetch(`/api/transfers/${crossDuplicate.match.fileId}/invalidate`, { method: 'POST' })
+    } catch {
+      // Best-effort — even if invalidation failed, still let the new
+      // upload through rather than blocking the user entirely.
+    }
+    if (!mountedRef.current) return
+    const { entry, prev } = crossDuplicate
+    setReplacing(false)
+    setCrossDuplicate(null)
+    const updated = [...prev, entry]
+    setEntries(updated)
+    onFilesSelect(updated)
+  }, [crossDuplicate, onFilesSelect])
 
   const resolveDuplicates = useCallback((choice: 'overwrite' | 'keep-both' | 'cancel') => {
     if (!pendingAdd) return
@@ -268,12 +341,25 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
           onCancel={() => resolveDuplicates('cancel')}
         />
       )}
+      {crossDuplicate && (
+        <PastTransferDuplicateModal
+          fileName={crossDuplicate.entry.file.name}
+          shareableLink={crossDuplicate.match.shareableLink}
+          createdAt={crossDuplicate.match.createdAt}
+          expiryTime={crossDuplicate.match.expiryTime}
+          replacing={replacing}
+          onUseExisting={dismissCrossDuplicate}
+          onReplace={replaceCrossDuplicate}
+          onCancel={dismissCrossDuplicate}
+        />
+      )}
       </>
     )
   }
 
   // ── Empty drop zone ───────────────────────────────────────────────────────
   return (
+    <>
     <div
       className={`
         relative border-2 border-dashed rounded-2xl p-10 text-center
@@ -317,5 +403,18 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
         )}
       </div>
     </div>
+    {crossDuplicate && (
+      <PastTransferDuplicateModal
+        fileName={crossDuplicate.entry.file.name}
+        shareableLink={crossDuplicate.match.shareableLink}
+        createdAt={crossDuplicate.match.createdAt}
+        expiryTime={crossDuplicate.match.expiryTime}
+        replacing={replacing}
+        onUseExisting={dismissCrossDuplicate}
+        onReplace={replaceCrossDuplicate}
+        onCancel={dismissCrossDuplicate}
+      />
+    )}
+    </>
   )
 }

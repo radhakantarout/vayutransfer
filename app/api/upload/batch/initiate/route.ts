@@ -96,7 +96,6 @@ export async function POST(req: NextRequest) {
         fileCount: files.length,
         totalSizeBytes,
         billableGB: pricing.billableGB,
-        isFreeTransfer: pricing.isFree,
         totalDeductedPaise: pricing.totalPaise,
         balanceBeforePaise: balanceBefore,
         balanceAfterPaise: balanceBefore - pricing.totalPaise,

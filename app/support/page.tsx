@@ -9,8 +9,8 @@ const faqs = [
     a: 'You load credits into your wallet using Razorpay (UPI, cards, netbanking). Your wallet is debited before each upload begins — ensuring you always know the cost upfront. Your balance never expires.',
   },
   {
-    q: 'Is storage under 500 MB really free?',
-    a: 'Yes. Files under 500 MB are completely free — zero storage cost and unlimited downloads included.',
+    q: 'How much does a transfer cost?',
+    a: 'A flat ₹4.99/GB, calculated to the exact size of your file — send 100MB and pay for 100MB, no rounding up to a full GB. There\'s no free tier or monthly limit; new accounts just start with ₹50 free credit to use like any other wallet balance.',
   },
   {
     q: 'What happens if my upload fails?',
@@ -18,15 +18,15 @@ const faqs = [
   },
   {
     q: 'How long does my link stay active?',
-    a: 'All shareable links expire after 24 hours. After expiry, the file is automatically deleted from our servers and the link returns a 404.',
+    a: 'You choose 3, 7, or 15 days when you upload, and can extend it later up to 19 days total. After it expires, the file is automatically deleted and the link stops working.',
   },
   {
     q: 'Do recipients need an account to download?',
-    a: 'No. Anyone with the link can download the file directly — no sign-up required. Each download counts toward the limit you set at upload time.',
+    a: 'No. Anyone with the link can download the file directly — no sign-up required, and downloads are unlimited until the link expires.',
   },
   {
     q: 'How many people can download my file?',
-    a: 'You choose when you upload. Set it to 3 and exactly 3 people can download — after that the link closes automatically. For files above 500 MB, each download is priced by file size (₹14 for 500 MB–2 GB, up to ₹101 for 5–10 GB).',
+    a: 'As many as you like — downloads are unlimited and free until your link expires. There\'s no per-download charge or download-count limit to configure.',
   },
   {
     q: 'What file types and sizes are supported?',
