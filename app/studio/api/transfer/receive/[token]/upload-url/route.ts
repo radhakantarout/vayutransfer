@@ -54,8 +54,8 @@ export async function POST(
     await studioUpdateItem(
       TABLES.transfers,
       { projectId: transfer.projectId, transferId: transfer.transferId },
-      'SET #s = :uploading, filename = :fn, mimeType = :mt, sizeBytes = :sz, r2Key = :key, updatedAt = :now',
-      { ':uploading': 'UPLOADING', ':fn': filename, ':mt': mimeType, ':sz': sizeBytes, ':key': r2Key, ':now': now },
+      'SET #s = :uploading, filename = :fn, mimeType = :mt, sizeBytes = :sz, r2Key = :key, activeUploadId = :uid, updatedAt = :now',
+      { ':uploading': 'UPLOADING', ':fn': filename, ':mt': mimeType, ':sz': sizeBytes, ':key': r2Key, ':uid': uploadId, ':now': now },
       { '#s': 'status' }
     )
 

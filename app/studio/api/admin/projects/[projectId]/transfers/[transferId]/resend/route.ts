@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { transferLinkExpirySeconds, DEFAULT_TRANSFER_EXPIRY_DAYS } from '@/lib/studio/transferConfig'
 import type { StudioTransfer } from '@/types/studio'
 
 const studioUrl = () => process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
-const expirySeconds = () => parseInt(process.env.TRANSFER_LINK_EXPIRY_SECONDS ?? '604800', 10)
+const expirySeconds = transferLinkExpirySeconds
 
 // Mints a brand-new token + expiry, overwriting the old one — same pattern
 // as print-link/share-link (never just extends the existing token's expiry).
@@ -43,8 +44,8 @@ export async function POST(
     await studioUpdateItem(
       TABLES.transfers,
       { projectId, transferId },
-      'SET shareToken = :token, shareExpiresAt = :exp, updatedAt = :now',
-      { ':token': shareToken, ':exp': shareExpiresAt, ':now': now }
+      'SET shareToken = :token, shareExpiresAt = :exp, expiryDays = :days, updatedAt = :now',
+      { ':token': shareToken, ':exp': shareExpiresAt, ':days': DEFAULT_TRANSFER_EXPIRY_DAYS, ':now': now }
     )
 
     const shareUrl = transfer.direction === 'SEND'

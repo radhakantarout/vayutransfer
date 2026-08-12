@@ -122,6 +122,26 @@ export async function listStudioR2Parts(
   return parts
 }
 
+// Sums the byte size of every part R2 has actually received for an
+// in-progress multipart upload — the authoritative source for "how much has
+// actually landed," used by the RECEIVE-direction on-demand progress check
+// (the anonymous uploader's browser never reports progress itself).
+export async function getStudioR2UploadedBytes(r2Key: string, uploadId: string): Promise<number> {
+  let uploaded = 0
+  let partNumberMarker: string | undefined
+  do {
+    const res = await studioR2.send(new ListPartsCommand({
+      Bucket: STUDIO_R2_ORIGINAL_BUCKET,
+      Key: r2Key,
+      UploadId: uploadId,
+      PartNumberMarker: partNumberMarker,
+    }))
+    for (const p of res.Parts ?? []) uploaded += p.Size ?? 0
+    partNumberMarker = res.IsTruncated ? res.NextPartNumberMarker : undefined
+  } while (partNumberMarker)
+  return uploaded
+}
+
 export async function deleteStudioR2Object(key: string): Promise<void> {
   await studioR2.send(new DeleteObjectCommand({ Bucket: STUDIO_R2_ORIGINAL_BUCKET, Key: key }))
 }

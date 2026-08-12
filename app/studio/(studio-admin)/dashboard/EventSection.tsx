@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import QRCode from 'qrcode'
-import type { StudioProject, MediaFile, Selection, StudioTransfer, CurationStatus, StudioFace } from '@/types/studio'
+import type { StudioProject, MediaFile, Selection, CurationStatus, StudioFace } from '@/types/studio'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import { CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit, type PartRecord } from '@/lib/studio/clientUpload'
@@ -12,6 +12,7 @@ import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
 import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
 import UploadModal from '@/components/studio/UploadModal'
+import RawTransfersTab from '@/components/studio/transfers/RawTransfersTab'
 import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
 import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
@@ -321,14 +322,8 @@ export default function EventSection({
   const needsEditingRef   = useRef<HTMLDivElement>(null)
 
   // ── Raw Transfers tab ──────────────────────────────────────
-  const [transfers, setTransfers]           = useState<StudioTransfer[] | null>(null)
-  const [transfersLoading, setTransfersLoading] = useState(false)
-  const [transfersError, setTransfersError] = useState<string | null>(null)
-  const [transfersBusyId, setTransfersBusyId] = useState<string | null>(null)
-  const [transferCopiedId, setTransferCopiedId] = useState<string | null>(null)
-  const [requestingTransfer, setRequestingTransfer] = useState(false)
-  const [sendTransferProgress, setSendTransferProgress] = useState<{ filename: string; percent: number } | null>(null)
-  const transferFileInputRef = useRef<HTMLInputElement>(null)
+  // All state/data-fetching for this tab now lives in RawTransfersTab.tsx —
+  // see its render below.
 
   // ── Admin photo preview (lightbox) ─────────────────────────
   // 'selected' = the floating-pill "Preview" flow (only currently-selected
@@ -649,105 +644,6 @@ export default function EventSection({
     if (res.success) setSelItems(res.data)
     setSelItemsLoading(false)
   }, [project.projectId, selItems])
-
-  // ── Raw Transfers tab functions ────────────────────────────
-  const loadTransfers = useCallback(async () => {
-    setTransfersLoading(true)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`).then(r => r.json())
-    if (res.success) setTransfers(res.data.transfers)
-    setTransfersLoading(false)
-  }, [project.projectId])
-
-  // Poll while any RECEIVE transfer is still awaiting/mid-upload
-  useEffect(() => {
-    if (activeTab !== 'transfers') return
-    const active = (transfers ?? []).some(t => t.status === 'PENDING' || t.status === 'UPLOADING')
-    if (!active) return
-    const timer = setInterval(loadTransfers, 5000)
-    return () => clearInterval(timer)
-  }, [activeTab, transfers, loadTransfers])
-
-  const transferShareUrl = (t: StudioTransfer): string => {
-    const base = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
-    return `${base}/studio/transfer/${t.direction === 'SEND' ? 'send' : 'receive'}/${t.shareToken}`
-  }
-
-  const copyTransferLink = async (t: StudioTransfer) => {
-    await navigator.clipboard.writeText(transferShareUrl(t))
-    setTransferCopiedId(t.transferId)
-    setTimeout(() => setTransferCopiedId(null), 2000)
-  }
-
-  const requestTransferFile = async () => {
-    setRequestingTransfer(true)
-    setTransfersError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ direction: 'RECEIVE' }),
-    }).then(r => r.json())
-    setRequestingTransfer(false)
-    if (!res.success) { setTransfersError(res.message ?? 'Could not create request link'); return }
-    await loadTransfers()
-  }
-
-  const sendTransferFile = async (file: File) => {
-    setTransfersError(null)
-    setSendTransferProgress({ filename: file.name, percent: 0 })
-    const partCount = Math.ceil(file.size / CHUNK_SIZE)
-    try {
-      const initRes = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ direction: 'SEND', filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
-      }).then(r => r.json())
-      if (!initRes.success) throw new Error(initRes.message ?? 'Could not start upload')
-      const { transferId, uploadId, presignedUrls } = initRes.data
-
-      const parts: PartRecord[] = await uploadFileInChunks(file, presignedUrls, [], (_bytes, partsDone) => {
-        setSendTransferProgress({ filename: file.name, percent: Math.round((partsDone / partCount) * 100) })
-      })
-
-      const completeRes = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/upload-complete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadId, parts }),
-      }).then(r => r.json())
-      if (!completeRes.success) throw new Error(completeRes.message ?? 'Could not finish upload')
-
-      setSendTransferProgress(null)
-      await loadTransfers()
-    } catch (err) {
-      setSendTransferProgress(null)
-      setTransfersError(err instanceof Error ? err.message : 'Upload failed')
-    }
-  }
-
-  const resendTransfer = async (transferId: string) => {
-    setTransfersBusyId(transferId)
-    setTransfersError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/resend`, { method: 'POST' }).then(r => r.json())
-    setTransfersBusyId(null)
-    if (!res.success) { setTransfersError(res.message ?? 'Could not regenerate link'); return }
-    await loadTransfers()
-  }
-
-  const importTransferToGallery = async (transferId: string) => {
-    setTransfersBusyId(transferId)
-    setTransfersError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}/import`, { method: 'POST' }).then(r => r.json())
-    setTransfersBusyId(null)
-    if (!res.success) { setTransfersError(res.message ?? 'Could not import to gallery'); return }
-    await loadTransfers()
-    loadFiles(); onUpdated()
-  }
-
-  const removeTransfer = async (transferId: string) => {
-    if (!confirm('Delete this transfer? This cannot be undone.')) return
-    setTransfersBusyId(transferId)
-    setTransfersError(null)
-    const res = await fetch(`/studio/api/admin/projects/${project.projectId}/transfers/${transferId}`, { method: 'DELETE' }).then(r => r.json())
-    setTransfersBusyId(null)
-    if (!res.success) { setTransfersError(res.message ?? 'Could not delete transfer'); return }
-    await loadTransfers()
-  }
 
   const generatePrintLink = async () => {
     setPrintGenerating(true)
@@ -1213,7 +1109,6 @@ export default function EventSection({
     if (tab === 'faces' && !faceStatus && !faceLoading) loadFaceStatus()
     if (tab === 'faces' && faceGroups === null && !faceGroupsLoading) loadFaceGroups()
     if (tab === 'selections') loadSelItems()
-    if (tab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
   }
 
   // Mounting directly onto a non-default tab (e.g. via initialTab, or a
@@ -1226,7 +1121,6 @@ export default function EventSection({
       if (!faceStatus && !faceLoading) loadFaceStatus()
       if (faceGroups === null && !faceGroupsLoading) loadFaceGroups()
     }
-    if (activeTab === 'transfers' && transfers === null && !transfersLoading) loadTransfers()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -2798,120 +2692,7 @@ export default function EventSection({
 
         {/* ── Raw Transfers tab ─────────────────────────────────── */}
         {activeTab === 'transfers' && (
-          <div className="p-5 space-y-4">
-            <p className="text-xs text-muted">
-              Send large RAW files to anyone, or request one back — no login required for the other side, no watermarking.
-            </p>
-
-            {transfersError && (
-              <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-3 text-sm text-danger">{transfersError}</div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => transferFileInputRef.current?.click()}
-                disabled={!!sendTransferProgress}
-                className="flex-1 bg-accent text-bg text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-accent/90 disabled:opacity-50 transition-colors"
-              >
-                ⬆ Send Raw File
-              </button>
-              <input
-                ref={transferFileInputRef}
-                type="file"
-                className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) sendTransferFile(f); e.target.value = '' }}
-              />
-              <button
-                onClick={requestTransferFile}
-                disabled={requestingTransfer}
-                className="flex-1 border border-border text-text-primary text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-border/40 disabled:opacity-50 transition-colors"
-              >
-                {requestingTransfer ? 'Creating…' : '📥 Request File'}
-              </button>
-            </div>
-
-            {sendTransferProgress && (
-              <div className="border border-border rounded-xl px-4 py-3 space-y-2">
-                <div className="text-sm text-text-primary break-all">{sendTransferProgress.filename}</div>
-                <div className="w-full bg-bg border border-border rounded-full h-2 overflow-hidden">
-                  <div className="bg-accent h-full transition-all" style={{ width: `${sendTransferProgress.percent}%` }} />
-                </div>
-                <div className="text-xs text-muted">Uploading… {sendTransferProgress.percent}%</div>
-              </div>
-            )}
-
-            {transfersLoading && transfers === null ? (
-              <div className="flex justify-center py-10">
-                <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : (transfers ?? []).length === 0 && !sendTransferProgress ? (
-              <div className="border border-dashed border-border rounded-2xl p-8 text-center space-y-2">
-                <div className="text-3xl">📁</div>
-                <p className="text-sm text-muted">No transfers yet for this event.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {(transfers ?? []).map(t => (
-                  <div key={t.transferId} className="border border-border rounded-xl p-4 space-y-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full border border-border text-muted">
-                            {t.direction === 'SEND' ? '⬆ Sent' : '📥 Requested'}
-                          </span>
-                          <span className={`text-xs font-semibold ${
-                            t.status === 'READY' ? 'text-success' :
-                            t.status === 'UPLOADING' ? 'text-accent' :
-                            t.status === 'FAILED' || t.status === 'EXPIRED' ? 'text-danger' : 'text-muted'
-                          }`}>
-                            {t.status === 'PENDING' ? 'Awaiting upload' :
-                             t.status === 'UPLOADING' ? 'Uploading…' :
-                             t.status === 'READY' ? 'Ready' :
-                             t.status === 'FAILED' ? 'Failed' : 'Expired'}
-                          </span>
-                          {t.importedToGallery && <span className="text-xs font-semibold text-success">✓ In gallery</span>}
-                        </div>
-                        <div className="text-sm text-text-primary font-medium mt-1 truncate">
-                          {t.filename ?? (t.direction === 'RECEIVE' ? 'Waiting for upload…' : '—')}
-                        </div>
-                        <div className="text-xs text-muted mt-0.5">
-                          {t.sizeBytes ? fmtBytes(t.sizeBytes) : '—'} · {fmtDate(t.createdAt)}
-                          {t.direction === 'SEND' && t.downloadCount > 0 && ` · downloaded ${t.downloadCount}×`}
-                        </div>
-                        {t.note && <div className="text-xs text-muted italic mt-1">"{t.note}"</div>}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 flex-wrap pt-1">
-                      {(t.status === 'PENDING' || t.status === 'READY') && (
-                        <button onClick={() => copyTransferLink(t)}
-                          className="text-xs border border-border text-muted font-semibold px-3 py-1.5 rounded-lg hover:bg-border/40 transition-colors">
-                          {transferCopiedId === t.transferId ? '✓ Copied!' : '🔗 Copy Link'}
-                        </button>
-                      )}
-                      {t.status !== 'UPLOADING' && (
-                        <button onClick={() => resendTransfer(t.transferId)} disabled={transfersBusyId === t.transferId}
-                          className="text-xs border border-border text-muted font-semibold px-3 py-1.5 rounded-lg hover:bg-border/40 disabled:opacity-50 transition-colors">
-                          ↻ Resend
-                        </button>
-                      )}
-                      {t.direction === 'RECEIVE' && t.status === 'READY' && !t.importedToGallery && (
-                        <button onClick={() => importTransferToGallery(t.transferId)} disabled={transfersBusyId === t.transferId}
-                          className="text-xs bg-accent text-bg font-semibold px-3 py-1.5 rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors">
-                          {transfersBusyId === t.transferId ? 'Importing…' : '+ Import to Gallery'}
-                        </button>
-                      )}
-                      {!t.importedToGallery && (
-                        <button onClick={() => removeTransfer(t.transferId)} disabled={transfersBusyId === t.transferId}
-                          className="text-xs border border-danger/30 text-danger font-semibold px-3 py-1.5 rounded-lg hover:bg-danger/10 disabled:opacity-50 transition-colors">
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <RawTransfersTab project={project} activeSourceProjects={activeSourceProjects} />
         )}
 
       </div>{/* end card */}

@@ -4,10 +4,11 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2TransferKey } from '@/lib/studio/r2'
 import { syncBillingCycle, checkStorageAvailable } from '@/lib/studio/quota'
+import { transferLinkExpirySeconds, DEFAULT_TRANSFER_EXPIRY_DAYS } from '@/lib/studio/transferConfig'
 import type { StudioProject, StudioTransfer, Studio } from '@/types/studio'
 
 const studioUrl = () => process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
-const expirySeconds = () => parseInt(process.env.TRANSFER_LINK_EXPIRY_SECONDS ?? '604800', 10)
+const expirySeconds = transferLinkExpirySeconds
 
 // GET — list all transfers (both directions) for the tab
 export async function GET(
@@ -97,6 +98,7 @@ export async function POST(
         filename, mimeType, sizeBytes, r2Key,
         status: 'UPLOADING',
         shareToken, shareExpiresAt,
+        expiryDays: DEFAULT_TRANSFER_EXPIRY_DAYS,
         downloadCount: 0,
         importedToGallery: false,
         note,
@@ -120,6 +122,7 @@ export async function POST(
       projectId, transferId, studioId, direction: 'RECEIVE',
       status: 'PENDING',
       shareToken, shareExpiresAt,
+      expiryDays: DEFAULT_TRANSFER_EXPIRY_DAYS,
       downloadCount: 0,
       importedToGallery: false,
       note,

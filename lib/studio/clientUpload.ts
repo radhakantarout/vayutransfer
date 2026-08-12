@@ -17,20 +17,36 @@ export const PART_UPLOAD_TIMEOUT_MS = 120_000
 // shorter timeout here still gives real headroom without letting a truly
 // wedged request sit unnoticed for two minutes.
 export const UPLOAD_JSON_TIMEOUT_MS = 30_000
+// How many parts of a SINGLE file upload concurrently — a single TCP stream
+// often under-uses available bandwidth, especially on higher-latency
+// connections, so running a few in parallel gets closer to the uploader's
+// actual ceiling. Same order of magnitude as MAX_CONCURRENT_UPLOADS (the
+// cross-file concurrency cap in EventSection.tsx) — kept modest so it
+// doesn't hold too many 50MB chunks in memory at once or overwhelm a slow
+// connection with competing streams.
+export const PART_UPLOAD_CONCURRENCY = 4
 
 export type PartRecord = { PartNumber: number; ETag: string }
 
 // Retries a transient network blip (common on slow connections) before
 // giving up on this part — most failures resolve within 1-2 retries without
 // the user ever needing to notice or manually resume.
-export async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
+//
+// `signal` is an optional caller-provided cancel signal (distinct from the
+// fixed per-part timeout below) — a deliberate cancel is never retried, it
+// propagates immediately so the caller's own cancel flow can clean up.
+export async function uploadPartWithRetry(url: string, chunk: Blob, signal?: AbortSignal): Promise<string> {
   let lastErr: unknown
   for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
+    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
     try {
-      const res = await fetch(url, { method: 'PUT', body: chunk, signal: AbortSignal.timeout(PART_UPLOAD_TIMEOUT_MS) })
+      const timeoutSignal = AbortSignal.timeout(PART_UPLOAD_TIMEOUT_MS)
+      const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+      const res = await fetch(url, { method: 'PUT', body: chunk, signal: combined })
       if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
       return res.headers.get('ETag') ?? ''
     } catch (err) {
+      if (signal?.aborted) throw err
       lastErr = err
       if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
     }
@@ -64,30 +80,55 @@ export async function runWithConcurrencyLimit<T>(
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runNext()))
 }
 
-// Uploads every remaining chunk of `file` in order, skipping any part number
-// already present in `completedParts` (resume). Calls `onProgress` after
-// every part (completed or skipped) with the running byte count.
+// Uploads every remaining chunk of `file`, skipping any part number already
+// present in `completedParts` (resume). Up to PART_UPLOAD_CONCURRENCY parts
+// run at once (see runWithConcurrencyLimit) rather than one at a time — R2/S3
+// multipart uploads don't require parts to land in order, only that the
+// final list handed to CompleteMultipartUpload is sorted by PartNumber,
+// which is why `parts` below is a pre-sized array written by index rather
+// than a push (a push would silently reorder the list under concurrency).
+// Calls `onProgress` after every part (completed or skipped) with the
+// running byte count — tracked via shared counters since parts can now
+// finish in any order, not assumed to arrive sequentially.
+//
+// `signal` is optional and purely additive — every existing caller that
+// doesn't pass one keeps working exactly as before. Passing one lets a
+// caller cancel mid-upload (checked before each chunk, and threaded into the
+// in-flight PUT itself so a cancel takes effect immediately rather than
+// waiting for the current chunk to finish).
 export async function uploadFileInChunks(
   file: File,
   presignedUrls: string[],
   completedParts: PartRecord[],
-  onProgress?: (uploadedBytes: number, partsDone: number, partCount: number) => void
+  onProgress?: (uploadedBytes: number, partsDone: number, partCount: number) => void,
+  signal?: AbortSignal,
+  concurrency = PART_UPLOAD_CONCURRENCY
 ): Promise<PartRecord[]> {
   const partCount = presignedUrls.length
-  const parts: PartRecord[] = []
+  const parts: PartRecord[] = new Array(partCount)
+  let uploadedBytes = 0
+  let partsDone = 0
 
-  for (let i = 0; i < partCount; i++) {
-    const partNumber = i + 1
-    const already = completedParts.find((p) => p.PartNumber === partNumber)
-    if (already) {
-      parts.push(already)
-    } else {
-      const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-      const etag = await uploadPartWithRetry(presignedUrls[i], chunk)
-      parts.push({ PartNumber: partNumber, ETag: etag })
+  await runWithConcurrencyLimit(
+    Array.from({ length: partCount }, (_, i) => i),
+    concurrency,
+    async (i) => {
+      if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+      const partNumber = i + 1
+      const partSize = Math.min(CHUNK_SIZE, file.size - i * CHUNK_SIZE)
+      const already = completedParts.find((p) => p.PartNumber === partNumber)
+      if (already) {
+        parts[i] = already
+      } else {
+        const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+        const etag = await uploadPartWithRetry(presignedUrls[i], chunk, signal)
+        parts[i] = { PartNumber: partNumber, ETag: etag }
+      }
+      uploadedBytes += partSize
+      partsDone += 1
+      onProgress?.(Math.min(uploadedBytes, file.size), partsDone, partCount)
     }
-    onProgress?.(Math.min(parts.length * CHUNK_SIZE, file.size), parts.length, partCount)
-  }
+  )
 
   return parts
 }
