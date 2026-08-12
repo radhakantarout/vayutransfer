@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
+import { usePathname } from 'next/navigation'
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { useState, useEffect } from 'react'
 import { useWallet } from '@/lib/wallet-context'
@@ -27,10 +28,15 @@ const STUDIO_URL = process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUB
 
 export default function Navbar() {
   const { data: session, status } = useSession()
+  const pathname = usePathname()
   const [menuOpen, setMenuOpen]     = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { walletId, balancePaise, refreshBalance, topupOpen, openTopup, closeTopup } = useWallet()
   const { theme, toggle } = useTheme()
+
+  const isActive = (href: string) => pathname === href
+  const desktopLinkClass = (href: string) =>
+    `transition-colors ${isActive(href) ? 'text-accent font-semibold' : 'text-muted hover:text-text-primary'}`
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : ''
@@ -55,16 +61,21 @@ export default function Navbar() {
 
           {/* Desktop nav links */}
           <div className="hidden md:flex items-center gap-7 text-sm">
-            <Link href="/" className="text-muted hover:text-text-primary transition-colors">Transfer Files</Link>
-            <Link href="/pricing" className="text-muted hover:text-text-primary transition-colors">Pricing</Link>
+            <Link href="/" className={desktopLinkClass('/')}>Transfer Files</Link>
+            <Link href="/pricing" className={desktopLinkClass('/pricing')}>Pricing</Link>
             {session && (
-              <Link href="/transfers" className="text-muted hover:text-text-primary transition-colors">My Transfers</Link>
+              <Link href="/transfers" className={desktopLinkClass('/transfers')}>My Transfers</Link>
             )}
             {session && (
-              <Link href="/dashboard" className="text-muted hover:text-text-primary transition-colors">Dashboard</Link>
+              <Link href="/dashboard" className={desktopLinkClass('/dashboard')}>Dashboard</Link>
             )}
+            {/* Opens in a new tab — VayuStudios is a separate product, keeping
+                the VayuTransfer tab alive behind it is the better experience
+                for both rather than navigating away entirely. */}
             <a
               href={STUDIO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-accent hover:text-accent/80 font-semibold transition-colors"
             >
               VayuStudios
@@ -214,21 +225,26 @@ export default function Navbar() {
             { label: 'Transfer Files', href: '/' },
             { label: 'Pricing', href: '/pricing' },
             ...(session ? [{ label: 'My Transfers', href: '/transfers' }] : []),
+            ...(session ? [{ label: 'Dashboard', href: '/dashboard' }] : []),
           ].map(({ label, href }) => (
             <Link
               key={href}
               href={href}
               onClick={closeAll}
-              className="flex items-center justify-between py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors"
+              className={`flex items-center justify-between py-3.5 text-base border-b border-border/40 transition-colors ${
+                isActive(href) ? 'font-semibold text-accent' : 'font-medium text-text-primary hover:text-accent'
+              }`}
             >
               {label}
-              <span className="text-muted text-sm">→</span>
+              <span className={isActive(href) ? 'text-accent text-sm' : 'text-muted text-sm'}>→</span>
             </Link>
           ))}
 
-          {/* VayuStudios link */}
+          {/* VayuStudios link — opens in a new tab, same reasoning as desktop */}
           <a
             href={STUDIO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             onClick={closeAll}
             className="flex items-center justify-between py-3.5 text-base font-semibold text-accent border-b border-border/40 hover:text-accent/80 transition-colors"
           >
