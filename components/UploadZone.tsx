@@ -3,10 +3,31 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { MAX_FILE_SIZE_GB } from '@/constants/pricing'
 import { FileTypeIcon, UploadCloudIcon, FolderIcon, CloseIcon } from '@/components/icons'
+import DuplicateFilesModal from '@/components/DuplicateFilesModal'
 import type { FileEntry } from '@/types'
 
 const BLOCK_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 const WARN_BYTES  = 2 * 1024 * 1024 * 1024   // 2 GB
+
+// Finds the first free "name (1).ext" / "name (2).ext" ... variant of `path`
+// against `taken` — same convention OS file managers use for "keep both".
+// Works for a plain filename or a folder-prefixed relative path alike.
+function dedupeName(path: string, taken: Set<string>): string {
+  if (!taken.has(path)) return path
+  const slash = path.lastIndexOf('/')
+  const dir = slash >= 0 ? path.slice(0, slash + 1) : ''
+  const base = slash >= 0 ? path.slice(slash + 1) : path
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  const ext = dot > 0 ? base.slice(dot) : ''
+  let n = 1
+  let candidate = `${dir}${stem} (${n})${ext}`
+  while (taken.has(candidate)) {
+    n++
+    candidate = `${dir}${stem} (${n})${ext}`
+  }
+  return candidate
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -63,6 +84,9 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   const [dragOver, setDragOver] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [entries, setEntries] = useState<FileEntry[]>(entriesProp ?? [])
+  // Set only while a just-added batch has name collisions against what's
+  // already selected, awaiting the user's Overwrite/Keep both/Cancel choice.
+  const [pendingAdd, setPendingAdd] = useState<{ incoming: FileEntry[]; prev: FileEntry[] } | null>(null)
   const filesRef = useRef<HTMLInputElement>(null)
   const folderRef = useRef<HTMLInputElement>(null)
 
@@ -78,11 +102,49 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
 
   const addEntries = useCallback((incoming: FileEntry[]) => {
     setEntries((prev) => {
+      const prevPaths = new Set(prev.map((e) => e.path))
+      const hasDuplicate = incoming.some((e) => prevPaths.has(e.path))
+      if (hasDuplicate) {
+        // Don't merge yet — surface the Overwrite/Keep both/Cancel choice
+        // and leave `prev` untouched until the user decides.
+        setPendingAdd({ incoming, prev })
+        return prev
+      }
       const updated = [...prev, ...incoming]
       onFilesSelect(updated)
       return updated
     })
   }, [onFilesSelect])
+
+  const resolveDuplicates = useCallback((choice: 'overwrite' | 'keep-both' | 'cancel') => {
+    if (!pendingAdd) return
+    const { incoming, prev } = pendingAdd
+    setPendingAdd(null)
+
+    if (choice === 'cancel') {
+      const prevPaths = new Set(prev.map((e) => e.path))
+      const nonDuplicates = incoming.filter((e) => !prevPaths.has(e.path))
+      if (nonDuplicates.length === 0) return
+      emit([...prev, ...nonDuplicates])
+      return
+    }
+
+    if (choice === 'overwrite') {
+      const incomingPaths = new Set(incoming.map((e) => e.path))
+      const kept = prev.filter((e) => !incomingPaths.has(e.path))
+      emit([...kept, ...incoming])
+      return
+    }
+
+    // keep-both — rename every incoming duplicate to the next free "(n)" slot
+    const taken = new Set(prev.map((e) => e.path))
+    const renamed = incoming.map((e) => {
+      const path = dedupeName(e.path, taken)
+      taken.add(path)
+      return { ...e, path }
+    })
+    emit([...prev, ...renamed])
+  }, [pendingAdd, emit])
 
   const removeEntry = (path: string) =>
     emit(entries.filter((e) => e.path !== path))
@@ -124,6 +186,7 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
   // ── Files selected view ──────────────────────────────────────────────────
   if (entries.length > 0) {
     return (
+      <>
       <div className={`border rounded-2xl overflow-hidden transition-all duration-200 shadow-sm ${
         isOverBlock ? 'border-danger' : isOverWarn ? 'border-yellow-500/60' : 'border-border'
       }`}>
@@ -195,6 +258,17 @@ export default function UploadZone({ onFilesSelect, entries: entriesProp, disabl
         {/* @ts-expect-error webkitdirectory is non-standard but widely supported */}
         <input ref={folderRef} type="file" className="hidden" onChange={onInputChange} webkitdirectory="" />
       </div>
+      {pendingAdd && (
+        <DuplicateFilesModal
+          duplicatePaths={pendingAdd.incoming
+            .filter((e) => pendingAdd.prev.some((p) => p.path === e.path))
+            .map((e) => e.path)}
+          onOverwrite={() => resolveDuplicates('overwrite')}
+          onKeepBoth={() => resolveDuplicates('keep-both')}
+          onCancel={() => resolveDuplicates('cancel')}
+        />
+      )}
+      </>
     )
   }
 

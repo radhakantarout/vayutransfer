@@ -101,6 +101,12 @@ export default function HomePage() {
 
     setCurrentUploadId(id)
     setPageState('uploading')
+    // upload-context now owns whatever File references it needs (via its own
+    // retry-args refs) — nothing in the 'uploading' screen reads `entries`,
+    // so holding onto every selected File here for the rest of this page's
+    // lifetime (including the whole time a "upload complete" screen might be
+    // left open) is pure leaked memory on a large folder selection.
+    setEntries([])
   }
 
   const handleAbort = async () => {

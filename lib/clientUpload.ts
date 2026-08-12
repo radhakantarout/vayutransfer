@@ -18,9 +18,15 @@ export type PartRecord = { PartNumber: number; ETag: string }
 // Retries a transient network blip (common on slow connections) before
 // giving up on this part — most failures resolve within 1-2 retries without
 // the user ever needing to notice or manually resume.
-export async function uploadPartWithRetry(url: string, chunk: Blob): Promise<string> {
+//
+// `isAborted` (optional) is checked before each attempt and, critically,
+// before/after the backoff sleep — without this a user cancelling mid-retry
+// still had to wait out the full backoff (up to 2s) before the cancel took
+// effect, since the timer itself had no early-exit.
+export async function uploadPartWithRetry(url: string, chunk: Blob, isAborted?: () => boolean): Promise<string> {
   let lastErr: unknown
   for (let attempt = 1; attempt <= MAX_PART_RETRIES; attempt++) {
+    if (isAborted?.()) throw new DOMException('Upload cancelled', 'AbortError')
     try {
       const res = await fetch(url, { method: 'PUT', body: chunk, signal: AbortSignal.timeout(PART_UPLOAD_TIMEOUT_MS) })
       if (!res.ok) throw new Error(`Part upload failed: ${res.status}`)
@@ -28,6 +34,7 @@ export async function uploadPartWithRetry(url: string, chunk: Blob): Promise<str
       if (!etag) throw new Error('Missing ETag')
       return etag
     } catch (err) {
+      if (isAborted?.()) throw err
       lastErr = err
       if (attempt < MAX_PART_RETRIES) await new Promise((r) => setTimeout(r, attempt * 1000))
     }
@@ -63,7 +70,7 @@ export async function uploadFileInChunks(
       parts.push(already)
     } else {
       const chunk = file.slice(i * chunkSize, (i + 1) * chunkSize)
-      const etag = await uploadPartWithRetry(presignedUrls[i], chunk)
+      const etag = await uploadPartWithRetry(presignedUrls[i], chunk, isAborted)
       parts.push({ PartNumber: partNumber, ETag: etag })
     }
     onProgress?.(Math.min(parts.length * chunkSize, file.size), parts.length, partCount)
