@@ -12,6 +12,9 @@ interface DraftSelection {
   comment: string
 }
 
+// Only ever called for role === 'CLIENT' — the POST handler below blocks
+// ADMIN/OWNER (preview mode) before this is reached, so no studio-preview
+// branch is needed here (unlike the GET route, which does allow admin reads).
 async function resolveProjectId(auth: { projectId?: string; studioId?: string }, requestedId?: string): Promise<string | null> {
   if (!requestedId) return auth.projectId ?? null
   const [entry, requested] = await Promise.all([
@@ -25,8 +28,21 @@ async function resolveProjectId(auth: { projectId?: string; studioId?: string },
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || auth.role !== 'CLIENT') {
+    if (!auth || !['CLIENT', 'ADMIN', 'OWNER'].includes(auth.role)) {
       return NextResponse.json({ success: false, error: 'UNAUTHENTICATED' }, { status: 401 })
+    }
+    // Studio staff previewing the gallery (see /studio/api/client/gallery/[token])
+    // can browse and even see existing selections read-only, but must never be
+    // able to submit selections AS the client — that would write a Selection
+    // row under the admin's own userId, flip the project to SELECTION_RECEIVED,
+    // and email the studio "the client has submitted" when no client did
+    // anything. A clear, distinct message here (vs. a bare 401) is what
+    // actually surfaces to the admin via the gallery page's submit-error alert.
+    if (auth.role !== 'CLIENT') {
+      return NextResponse.json(
+        { success: false, error: 'PREVIEW_MODE', message: 'You’re previewing this gallery as the studio admin — selections can only be submitted by the client.' },
+        { status: 403 }
+      )
     }
 
     const { projectId: reqProjectId, selections: draftSelections } = await req.json().catch(() => ({})) as {
