@@ -3,8 +3,8 @@ set -e
 
 # Overridable so the same script deploys either environment, e.g.:
 #   FUNCTION_NAME=vayu-transfer-zip-test DYNAMO_ZIP_JOBS_TABLE=vayu-zip-jobs-test ./deploy.sh
-FUNCTION_NAME="${FUNCTION_NAME:-vayu-transfer-zip}"
-DYNAMO_ZIP_JOBS_TABLE="${DYNAMO_ZIP_JOBS_TABLE:-vayu-zip-jobs}"
+export FUNCTION_NAME="${FUNCTION_NAME:-vayu-transfer-zip}"
+export DYNAMO_ZIP_JOBS_TABLE="${DYNAMO_ZIP_JOBS_TABLE:-vayu-zip-jobs}"
 REGION="ap-south-1"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
