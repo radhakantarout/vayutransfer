@@ -482,6 +482,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   }, [patch])
 
   const dismissUpload = useCallback((id: string) => {
+    // A dismissed-without-retrying failed upload must release everything
+    // retryArgsRef/batchRetryArgsRef were keeping alive for a possible Retry
+    // — including the actual File object(s), which for a batch means every
+    // selected file in that folder/multi-file upload. abortUpload already
+    // does this same cleanup; dismiss (used for done/failed cards, no abort
+    // call involved) needs its own copy of it.
+    metaRef.current.delete(id)
+    retryArgsRef.current.delete(id)
+    batchMetaRef.current.delete(id)
+    batchRetryArgsRef.current.delete(id)
     setUploads(prev => prev.filter(u => u.id !== id))
   }, [])
 

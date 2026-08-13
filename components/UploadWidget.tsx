@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useUpload, type ActiveUpload } from '@/lib/upload-context'
 import ShareButtons from '@/components/ShareButtons'
+import { SpeedIcon } from '@/components/icons'
 
 function fmtBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
@@ -36,12 +37,18 @@ function UploadCard({
 }) {
   const [copied, setCopied] = useState(false)
   const [showShare, setShowShare] = useState(false)
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current)
+  }, [])
 
   const copyLink = async () => {
     if (!upload.shareableLink) return
     await navigator.clipboard.writeText(upload.shareableLink)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current)
+    copiedTimeoutRef.current = setTimeout(() => setCopied(false), 2000)
   }
 
 
@@ -83,7 +90,10 @@ function UploadCard({
               )}
             </span>
             {upload.speedBytesPerSec > 0 && (
-              <span className="text-accent font-semibold">{fmtSpeed(upload.speedBytesPerSec)}</span>
+              <span className="flex items-center gap-1 text-accent font-semibold">
+                <SpeedIcon className="w-3 h-3" />
+                {fmtSpeed(upload.speedBytesPerSec)}
+              </span>
             )}
           </div>
 

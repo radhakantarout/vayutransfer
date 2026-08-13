@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
 import { MULTIPART_CHUNK_SIZE_BYTES } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
+import { SpeedIcon } from '@/components/icons'
 
 interface Props {
   percent: number
@@ -54,12 +55,18 @@ export default function UploadProgress({
 }: Props) {
   const [copied, setCopied] = useState(false)
   const [showShare, setShowShare] = useState(false)
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current)
+  }, [])
 
   const copyLink = async () => {
     if (!shareableLink) return
     await navigator.clipboard.writeText(shareableLink)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current)
+    copiedTimeoutRef.current = setTimeout(() => setCopied(false), 2000)
   }
 
   if (shareableLink) {
@@ -176,7 +183,10 @@ export default function UploadProgress({
           ↑ {formatBytes(Math.min(currentChunk * MULTIPART_CHUNK_SIZE_BYTES, fileSizeBytes))} / {formatBytes(fileSizeBytes)} · {formatTime(secondsRemaining)}
         </div>
         {speedBytesPerSec > 0 && (
-          <div className="text-xs text-accent font-medium">{formatSpeed(speedBytesPerSec)}</div>
+          <div className="flex items-center justify-center gap-1 text-xs text-accent font-medium">
+            <SpeedIcon className="w-3.5 h-3.5" />
+            {formatSpeed(speedBytesPerSec)}
+          </div>
         )}
       </div>
 

@@ -3,16 +3,11 @@ import type { WalletTopupTier } from '@/types'
 // ─── Simple pay-as-you-transfer pricing (post S3→R2 migration) ────────────
 // R2 has zero egress/download cost, so there's no separate "per download"
 // charge anymore — one flat rate covers storage + unlimited downloads
-// until the link expires. Every user also gets a monthly free allowance.
+// until the link expires. No free tier or monthly quota — every transfer
+// is charged ₹4.99/GB of its exact size, full stop. New signups start with
+// a ₹50 wallet bonus (see lib/users.ts), which is just ordinary balance —
+// nothing about it is tracked as "free quota" separately.
 export const FLAT_RATE_PAISE_PER_GB = 499   // ₹4.99/GB
-
-// Free tier: up to FREE_QUOTA_MONTHLY_BYTES total per calendar month, but
-// any single transfer only qualifies as free if it's also under
-// FREE_TRANSFER_MAX_BYTES on its own — a transfer that blows past the
-// per-transfer cap is charged in full at the flat rate even if the
-// monthly quota still has room (see lib/pricing.ts calculatePrice).
-export const FREE_QUOTA_MONTHLY_BYTES = 10 * 1024 * 1024 * 1024  // 10GB/month
-export const FREE_TRANSFER_MAX_BYTES = 3 * 1024 * 1024 * 1024    // 3GB/transfer
 
 // Not billed, not shown to the user as a "limit" — a generous ceiling that
 // only exists to stop a single link from being hammered by a script.

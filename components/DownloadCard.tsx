@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
 
 interface Props {
@@ -19,6 +19,20 @@ interface BatchFileUrl extends BatchFileInfo {
 }
 
 type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error'
+
+// Below this, zipping in the browser (fetch + JSZip, no server round trip)
+// is fast enough and avoids spinning up a Lambda for what's usually a
+// handful of files. At/above it, the batch is handed to the dedicated
+// vayu-transfer-zip Lambda job — browser memory and a single-threaded zip
+// loop don't scale to multi-GB folders the way the streaming server-side
+// pipeline does. Mirrors VayuStudios' proven print-portal threshold.
+const CLIENT_ZIP_THRESHOLD_BYTES = 1024 * 1024 * 1024 // 1GB
+
+type ZipJobState =
+  | { phase: 'idle' }
+  | { phase: 'creating'; processed: number; total: number }
+  | { phase: 'ready'; downloadUrl: string; filename: string }
+  | { phase: 'error'; message: string }
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -59,6 +73,15 @@ export default function DownloadCard({ fileId }: Props) {
   const [batchFiles, setBatchFiles] = useState<BatchFileInfo[] | null>(null)
   const [fetchedUrls, setFetchedUrls] = useState<Map<string, string> | null>(null)
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
+  const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
+  // Generation counter: guards against a stale poll/zip loop from a
+  // previous "Download All" click (or an unmounted component) still
+  // running and calling setState after a newer click superseded it.
+  const zipGen = useRef(0)
+
+  useEffect(() => {
+    return () => { zipGen.current++ }
+  }, [])
 
   // On mount: GET = info only, no counter increment
   useEffect(() => {
@@ -122,9 +145,9 @@ export default function DownloadCard({ fileId }: Props) {
     }
   }
 
-  // Batch: "Download all" or an individual file row. Fetches the shared
-  // URL set once (if not already cached this session) then triggers saves.
-  const handleBatchDownload = async (only?: string) => {
+  // A single row's own "Download" click — always just that one file, saved
+  // directly, never zipped.
+  const handleFileRowDownload = async (only: string) => {
     setDownloading(true)
     try {
       let urls = fetchedUrls
@@ -132,16 +155,107 @@ export default function DownloadCard({ fileId }: Props) {
         const data = await fetchDownloadUrls()
         urls = fetchedUrls ?? (data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : null)
       }
-      if (!urls || !batchFiles) return
-      const targets = only ? batchFiles.filter((f) => f.fileId === only) : batchFiles
-      targets.forEach((f, i) => {
-        const url = urls!.get(f.fileId)
-        if (url) setTimeout(() => triggerDownload(url, f.fileName), i * 200)
-      })
+      const url = urls?.get(only)
+      const target = batchFiles?.find((f) => f.fileId === only)
+      if (url && target) triggerDownload(url, target.fileName)
     } catch {
       setErrorMsg('Network error — please try again')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  // Small batches: zip entirely in the browser, one save instead of N
+  // separate automatic downloads (which Chrome silently throttles/blocks
+  // past a handful in a row). relativePath is used as the in-zip path so
+  // folder structure from the original upload is preserved.
+  const downloadAllClientSide = async (myGen: number) => {
+    if (!batchFiles) return
+    const data = await fetchDownloadUrls()
+    if (myGen !== zipGen.current) return
+    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
+    if (!urls) throw new Error('Could not get download links')
+
+    const zipFilename = `${(fileName || 'files').replace(/[^a-z0-9]+/gi, '-')}.zip`
+    const { default: JSZip } = await import('jszip')
+    const zip = new JSZip()
+    const usedNames = new Set<string>()
+    let processed = 0
+
+    for (const f of batchFiles) {
+      if (myGen !== zipGen.current) return
+      const url = urls.get(f.fileId)
+      if (!url) continue
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Could not fetch ${f.fileName}`)
+      const blob = await res.blob()
+
+      let name = f.relativePath || f.fileName
+      if (usedNames.has(name)) {
+        const dot = name.lastIndexOf('.')
+        name = dot === -1 ? `${name}-${f.fileId.slice(0, 8)}` : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
+      }
+      usedNames.add(name)
+      zip.file(name, blob)
+
+      processed++
+      if (myGen === zipGen.current) setZipJob({ phase: 'creating', processed, total: batchFiles.length })
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' })
+    if (myGen !== zipGen.current) return
+    const url = URL.createObjectURL(zipBlob)
+    setZipJob({ phase: 'ready', downloadUrl: url, filename: zipFilename })
+  }
+
+  // Large batches (>=1GB): hand off to the dedicated zip Lambda job and
+  // poll status every 2s until ready.
+  const downloadAllServerSide = async (myGen: number) => {
+    const initRes = await fetch(`/api/download/${fileId}/zip`, { method: 'POST' }).then((r) => r.json())
+    if (!initRes.success) {
+      throw new Error(initRes.message ?? 'Could not start zip creation')
+    }
+    const { jobId } = initRes.data as { jobId: string }
+
+    while (myGen === zipGen.current) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (myGen !== zipGen.current) return
+      const statusRes = await fetch(`/api/download/${fileId}/zip/status/${jobId}`).then((r) => r.json())
+      if (!statusRes.success) throw new Error('Lost track of the zip job')
+      const s = statusRes.data as {
+        status: string; processed: number; total: number
+        downloadUrl?: string; zipFileName?: string; errorMessage?: string
+      }
+
+      if (myGen !== zipGen.current) return
+
+      if (s.status === 'ready' && s.downloadUrl && s.zipFileName) {
+        setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.zipFileName })
+        return
+      }
+      if (s.status === 'failed') {
+        throw new Error(s.errorMessage ?? 'Zip creation failed')
+      }
+      setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
+    }
+  }
+
+  // "Download All" — picks the zip strategy by total batch size.
+  const handleDownloadAll = async () => {
+    if (!batchFiles) return
+    const myGen = ++zipGen.current
+    setZipJob({ phase: 'creating', processed: 0, total: 0 })
+    try {
+      const totalBytes = batchFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0)
+      if (totalBytes < CLIENT_ZIP_THRESHOLD_BYTES) {
+        await downloadAllClientSide(myGen)
+      } else {
+        await downloadAllServerSide(myGen)
+      }
+    } catch (err) {
+      if (myGen === zipGen.current) {
+        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
+      }
     }
   }
 
@@ -242,7 +356,7 @@ export default function DownloadCard({ fileId }: Props) {
                     <EyeIcon className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleBatchDownload(f.fileId)}
+                    onClick={() => handleFileRowDownload(f.fileId)}
                     disabled={downloading}
                     className="text-xs font-medium text-accent hover:underline px-2 py-1 flex-shrink-0 disabled:opacity-50"
                   >
@@ -268,14 +382,35 @@ export default function DownloadCard({ fileId }: Props) {
           </div>
         )}
 
-        <button
-          onClick={isBatch ? () => handleBatchDownload() : handleDownload}
-          disabled={downloading}
-          className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-        >
-          <DownloadIcon className="w-5 h-5" />
-          {downloading ? 'Preparing download...' : isBatch ? `Download All (${batchFiles?.length ?? 0} files)` : 'Download File'}
-        </button>
+        {isBatch && zipJob.phase === 'error' && (
+          <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
+            {zipJob.message}
+          </div>
+        )}
+
+        {isBatch && zipJob.phase === 'ready' ? (
+          <a
+            href={zipJob.downloadUrl}
+            download={zipJob.filename}
+            className="w-full bg-success text-bg font-bold py-4 rounded-xl text-lg hover:bg-success/90 transition-colors flex items-center justify-center gap-2"
+          >
+            <DownloadIcon className="w-5 h-5" />
+            Download ZIP ({batchFiles?.length ?? 0} files)
+          </a>
+        ) : (
+          <button
+            onClick={isBatch ? handleDownloadAll : handleDownload}
+            disabled={downloading || zipJob.phase === 'creating'}
+            className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            <DownloadIcon className="w-5 h-5" />
+            {isBatch
+              ? zipJob.phase === 'creating'
+                ? zipJob.total > 0 ? `Zipping… ${zipJob.processed}/${zipJob.total}` : 'Starting…'
+                : `Download All (${batchFiles?.length ?? 0} files)`
+              : downloading ? 'Preparing download...' : 'Download File'}
+          </button>
+        )}
       </div>
 
       <div className="border-t border-border px-8 py-4 bg-bg/50">

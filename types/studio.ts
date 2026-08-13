@@ -265,6 +265,12 @@ export interface StudioTransfer {
   status: TransferStatus
   shareToken: string
   shareExpiresAt: string
+  // Current expiry window in days from createdAt — absent on records created
+  // before this field existed (treat as DEFAULT_TRANSFER_EXPIRY_DAYS, see
+  // lib/studio/transferConfig.ts). Grows via the extend route, capped at
+  // MAX_TRANSFER_EXPIRY_DAYS; reset to the default on resend since that mints
+  // a brand-new token+expiry window from now.
+  expiryDays?: number
   downloadCount: number
   lastDownloadedAt?: string
   // RECEIVE only — set once the studio owner explicitly imports the received
@@ -276,7 +282,22 @@ export interface StudioTransfer {
   note?: string
   createdBy: string
   createdAt: string
+  // Also doubles as "upload started at" for a RECEIVE transfer once status
+  // flips to UPLOADING — nothing else touches this record again until
+  // upload-complete, so it's a reliable start-time for average-speed math
+  // (see estimateReceiveProgress in components/studio/transfers/transferUtils.ts).
   updatedAt: string
+  // RECEIVE-direction, on-demand progress checks — the anonymous uploader's
+  // browser never phones home mid-upload, so the admin side polls R2's own
+  // ListParts (source of truth for a multipart upload) instead, on demand
+  // and rate-limited (see RECEIVE_PROGRESS_CHECK_COOLDOWN_MS). activeUploadId
+  // is set once at upload-url time (mirrors the SEND-direction convention of
+  // never trusting a client-held uploadId server-side — except here the
+  // admin genuinely needs to look it up later, since it isn't their browser
+  // holding it).
+  activeUploadId?: string
+  lastProgressCheckAt?: string
+  lastProgressUploadedBytes?: number
 }
 
 export interface Selection {

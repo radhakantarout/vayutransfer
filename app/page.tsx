@@ -15,18 +15,13 @@ import FeaturesSection from '@/components/home/FeaturesSection'
 import PricingHighlightSection from '@/components/home/PricingHighlightSection'
 import StudiosBandSection from '@/components/home/StudiosBandSection'
 import { LockIcon, FolderIcon, ArrowRightIcon } from '@/components/icons'
-import { EXPIRY_DAY_OPTIONS, DEFAULT_EXPIRY_DAYS, MAX_FILE_SIZE_GB, FREE_QUOTA_MONTHLY_BYTES, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
+import { EXPIRY_DAY_OPTIONS, DEFAULT_EXPIRY_DAYS, MAX_FILE_SIZE_GB, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
 import type { PriceBreakdown, FileEntry } from '@/types'
 
 type PageState = 'idle' | 'pricing' | 'uploading'
 
 const MAX_TOTAL_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 const STUDIO_URL = process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/studio/home`
-
-function formatGB(bytes: number): string {
-  const gb = bytes / (1024 * 1024 * 1024)
-  return gb < 1 ? `${Math.round(gb * 1024)} MB` : `${gb.toFixed(1)} GB`
-}
 
 function GoogleGlyph() {
   return (
@@ -51,7 +46,7 @@ export default function HomePage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
   const { data: session } = useSession()
-  const { walletId, balancePaise, freeQuotaUsedBytes, freeQuotaRemainingBytes, refreshBalance } = useWallet()
+  const { walletId, balancePaise, refreshBalance } = useWallet()
   const { uploads, startUpload, startBatchUpload, abortUpload, minimizeUpload } = useUpload()
 
   const currentUpload = uploads.find(u => u.id === currentUploadId) ?? null
@@ -101,6 +96,12 @@ export default function HomePage() {
 
     setCurrentUploadId(id)
     setPageState('uploading')
+    // upload-context now owns whatever File references it needs (via its own
+    // retry-args refs) — nothing in the 'uploading' screen reads `entries`,
+    // so holding onto every selected File here for the rest of this page's
+    // lifetime (including the whole time a "upload complete" screen might be
+    // left open) is pure leaked memory on a large folder selection.
+    setEntries([])
   }
 
   const handleAbort = async () => {
@@ -184,11 +185,11 @@ export default function HomePage() {
               <div className="flex items-center justify-center gap-8 sm:gap-10 mt-8 flex-wrap">
                 <div>
                   <div className="font-mono text-xl font-semibold text-text-primary">₹4.99</div>
-                  <div className="text-xs text-muted mt-0.5">per GB, after free quota</div>
+                  <div className="text-xs text-muted mt-0.5">per GB, that&apos;s it</div>
                 </div>
                 <div>
-                  <div className="font-mono text-xl font-semibold text-text-primary">{formatGB(FREE_QUOTA_MONTHLY_BYTES)}</div>
-                  <div className="text-xs text-muted mt-0.5">free every month</div>
+                  <div className="font-mono text-xl font-semibold text-text-primary">₹50</div>
+                  <div className="text-xs text-muted mt-0.5">free credit to start</div>
                 </div>
                 <div>
                   <div className="font-mono text-xl font-semibold text-text-primary">Unlimited</div>
@@ -201,7 +202,7 @@ export default function HomePage() {
 
             {/* ── Dropzone + side card ── */}
             <div className="grid grid-cols-1 md:grid-cols-[1.35fr_1fr] gap-5 items-stretch animate-fade-up-delay">
-              <UploadZone onFilesSelect={handleFilesSelect} />
+              <UploadZone onFilesSelect={handleFilesSelect} enableDuplicateCheck />
 
               <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 flex flex-col justify-between">
                 <div
@@ -215,10 +216,10 @@ export default function HomePage() {
                         Signed in as {session.user?.name?.split(' ')[0]}
                       </span>
                       <h4 className="font-display text-lg font-semibold text-text-primary mt-4">
-                        {formatGB(freeQuotaRemainingBytes)} free left this month
+                        ₹{(balancePaise / 100).toFixed(2)} in your wallet
                       </h4>
                       <p className="text-[13.5px] text-muted mt-2 leading-relaxed">
-                        Out of your {formatGB(FREE_QUOTA_MONTHLY_BYTES)} monthly allowance. Beyond that, it&apos;s a flat ₹4.99/GB — no separate download charges.
+                        Flat ₹4.99/GB, deducted only when you upload. No monthly limits, no separate download charges.
                       </p>
                     </>
                   ) : (
@@ -228,7 +229,7 @@ export default function HomePage() {
                       </span>
                       <h4 className="font-display text-lg font-semibold text-text-primary mt-4">Get ₹50 free credit</h4>
                       <p className="text-[13.5px] text-muted mt-2 leading-relaxed">
-                        Enough for real transfers on top of your free monthly quota. Or skip sign-in and transfer anonymously — your call.
+                        Enough for real transfers to start. Or skip sign-in and transfer anonymously — your call.
                       </p>
                       <button
                         onClick={() => signIn('google')}
@@ -257,7 +258,6 @@ export default function HomePage() {
             <FeaturesSection />
             <PricingHighlightSection
               balancePaise={session ? balancePaise : undefined}
-              freeQuotaRemainingBytes={session ? freeQuotaRemainingBytes : undefined}
             />
             <StudiosBandSection />
           </>
@@ -265,7 +265,7 @@ export default function HomePage() {
 
         {pageState === 'pricing' && entries.length > 0 && !session && (
           <div className="space-y-4">
-            <UploadZone onFilesSelect={handleFilesSelect} entries={entries} />
+            <UploadZone onFilesSelect={handleFilesSelect} entries={entries} enableDuplicateCheck />
             <div className="bg-card border border-border rounded-xl p-6 flex flex-col items-center gap-4 text-center">
               <div className="w-12 h-12 rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
                 <LockIcon className="w-6 h-6" />
@@ -294,6 +294,7 @@ export default function HomePage() {
                 entries={entries}
                 selectedPath={selectedPath}
                 onSelectPath={setSelectedPath}
+                enableDuplicateCheck
               />
 
               {isBundle && (
@@ -331,7 +332,6 @@ export default function HomePage() {
               <PriceCalculator
                 fileSizeBytes={totalSizeBytes}
                 walletBalancePaise={balancePaise}
-                freeQuotaUsedBytes={freeQuotaUsedBytes}
                 onPricingChange={setPricing}
               />
 

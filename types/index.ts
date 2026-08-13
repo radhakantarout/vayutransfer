@@ -29,6 +29,8 @@ export type AuditEventType =
   | 'RECEIVE_UPLOAD_STARTED'
   | 'RECEIVE_UPLOAD_COMPLETED'
   | 'RECEIVE_INSUFFICIENT_BALANCE'
+  | 'ZIP_DOWNLOAD_STARTED'
+  | 'ZIP_DOWNLOAD_FAILED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -38,13 +40,6 @@ export interface Wallet {
   balance: number       // paise
   totalLoaded: number   // paise, lifetime
   totalSpent: number    // paise, lifetime
-  // Free-tier usage tracking (see constants/pricing.ts): bytes transferred
-  // for free this calendar month, reset lazily whenever freeQuotaMonthKey
-  // no longer matches the current month — no cron needed. Both fields are
-  // optional because older wallet records predate this and are treated as
-  // "0 used, needs reset" on first read (see lib/wallet.ts).
-  freeQuotaUsedBytes?: number
-  freeQuotaMonthKey?: string    // "YYYY-MM"
   createdAt: string     // ISO string
   updatedAt: string     // ISO string
 }
@@ -78,11 +73,7 @@ export interface Transfer {
   // for the silent abuse ceiling enforced separately.
   downloadsUsed: number
   recipientEmails?: string[]
-  amountDeducted: number        // paise — 0 for a free-quota transfer
-  // True if this transfer landed inside the monthly free quota (see
-  // constants/pricing.ts) and cost nothing — kept for the activity feed's
-  // "Free" badge, not used in any pricing calculation after the fact.
-  isFreeTransfer: boolean
+  amountDeducted: number        // paise
   status: 'pending' | 'active' | 'expired' | 'failed'
   // S3->R2 migration: every record has exactly one of these two populated,
   // matching storageBackend. Existing pre-migration records only ever have
@@ -93,6 +84,12 @@ export interface Transfer {
   r2Key?: string
   // Present only on batch transfers — see the type-level comment above.
   fileCount?: number
+  // Set once a server-side "Download All" zip build (ZipJob) has been
+  // started for this batch — cached so repeat clicks reuse the same
+  // finished zip instead of re-building it on every visit. Only used for
+  // large batches (>=1GB total); small batches zip client-side and never
+  // touch this field. See types.ZipJob and lib/aws/zipJob.ts.
+  zipJobId?: string
   // The currently-active retention choice (3/7/15/19 days from createdAt) —
   // expiryTime is always createdAt + expiryDays, recomputed on extension.
   // Capped at MAX_EXPIRY_DAYS_FROM_UPLOAD (19), always inside the R2
@@ -159,6 +156,30 @@ export interface Transaction {
   createdAt: string             // ISO string
 }
 
+// One row per server-side "Download All" zip build for a batch Transfer
+// (>=1GB total — smaller batches zip entirely client-side and never create
+// one of these). PK jobId, lives in its own vayu-zip-jobs table. Built by
+// a dedicated Lambda (lambda/vayu-transfer-zip) that streams each file
+// from R2 into an archive and uploads the result back to R2 — mirrors
+// VayuStudios' StudioJob/vayustudio-zip pattern conceptually, but is
+// entirely separate code/table per the no-shared-runtime-code rule between
+// the two products.
+export type ZipJobStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+export interface ZipJob {
+  jobId: string
+  batchId: string          // the owning Transfer's fileId
+  status: ZipJobStatus
+  processed: number
+  total: number
+  downloadUrl?: string
+  zipFileName?: string
+  errorMessage?: string
+  createdAt: string        // ISO string
+  completedAt?: string     // ISO string
+  ttl: number               // unix seconds — DynamoDB TTL, 24h from creation
+}
+
 export interface Download {
   downloadId: string
   fileId: string
@@ -201,10 +222,8 @@ export interface FileEntry {
 
 export interface PriceBreakdown {
   billableGB: number
-  isFree: boolean                // true if this fits the monthly free quota
-  freeQuotaRemainingBytes: number // free bytes left this month, post-this-transfer if isFree
   totalPaise: number
-  totalFormatted: string        // e.g. "₹44.00", "Free"
+  totalFormatted: string        // e.g. "₹44.00"
   marginPercent: number
 }
 

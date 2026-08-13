@@ -259,6 +259,14 @@ export function ListIcon(props: IconProps) {
   )
 }
 
+export function SpeedIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" />
+    </svg>
+  )
+}
+
 export function ArrowRightIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

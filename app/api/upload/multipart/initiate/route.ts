@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { calculatePrice } from '@/lib/pricing'
-import { deductFromWallet, getWalletBalance, getFreeQuotaUsedBytes, consumeFreeQuota } from '@/lib/wallet'
+import { deductFromWallet, getWalletBalance } from '@/lib/wallet'
 import { getItem, putItem, queryItems } from '@/lib/aws/dynamodb'
 import { initiateUpload, getObjectKey, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
 import { logAudit } from '@/lib/audit'
@@ -81,12 +81,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Calculate price (free-quota-aware) and check balance
-    const freeUsedBytes = await getFreeQuotaUsedBytes(walletId)
-    const pricing = calculatePrice(fileSizeBytes, freeUsedBytes)
+    // Calculate price and check balance
+    const pricing = calculatePrice(fileSizeBytes)
     const balance = await getWalletBalance(walletId)
 
-    if (!pricing.isFree && balance < pricing.totalPaise) {
+    if (balance < pricing.totalPaise) {
       return NextResponse.json<ApiResponse<never>>(
         {
           success: false,
@@ -101,13 +100,8 @@ export async function POST(req: NextRequest) {
     const fileId = uuidv4()
     const objectKey = getObjectKey(fileId, fileName)
 
-    // Deduct wallet (or consume free quota) BEFORE generating upload URL
-    // (zero loss guarantee)
-    if (pricing.isFree) {
-      await consumeFreeQuota(walletId, fileSizeBytes)
-    } else {
-      await deductFromWallet(walletId, pricing.totalPaise, fileId)
-    }
+    // Deduct wallet BEFORE generating upload URL (zero loss guarantee)
+    await deductFromWallet(walletId, pricing.totalPaise, fileId)
 
     // Initiate multipart upload — new uploads always go to NEW_UPLOAD_BACKEND
     const uploadId = await initiateUpload(NEW_UPLOAD_BACKEND, objectKey, contentType ?? 'application/octet-stream')
@@ -127,7 +121,6 @@ export async function POST(req: NextRequest) {
       downloadsUsed: 0,
       recipientEmails,
       amountDeducted: pricing.totalPaise,
-      isFreeTransfer: pricing.isFree,
       status: 'pending',
       storageBackend: NEW_UPLOAD_BACKEND,
       ...(NEW_UPLOAD_BACKEND === 'R2' ? { r2Key: objectKey } : { s3Key: objectKey }),
@@ -150,7 +143,6 @@ export async function POST(req: NextRequest) {
         fileName,
         fileSizeBytes,
         billableGB: pricing.billableGB,
-        isFreeTransfer: pricing.isFree,
         totalDeductedPaise: pricing.totalPaise,
         balanceBeforePaise: balance,
         balanceAfterPaise: balance - pricing.totalPaise,
