@@ -69,14 +69,25 @@ async function streamDriveFileToR2WithRetry(r2, bucket, f, accessToken, maxAttem
 // — this Lambda holds no DynamoDB credentials at all, keeping its IAM role
 // to just basic CloudWatch logging (R2 credentials arrive per-invoke in
 // the payload, same pattern as lambda/vayu-transfer-zip).
+// Never throws — a callback failure (network error or non-2xx) only means
+// the Next.js backend won't hear about this one file's outcome; it must
+// not take down the rest of the batch, which is still this Lambda's job to
+// finish regardless. Before this guard, a network-level fetch() failure
+// here (as opposed to a plain non-ok response, already handled below)
+// would propagate straight out of the per-file try/catch in the handler's
+// loop and abort every remaining file.
 async function notifyFileComplete(callbackUrl, secret, payload) {
-  const res = await fetch(callbackUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    console.error(`[drive-import] file-complete callback failed: ${res.status}`)
+  try {
+    const res = await fetch(callbackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': secret },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      console.error(`[drive-import] file-complete callback failed: ${res.status}`)
+    }
+  } catch (err) {
+    console.error('[drive-import] file-complete callback threw:', err.message)
   }
 }
 
