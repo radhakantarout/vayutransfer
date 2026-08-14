@@ -276,6 +276,21 @@ export function ArrowRightIcon(props: IconProps) {
   )
 }
 
+// Small, simplified triangle glyph in Google Drive's brand colors — not the
+// exact official logo path (avoids hand-transcribing complex brand SVG path
+// data that's easy to get subtly wrong), but reads clearly as "Drive" at a
+// glance. Deliberately filled/multi-color, unlike the rest of this
+// stroke-icon set, since a monochrome outline wouldn't read as Drive at all.
+export function DriveIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <polygon points="12,3 3,20 12,14.3" fill="#0F9D58" />
+      <polygon points="12,3 12,14.3 21,20" fill="#4285F4" />
+      <polygon points="3,20 12,14.3 21,20" fill="#FFC107" />
+    </svg>
+  )
+}
+
 const EXT_ICON: Record<string, (props: IconProps) => JSX.Element> = {
   jpg: ImageIcon, jpeg: ImageIcon, png: ImageIcon, gif: ImageIcon, webp: ImageIcon, svg: ImageIcon, bmp: ImageIcon, avif: ImageIcon,
   mp4: VideoIcon, webm: VideoIcon, mov: VideoIcon, m4v: VideoIcon,

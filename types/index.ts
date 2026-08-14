@@ -31,6 +31,10 @@ export type AuditEventType =
   | 'RECEIVE_INSUFFICIENT_BALANCE'
   | 'ZIP_DOWNLOAD_STARTED'
   | 'ZIP_DOWNLOAD_FAILED'
+  | 'DRIVE_CONNECTED'
+  | 'DRIVE_DISCONNECTED'
+  | 'DRIVE_IMPORT_STARTED'
+  | 'DRIVE_IMPORT_FAILED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -84,6 +88,11 @@ export interface Transfer {
   r2Key?: string
   // Present only on batch transfers — see the type-level comment above.
   fileCount?: number
+  // Additive marker, informational only — never read/branched-on by any
+  // existing upload/download/expiry logic. Absent (undefined) means a
+  // normal local upload, same as always. Only 'drive-import' batches ever
+  // set this. See lib/transferBatch.ts#createDriveImportBatch.
+  source?: 'upload' | 'drive-import'
   // Set once a server-side "Download All" zip build (ZipJob) has been
   // started for this batch — cached so repeat clicks reuse the same
   // finished zip instead of re-building it on every visit. Only used for
@@ -180,6 +189,44 @@ export interface ZipJob {
   ttl: number               // unix seconds — DynamoDB TTL, 24h from creation
 }
 
+// One row per NextAuth-signed-in user who has authorized VayuTransfer's
+// Drive-import feature. PK userId (NextAuth's `session.user.id`, same id
+// resolveOwnWalletId()/getUserById use elsewhere). Holds only a refresh
+// token (encrypted at rest by DynamoDB's default table encryption, same as
+// every other table in this app — no bespoke crypto layer) — short-lived
+// access tokens are minted from this on demand server-side and never
+// stored. This is a separate consent step from NextAuth login itself
+// (drive.file scope only, requested only when the user clicks "Import from
+// Google Drive"), so ordinary sign-in never touches Drive permissions.
+export interface DriveToken {
+  userId: string
+  refreshToken: string
+  scope: string
+  connectedAt: string      // ISO string
+}
+
+// One row per server-side Drive import job for a batch Transfer
+// (source: 'drive-import'). PK jobId, lives in its own vayu-drive-jobs
+// table. Built by a dedicated Lambda (lambda/vayu-drive-import) that
+// streams each Drive file directly into R2 — mirrors ZipJob/
+// lambda/vayu-transfer-zip's proven job+poll shape, kept as its own
+// separate code/table since the transport (Drive API source vs R2 source)
+// is genuinely different work.
+export type DriveJobStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+export interface DriveJob {
+  jobId: string
+  batchId: string           // the owning Transfer's fileId
+  status: DriveJobStatus
+  processed: number
+  total: number
+  currentFileName?: string  // for the "Importing… fileName" progress label
+  errorMessage?: string
+  createdAt: string         // ISO string
+  completedAt?: string      // ISO string
+  ttl: number                // unix seconds — DynamoDB TTL, 24h from creation
+}
+
 export interface Download {
   downloadId: string
   fileId: string
@@ -216,6 +263,23 @@ export interface AuditEvent {
 export interface FileEntry {
   file: File
   path: string   // relative path used as zip entry name (e.g. "photos/img1.jpg")
+}
+
+// A Google Drive-picked file, resolved server-side (real name/size/mimeType
+// — never the client-supplied Picker values). Deliberately declared here
+// rather than imported from lib/googleDrive/resolveSelection.ts, which
+// pulls in the server-only `googleapis` package — this file is plain data
+// and safe to use in both server routes and client components (e.g. the
+// upload page's file list, which renders these next to local FileEntry
+// items in the same list/pricing screen).
+export interface DriveFileEntry {
+  driveFileId: string
+  name: string
+  relativePath: string
+  sizeBytes: number
+  mimeType: string
+  isWorkspaceExport: boolean
+  exportMimeType?: string
 }
 
 // ─── Business Logic Types ──────────────────────────────────────────────────

@@ -16,7 +16,7 @@ import PricingHighlightSection from '@/components/home/PricingHighlightSection'
 import StudiosBandSection from '@/components/home/StudiosBandSection'
 import { LockIcon, FolderIcon, ArrowRightIcon } from '@/components/icons'
 import { EXPIRY_DAY_OPTIONS, DEFAULT_EXPIRY_DAYS, MAX_FILE_SIZE_GB, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
-import type { PriceBreakdown, FileEntry } from '@/types'
+import type { PriceBreakdown, FileEntry, DriveFileEntry } from '@/types'
 
 type PageState = 'idle' | 'pricing' | 'uploading'
 
@@ -36,6 +36,11 @@ function GoogleGlyph() {
 
 export default function HomePage() {
   const [entries, setEntries] = useState<FileEntry[]>([])
+  // Google Drive-picked files — mutually exclusive with `entries` (picking
+  // one clears the other, enforced inside UploadZone), but rendered in and
+  // driving the exact same file-list/pricing/confirm screen below. See
+  // UploadZone.tsx's driveEntries/onDriveFilesSelect props.
+  const [driveSelection, setDriveSelection] = useState<DriveFileEntry[]>([])
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
   const [pageState, setPageState] = useState<PageState>('idle')
   const [recipientEmails, setRecipientEmails] = useState<string[]>([])
@@ -47,7 +52,7 @@ export default function HomePage() {
 
   const { data: session } = useSession()
   const { walletId, balancePaise, refreshBalance } = useWallet()
-  const { uploads, startUpload, startBatchUpload, abortUpload, minimizeUpload } = useUpload()
+  const { uploads, startUpload, startBatchUpload, startDriveImport, abortUpload, minimizeUpload } = useUpload()
 
   const currentUpload = uploads.find(u => u.id === currentUploadId) ?? null
 
@@ -64,14 +69,15 @@ export default function HomePage() {
       setCurrentUploadId(null)
       setPageState('idle')
       setEntries([])
+      setDriveSelection([])
       setPricing(null)
       setRecipientEmails([])
       setAgreedToTerms(false)
     }
   }, [currentUploadId, currentUpload])
 
-  const totalSizeBytes = entries.reduce((s, e) => s + e.file.size, 0)
-  const isBundle = entries.length > 1
+  const totalSizeBytes = entries.reduce((s, e) => s + e.file.size, 0) + driveSelection.reduce((s, f) => s + f.sizeBytes, 0)
+  const isBundle = (entries.length + driveSelection.length) > 1
 
   const handleFilesSelect = (newEntries: FileEntry[]) => {
     setEntries(newEntries)
@@ -86,11 +92,36 @@ export default function HomePage() {
     }
   }
 
+  // Google Drive selection drives the exact same pricing/confirm screen as
+  // local entries — UploadZone enforces that the two never coexist (picking
+  // one clears the other), this just mirrors handleFilesSelect's own logic
+  // for the Drive-sourced case.
+  const handleDriveFilesSelect = (files: DriveFileEntry[]) => {
+    setDriveSelection(files)
+    setError(null)
+    if (files.length === 0) {
+      setPageState('idle')
+      setPricing(null)
+      setSelectedPath(null)
+    } else {
+      setPageState('pricing')
+      if (!files.some((f) => f.relativePath === selectedPath)) setSelectedPath(files[0].relativePath)
+    }
+  }
+
   const handleUpload = () => {
-    if (!entries.length || !pricing || !walletId) return
+    if (!pricing || !walletId) return
+    if (!entries.length && !driveSelection.length) return
     setError(null)
 
-    const id = entries.length === 1
+    const id = driveSelection.length > 0
+      ? startDriveImport(
+          driveSelection.map((f) => ({ id: f.driveFileId, mimeType: f.mimeType })),
+          driveSelection.length === 1 ? driveSelection[0].name : `${driveSelection.length} files`,
+          totalSizeBytes,
+          walletId, recipientEmails, expiryDays
+        )
+      : entries.length === 1
       ? startUpload(entries[0].file, pricing, walletId, recipientEmails, expiryDays)
       : startBatchUpload(entries, pricing, walletId, recipientEmails, expiryDays)
 
@@ -102,6 +133,7 @@ export default function HomePage() {
     // lifetime (including the whole time a "upload complete" screen might be
     // left open) is pure leaked memory on a large folder selection.
     setEntries([])
+    setDriveSelection([])
   }
 
   const handleAbort = async () => {
@@ -110,6 +142,7 @@ export default function HomePage() {
     setCurrentUploadId(null)
     setPageState('idle')
     setEntries([])
+    setDriveSelection([])
     setPricing(null)
     setRecipientEmails([])
     setAgreedToTerms(false)
@@ -121,6 +154,7 @@ export default function HomePage() {
     setCurrentUploadId(null)
     setPageState('idle')
     setEntries([])
+    setDriveSelection([])
     setPricing(null)
     setRecipientEmails([])
     setAgreedToTerms(false)
@@ -202,7 +236,12 @@ export default function HomePage() {
 
             {/* ── Dropzone + side card ── */}
             <div className="grid grid-cols-1 md:grid-cols-[1.35fr_1fr] gap-5 items-stretch animate-fade-up-delay">
-              <UploadZone onFilesSelect={handleFilesSelect} enableDuplicateCheck />
+              <UploadZone
+                onFilesSelect={handleFilesSelect}
+                enableDuplicateCheck
+                driveEntries={driveSelection}
+                onDriveFilesSelect={handleDriveFilesSelect}
+              />
 
               <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 flex flex-col justify-between">
                 <div
@@ -263,7 +302,7 @@ export default function HomePage() {
           </>
         )}
 
-        {pageState === 'pricing' && entries.length > 0 && !session && (
+        {pageState === 'pricing' && (entries.length > 0 || driveSelection.length > 0) && !session && (
           <div className="space-y-4">
             <UploadZone onFilesSelect={handleFilesSelect} entries={entries} enableDuplicateCheck />
             <div className="bg-card border border-border rounded-xl p-6 flex flex-col items-center gap-4 text-center">
@@ -286,7 +325,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {pageState === 'pricing' && entries.length > 0 && session && (
+        {pageState === 'pricing' && (entries.length > 0 || driveSelection.length > 0) && session && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             <div className="space-y-4">
               <UploadZone
@@ -295,13 +334,15 @@ export default function HomePage() {
                 selectedPath={selectedPath}
                 onSelectPath={setSelectedPath}
                 enableDuplicateCheck
+                driveEntries={driveSelection}
+                onDriveFilesSelect={handleDriveFilesSelect}
               />
 
               {isBundle && (
                 <div className="flex items-center gap-2 text-xs text-muted bg-card border border-border rounded-lg px-3 py-2">
                   <FolderIcon className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>
-                    {entries.length} files upload individually — no zipping, folder structure preserved
+                    {entries.length + driveSelection.length} files upload individually — no zipping, folder structure preserved
                   </span>
                 </div>
               )}
@@ -367,13 +408,13 @@ export default function HomePage() {
                   : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
                   ? 'Add credits to upload'
                   : isBundle
-                  ? `Upload ${entries.length} files`
+                  ? `Upload ${entries.length + driveSelection.length} files`
                   : 'Upload & Generate Link'}
               </button>
             </div>
 
             <div className="md:sticky md:top-24">
-              <FilePreviewPanel entries={entries} selectedPath={selectedPath} />
+              <FilePreviewPanel entries={entries} driveEntries={driveSelection} selectedPath={selectedPath} />
             </div>
           </div>
         )}

@@ -38,6 +38,21 @@ interface UploadContextType {
     recipientEmails: string[],
     expiryDays?: number
   ) => string
+  // Google Drive import — bytes never pass through the browser, so unlike
+  // the two above this has no File/FileEntry to chunk. `items` are the ids
+  // Google Picker returned; the server re-resolves real metadata from
+  // Drive itself before spending anything. displayName/totalBytes are only
+  // for the progress card's label — the server is the source of truth for
+  // what actually gets billed. Progress is stage-based (poll, not byte
+  // events) since Drive doesn't cheaply expose per-byte download progress.
+  startDriveImport: (
+    items: { id: string; mimeType: string }[],
+    displayName: string,
+    totalBytes: number,
+    walletId: string,
+    recipientEmails: string[],
+    expiryDays?: number
+  ) => string
   retryUpload: (id: string) => void
   abortUpload: (id: string) => Promise<void>
   minimizeUpload: (id: string) => void
@@ -48,6 +63,7 @@ const UploadContext = createContext<UploadContextType>({
   uploads: [],
   startUpload: () => '',
   startBatchUpload: () => '',
+  startDriveImport: () => '',
   retryUpload: () => {},
   abortUpload: async () => {},
   minimizeUpload: () => {},
@@ -58,6 +74,8 @@ type UploadMeta = { fileId: string; uploadId: string; s3Key: string; walletId: s
 type RetryArgs = { file: File; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number }
 type BatchMeta = { batchId: string; walletId: string }
 type BatchRetryArgs = { entries: FileEntry[]; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number }
+type DriveMeta = { batchId: string; walletId: string }
+type DriveRetryArgs = { items: { id: string; mimeType: string }[]; displayName: string; totalBytes: number; walletId: string; recipientEmails: string[]; expiryDays: number }
 // How many files upload in parallel within one batch — unbounded concurrency
 // on a large multi-file selection is what caused the VayuStudios bulk-upload
 // stall (see memory: bulk_upload_reliability_fix); keep this modest.
@@ -74,6 +92,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const retryArgsRef = useRef<Map<string, RetryArgs>>(new Map())
   const batchMetaRef = useRef<Map<string, BatchMeta>>(new Map())
   const batchRetryArgsRef = useRef<Map<string, BatchRetryArgs>>(new Map())
+  const driveMetaRef = useRef<Map<string, DriveMeta>>(new Map())
+  const driveRetryArgsRef = useRef<Map<string, DriveRetryArgs>>(new Map())
+  // Generation counter per upload id — guards a Drive-import poll loop
+  // against continuing to patch state after abort/dismiss superseded it,
+  // same pattern used by the zip-download poll loop in DownloadCard.tsx.
+  const drivePollGenRef = useRef<Map<string, number>>(new Map())
 
   const patch = useCallback((id: string, update: Partial<ActiveUpload>) => {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...update } : u))
@@ -374,6 +398,87 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
   }, [patch])
 
+  // Google Drive import — no bytes to chunk from the browser, so this is a
+  // start-then-poll loop instead of runUpload/runBatchUpload's chunk loop.
+  // The server does the real work (lambda/vayu-drive-import streams Drive
+  // → R2 directly); this just starts the job and reflects its progress
+  // into the same ActiveUpload shape the upload tray already renders.
+  const runDriveImport = useCallback(async (
+    id: string,
+    items: { id: string; mimeType: string }[],
+    displayName: string,
+    totalBytes: number,
+    walletId: string,
+    recipientEmails: string[],
+    expiryDays: number
+  ) => {
+    driveRetryArgsRef.current.set(id, { items, displayName, totalBytes, walletId, recipientEmails, expiryDays })
+    const myGen = (drivePollGenRef.current.get(id) ?? 0) + 1
+    drivePollGenRef.current.set(id, myGen)
+
+    try {
+      const initRes = await fetchWithTimeout('/api/google-drive/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items,
+          recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
+          expiryDays,
+        }),
+      }).then(r => r.json())
+
+      if (drivePollGenRef.current.get(id) !== myGen) return
+      if (!initRes.success) {
+        patch(id, { status: 'failed', error: initRes.message ?? 'Import failed' })
+        return
+      }
+
+      const { batchId, jobId } = initRes.data as { batchId: string; jobId: string }
+      driveMetaRef.current.set(id, { batchId, walletId })
+
+      if (abortedRef.current.has(id)) return
+
+      while (drivePollGenRef.current.get(id) === myGen) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        if (drivePollGenRef.current.get(id) !== myGen) return
+
+        const statusRes = await fetchWithTimeout(`/api/google-drive/import/status/${jobId}`).then(r => r.json())
+        if (drivePollGenRef.current.get(id) !== myGen) return
+        if (!statusRes.success) throw new Error('Lost track of the import job')
+
+        const s = statusRes.data as { status: string; processed: number; total: number; currentFileName?: string; errorMessage?: string }
+
+        if (s.status === 'ready') {
+          const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
+          driveMetaRef.current.delete(id)
+          driveRetryArgsRef.current.delete(id)
+          patch(id, {
+            percent: 100,
+            uploadedBytes: totalBytes,
+            status: 'done',
+            shareableLink: `${appUrl}/download/${batchId}`,
+          })
+          return
+        }
+        if (s.status === 'failed') {
+          throw new Error(s.errorMessage ?? 'Import failed')
+        }
+        const pct = s.total > 0 ? Math.round((s.processed / s.total) * 95) : 0
+        patch(id, {
+          percent: pct,
+          uploadedBytes: Math.round((pct / 100) * totalBytes),
+          fileName: s.currentFileName ? `Importing "${s.currentFileName}"…` : displayName,
+        })
+      }
+    } catch (err) {
+      if (drivePollGenRef.current.get(id) !== myGen) return
+      patch(id, {
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Import failed',
+      })
+    }
+  }, [patch])
+
   const startUpload = useCallback((
     file: File,
     pricing: PriceBreakdown,
@@ -425,7 +530,40 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     return id
   }, [runBatchUpload])
 
+  const startDriveImport = useCallback((
+    items: { id: string; mimeType: string }[],
+    displayName: string,
+    totalBytes: number,
+    walletId: string,
+    recipientEmails: string[],
+    expiryDays: number = DEFAULT_EXPIRY_DAYS
+  ): string => {
+    const id = crypto.randomUUID()
+    setUploads(prev => [...prev, {
+      id,
+      fileName: `Importing from Google Drive — ${displayName}`,
+      totalBytes,
+      uploadedBytes: 0,
+      percent: 0,
+      speedBytesPerSec: 0,
+      secondsRemaining: Infinity,
+      status: 'uploading',
+      shareableLink: null,
+      error: null,
+      minimized: false,
+    }])
+    runDriveImport(id, items, displayName, totalBytes, walletId, recipientEmails, expiryDays)
+    return id
+  }, [runDriveImport])
+
   const retryUpload = useCallback((id: string) => {
+    const driveArgs = driveRetryArgsRef.current.get(id)
+    if (driveArgs) {
+      abortedRef.current.delete(id)
+      patch(id, { status: 'uploading', error: null })
+      runDriveImport(id, driveArgs.items, driveArgs.displayName, driveArgs.totalBytes, driveArgs.walletId, driveArgs.recipientEmails, driveArgs.expiryDays)
+      return
+    }
     const batchArgs = batchRetryArgsRef.current.get(id)
     if (batchArgs) {
       abortedRef.current.delete(id)
@@ -438,10 +576,30 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     abortedRef.current.delete(id)
     patch(id, { status: 'uploading', error: null })
     runUpload(id, args.file, args.pricing, args.walletId, args.recipientEmails, args.expiryDays)
-  }, [runUpload, runBatchUpload, patch])
+  }, [runUpload, runBatchUpload, runDriveImport, patch])
 
   const abortUpload = useCallback(async (id: string) => {
     abortedRef.current.add(id)
+    // Bump the poll generation so a Drive-import poll loop in flight for
+    // this id stops on its next check, even before the abort route call
+    // below resolves.
+    drivePollGenRef.current.set(id, (drivePollGenRef.current.get(id) ?? 0) + 1)
+
+    const driveMeta = driveMetaRef.current.get(id)
+    if (driveMeta) {
+      try {
+        await fetchWithTimeout('/api/google-drive/import/abort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: driveMeta.batchId, walletId: driveMeta.walletId }),
+        })
+      } catch {}
+      driveMetaRef.current.delete(id)
+      driveRetryArgsRef.current.delete(id)
+      setUploads(prev => prev.filter(u => u.id !== id))
+      abortedRef.current.delete(id)
+      return
+    }
 
     const batchMeta = batchMetaRef.current.get(id)
     if (batchMeta) {
@@ -492,11 +650,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     retryArgsRef.current.delete(id)
     batchMetaRef.current.delete(id)
     batchRetryArgsRef.current.delete(id)
+    driveMetaRef.current.delete(id)
+    driveRetryArgsRef.current.delete(id)
+    drivePollGenRef.current.delete(id)
     setUploads(prev => prev.filter(u => u.id !== id))
   }, [])
 
   return (
-    <UploadContext.Provider value={{ uploads, startUpload, startBatchUpload, retryUpload, abortUpload, minimizeUpload, dismissUpload }}>
+    <UploadContext.Provider value={{ uploads, startUpload, startBatchUpload, startDriveImport, retryUpload, abortUpload, minimizeUpload, dismissUpload }}>
       {children}
     </UploadContext.Provider>
   )

@@ -296,6 +296,35 @@ Multipart upload (50MB chunks):
 
 ---
 
+## 🔗 Google Drive Import Setup
+
+"Import from Google Drive" on the upload page lets a signed-in user pick files/folders straight from their Drive and send them as a normal transfer — no download-then-reupload round trip. It reuses VayuTransfer's existing NextAuth Google login (same OAuth client) for identity, but requests Drive access as a separate, minimal-scope consent step (`drive.file` — only files the user explicitly picks via the Picker, never blanket Drive access). Bytes are streamed **Google Drive → a dedicated Lambda → Cloudflare R2**, never buffered in full and never routed through the browser.
+
+**1. Create/select a Google Cloud project.** Reuse the same project that already backs `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for NextAuth login — no need for a second project.
+
+**2. Enable the Google Drive API.** Cloud Console → *APIs & Services → Library* → search "Google Drive API" → Enable.
+
+**3. Enable the Google Picker API.** Same Library page → search "Google Picker API" → Enable. This is what renders the actual file/folder browser in-app.
+
+**4. Configure the OAuth consent screen** (if not already done for login) — add the `.../auth/drive.file` scope to the app's requested scopes list. Since `drive.file` is a non-sensitive scope, it does not require Google's manual verification review.
+
+**5. Configure OAuth credentials.** Reuse the existing OAuth 2.0 Client ID (the one behind `GOOGLE_CLIENT_ID`) — go to *Credentials* → open it → under **Authorized redirect URIs**, add one more entry for Drive import specifically (kept separate from NextAuth's own `/api/auth/callback/google`):
+   - Local dev: `http://localhost:3000/api/google-drive/callback`
+   - Preview (test.vayutransfer.com): `https://test.vayutransfer.com/api/google-drive/callback`
+   - Production: `https://vayutransfer.com/api/google-drive/callback`
+
+**6. Add Authorized JavaScript origins**, if not already present for the same client: your dev/preview/production origins (e.g. `http://localhost:3000`, `https://test.vayutransfer.com`, `https://vayutransfer.com`) — the Picker widget loads client-side and needs these registered.
+
+**7. Create an API key for the Picker.** *Credentials* → *Create Credentials* → *API key*. Restrict it (Application restrictions → HTTP referrers) to the same origins as step 6 — this key is public/client-side (`NEXT_PUBLIC_GOOGLE_API_KEY`), so restricting it matters.
+
+**8. Add the environment variables** (see `.env.example` for the full block with inline comments): `GOOGLE_DRIVE_REDIRECT_URI` (matching whichever URI from step 5 applies to that environment), `NEXT_PUBLIC_GOOGLE_API_KEY` (step 7), `NEXT_PUBLIC_GOOGLE_APP_ID` (your Cloud project *number*, found on the project dashboard — not the project ID string), `DYNAMO_DRIVE_TOKENS_TABLE` / `DYNAMO_DRIVE_JOBS_TABLE` (DynamoDB tables, `-test` suffix for Preview per the existing table-naming convention), `DRIVE_IMPORT_LAMBDA_ARN` (the `lambda/vayu-drive-import` function's ARN once deployed), and `GOOGLE_DRIVE_INTERNAL_SECRET` (any long random string — authenticates the Lambda's callback to the backend).
+
+**9. Run the application.** `npm run dev` as usual — no separate process needed. The Drive Lambda is deployed independently via `lambda/vayu-drive-import/deploy.sh` (see that folder's comments; mirrors `lambda/vayu-transfer-zip/deploy.sh`'s pattern).
+
+**10. Test Google Drive import.** Sign in with Google on the upload page → click "Import from Google Drive" → first click prompts the one-time Drive consent screen (separate from login) → subsequent clicks go straight to the file picker. Pick a small file first to confirm the whole pipeline end-to-end before trying a large one.
+
+---
+
 ## ✅ MVP Feature Checklist
 
 **Launch (Week 1–3)**

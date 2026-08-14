@@ -1,11 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { FileTypeIcon, EyeIcon } from '@/components/icons'
-import type { FileEntry } from '@/types'
+import { FileTypeIcon, EyeIcon, DriveIcon } from '@/components/icons'
+import type { FileEntry, DriveFileEntry } from '@/types'
 
 interface Props {
   entries: FileEntry[]
+  // Drive-picked files never have real bytes client-side (only Drive
+  // metadata), so they can't go through the same object-URL/FileReader
+  // preview path as local entries — they get their own thumbnail-only
+  // branch below, proxied server-side through /api/google-drive/thumbnail.
+  driveEntries?: DriveFileEntry[]
   selectedPath: string | null
 }
 
@@ -41,13 +46,24 @@ function kindOf(type: string, ext: string): Kind {
 // plain-text/code files are read and shown as-is. Everything else (xlsx,
 // pptx, proprietary formats) has no reliable client-side renderer, so it
 // falls back to an icon + filename.
-export default function FilePreviewPanel({ entries, selectedPath }: Props) {
+export default function FilePreviewPanel({ entries, driveEntries = [], selectedPath }: Props) {
   const selected = entries.find((e) => e.path === selectedPath) ?? entries[0] ?? null
+  // Local and Drive selections are mutually exclusive (UploadZone clears one
+  // when the other is picked), so a Drive entry only ever matters when
+  // there's no local `selected`.
+  const selectedDrive = !selected
+    ? (driveEntries.find((f) => f.relativePath === selectedPath) ?? driveEntries[0] ?? null)
+    : null
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [textContent, setTextContent] = useState<string | null>(null)
   const [docxHtml, setDocxHtml] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
+  const [driveThumbFailed, setDriveThumbFailed] = useState(false)
+
+  useEffect(() => {
+    setDriveThumbFailed(false)
+  }, [selectedDrive?.driveFileId])
 
   useEffect(() => {
     setObjectUrl(null)
@@ -83,6 +99,49 @@ export default function FilePreviewPanel({ entries, selectedPath }: Props) {
       URL.revokeObjectURL(url)
     }
   }, [selected])
+
+  if (!selected && selectedDrive) {
+    return (
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="bg-bg flex items-center justify-center min-h-[220px] max-h-[360px] overflow-hidden">
+          {driveThumbFailed ? (
+            <div className="p-10 text-center space-y-3">
+              <FileTypeIcon fileName={selectedDrive.relativePath} className="w-12 h-12 mx-auto text-muted" />
+              <div className="text-sm text-muted">No preview available — will be imported on upload</div>
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={selectedDrive.driveFileId}
+              src={`/api/google-drive/thumbnail/${selectedDrive.driveFileId}`}
+              alt={selectedDrive.relativePath}
+              className="max-w-full max-h-[360px] object-contain"
+              onError={() => setDriveThumbFailed(true)}
+            />
+          )}
+        </div>
+        <div className="px-4 py-3 border-t border-border flex items-center gap-3">
+          <DriveIcon className="w-4 h-4 text-muted flex-shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-text-primary truncate">{selectedDrive.relativePath}</div>
+            <div className="text-xs text-muted">
+              {formatBytes(selectedDrive.sizeBytes)}{selectedDrive.isWorkspaceExport ? ' (estimated)' : ''}
+            </div>
+          </div>
+          {!selectedDrive.isWorkspaceExport && (
+            <a
+              href={`https://drive.google.com/file/d/${selectedDrive.driveFileId}/view`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-accent hover:underline flex-shrink-0"
+            >
+              Open in Drive
+            </a>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   if (!selected || !objectUrl) {
     return (
