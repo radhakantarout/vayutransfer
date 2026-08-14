@@ -44,8 +44,10 @@ export async function POST(req: NextRequest) {
     await updateItem(
       DRIVE_JOBS_TABLE,
       { jobId },
-      'SET processed = :p, total = :t, currentFileName = :n',
-      { ':p': body.processed ?? 0, ':t': body.total ?? 0, ':n': body.currentFileName ?? '' }
+      'SET #processed = :p, #total = :t, currentFileName = :n',
+      { ':p': body.processed ?? 0, ':t': body.total ?? 0, ':n': body.currentFileName ?? '' },
+      undefined,
+      { '#processed': 'processed', '#total': 'total' }
     )
 
     if (status === 'failed') {
