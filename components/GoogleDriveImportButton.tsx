@@ -13,6 +13,7 @@ declare global {
         PickerBuilder: new () => GooglePickerBuilder
         DocsView: new (viewId?: unknown) => GoogleDocsView
         ViewId: { DOCS: unknown }
+        DocsViewMode: { LIST: unknown }
         Feature: { MULTISELECT_ENABLED: unknown }
         Action: { PICKED: string; CANCEL: string }
       }
@@ -28,6 +29,7 @@ interface GoogleDocsView {
   setSelectFolderEnabled: (v: boolean) => GoogleDocsView
   setOwnedByMe: (v: boolean) => GoogleDocsView
   setLabel: (label: string) => GoogleDocsView
+  setMode: (mode: unknown) => GoogleDocsView
 }
 interface GooglePickerBuilder {
   addView: (view: GoogleDocsView) => GooglePickerBuilder
@@ -137,11 +139,23 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
       // bare DocsView — Picker only renders its left-hand source sidebar
       // (the thing that makes it actually look/feel like Drive rather than
       // a stripped-down file list) once more than one view is added.
+      //
+      // LIST mode (not GRID/thumbnail) on purpose: Picker's own thumbnail
+      // images fail to load under third-party-cookie blocking (Safari by
+      // default, many privacy-hardened Chrome/Brave/Firefox setups) —
+      // confirmed 2026-08-14, not something this app can fix since it's
+      // Google's own iframe fetching Google's own thumbnail URLs. A grid of
+      // broken checkerboard placeholders reads as "this is broken"; a plain
+      // list with small file-type icons degrades gracefully instead. The
+      // app's own post-selection preview panel (FilePreviewPanel, backed by
+      // /api/google-drive/thumbnail) is unaffected either way — it fetches
+      // server-side, not through the browser's cookie jar.
       const makeView = (label: string, ownedByMe: boolean) => {
         const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
           .setIncludeFolders(true)
           .setSelectFolderEnabled(folderMode)
           .setLabel(label)
+          .setMode(google.picker.DocsViewMode.LIST)
         if (!ownedByMe) view.setOwnedByMe(false)
         return view
       }
