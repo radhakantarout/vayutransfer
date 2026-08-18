@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     // Send email to all recipients
     const recipients = transfer.recipientEmails ?? []
     for (const email of recipients) {
-      sendTransferLinkEmail(email, transfer.fileName, shareableLink, expiryTime)
+      sendTransferLinkEmail(email, transfer.fileName, shareableLink, expiryTime, transfer.message)
         .catch((err) => console.error('[ses] email send failed to', email, err))
     }
 

@@ -6,7 +6,19 @@ import { uploadFileInChunks, fetchWithTimeout, type PartRecord } from '@/lib/cli
 import { saveUploadResume, loadUploadResume, clearUploadResume } from '@/lib/uploadResume'
 import type { PriceBreakdown, FileEntry } from '@/types'
 
-export type UploadStatus = 'uploading' | 'done' | 'failed' | 'aborted'
+// 'partial' — a batch finished its upload pass with 1+ files genuinely
+// failed (not just mid-retry); the sender chooses per remaining failed
+// file to retry it, or gives up and calls skipBatchFailedFiles to proceed
+// with whatever succeeded (see finalizePartialBatch server-side).
+export type UploadStatus = 'uploading' | 'done' | 'failed' | 'partial' | 'aborted'
+
+export interface BatchFileProgress {
+  fileId: string
+  path: string
+  sizeBytes: number
+  status: 'pending' | 'uploading' | 'done' | 'failed' | 'skipped'
+  retryCount: number
+}
 
 export interface ActiveUpload {
   id: string
@@ -20,6 +32,13 @@ export interface ActiveUpload {
   shareableLink: string | null
   error: string | null
   minimized: boolean
+  // Client-side timestamp (Date.now()), used only to group the Uploads
+  // Panel by day — never sent to the server.
+  createdAt: number
+  // Only set for batch uploads — per-file status backing the "partial
+  // success" retry/skip UI. Absent for single-file and Drive-import
+  // uploads, which have no per-file breakdown to show.
+  batchFiles?: BatchFileProgress[]
 }
 
 interface UploadContextType {
@@ -29,14 +48,18 @@ interface UploadContextType {
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays?: number
+    expiryDays?: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => string
   startBatchUpload: (
     entries: FileEntry[],
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays?: number
+    expiryDays?: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => string
   // Google Drive import — bytes never pass through the browser, so unlike
   // the two above this has no File/FileEntry to chunk. `items` are the ids
@@ -51,9 +74,22 @@ interface UploadContextType {
     totalBytes: number,
     walletId: string,
     recipientEmails: string[],
-    expiryDays?: number
+    expiryDays?: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => string
   retryUpload: (id: string) => void
+  // Batch-only — retries exactly one still-failed file within a 'partial'
+  // batch, leaving every other file (already uploaded or still pending
+  // retry) untouched.
+  retryBatchFile: (id: string, fileId: string) => void
+  // Batch-only — bulk convenience wrapper that calls retryBatchFile for
+  // every currently-failed file at once.
+  retryAllFailedBatchFiles: (id: string) => void
+  // Batch-only — gives up on every currently-failed file in a 'partial'
+  // batch, refunds their share, and activates the link with whatever
+  // succeeded.
+  skipBatchFailedFiles: (id: string) => Promise<void>
   abortUpload: (id: string) => Promise<void>
   minimizeUpload: (id: string) => void
   dismissUpload: (id: string) => void
@@ -65,17 +101,20 @@ const UploadContext = createContext<UploadContextType>({
   startBatchUpload: () => '',
   startDriveImport: () => '',
   retryUpload: () => {},
+  retryBatchFile: () => {},
+  retryAllFailedBatchFiles: () => {},
+  skipBatchFailedFiles: async () => {},
   abortUpload: async () => {},
   minimizeUpload: () => {},
   dismissUpload: () => {},
 })
 
 type UploadMeta = { fileId: string; uploadId: string; s3Key: string; walletId: string }
-type RetryArgs = { file: File; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number }
+type RetryArgs = { file: File; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
 type BatchMeta = { batchId: string; walletId: string }
-type BatchRetryArgs = { entries: FileEntry[]; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number }
+type BatchRetryArgs = { entries: FileEntry[]; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
 type DriveMeta = { batchId: string; walletId: string }
-type DriveRetryArgs = { items: { id: string; mimeType: string }[]; displayName: string; totalBytes: number; walletId: string; recipientEmails: string[]; expiryDays: number }
+type DriveRetryArgs = { items: { id: string; mimeType: string }[]; displayName: string; totalBytes: number; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
 // How many files upload in parallel within one batch — unbounded concurrency
 // on a large multi-file selection is what caused the VayuStudios bulk-upload
 // stall (see memory: bulk_upload_reliability_fix); keep this modest.
@@ -92,6 +131,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const retryArgsRef = useRef<Map<string, RetryArgs>>(new Map())
   const batchMetaRef = useRef<Map<string, BatchMeta>>(new Map())
   const batchRetryArgsRef = useRef<Map<string, BatchRetryArgs>>(new Map())
+  // Per-file server identifiers from the batch's initiate response — kept
+  // so retryBatchFile can re-run just one file (needs its uploadId/fileId/
+  // totalChunks) without re-initiating the whole batch.
+  const batchFileResultsRef = useRef<Map<string, { fileId: string; uploadId: string; fileName: string; fileSizeBytes: number; totalChunks: number }[]>>(new Map())
   const driveMetaRef = useRef<Map<string, DriveMeta>>(new Map())
   const driveRetryArgsRef = useRef<Map<string, DriveRetryArgs>>(new Map())
   // Generation counter per upload id — guards a Drive-import poll loop
@@ -103,15 +146,80 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...update } : u))
   }, [])
 
+  const updateBatchFileStatus = useCallback((
+    id: string,
+    fileId: string,
+    status: BatchFileProgress['status'],
+    bumpRetry = false
+  ) => {
+    setUploads(prev => prev.map(u => {
+      if (u.id !== id || !u.batchFiles) return u
+      return {
+        ...u,
+        batchFiles: u.batchFiles.map(bf => bf.fileId === fileId
+          ? { ...bf, status, retryCount: bumpRetry ? bf.retryCount + 1 : bf.retryCount }
+          : bf),
+      }
+    }))
+  }, [])
+
+  // Uploads one file's parts to R2/S3 and completes the multipart upload —
+  // shared by runBatchUpload's initial pool and retryBatchFile's single-file
+  // re-run, so the chunk-upload/complete logic exists in exactly one place.
+  const uploadOneBatchFile = useCallback(async (
+    id: string,
+    batchId: string,
+    walletId: string,
+    file: File,
+    fileResult: { fileId: string; uploadId: string; totalChunks: number },
+    onProgress?: (uploadedBytes: number) => void
+  ): Promise<{ success: boolean; batchComplete: boolean }> => {
+    try {
+      const presignedUrls = await Promise.all(
+        Array.from({ length: fileResult.totalChunks }, async (_, i) => {
+          const res = await fetchWithTimeout('/api/upload/batch/part-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batchId, fileId: fileResult.fileId, uploadId: fileResult.uploadId, partNumber: i + 1, walletId }),
+          }).then(r => r.json())
+          if (!res.success) throw new Error('Failed to get upload URL')
+          return res.data.presignedUrl as string
+        })
+      )
+
+      const parts = await uploadFileInChunks(
+        file,
+        MULTIPART_CHUNK_SIZE_BYTES,
+        presignedUrls,
+        [],
+        () => abortedRef.current.has(id),
+        onProgress ?? (() => {})
+      )
+      if (abortedRef.current.has(id)) return { success: false, batchComplete: false }
+
+      const completeRes = await fetchWithTimeout('/api/upload/batch/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId, fileId: fileResult.fileId, uploadId: fileResult.uploadId, parts, walletId }),
+      }).then(r => r.json())
+      if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
+      return { success: true, batchComplete: !!completeRes.data.batchComplete }
+    } catch {
+      return { success: false, batchComplete: false }
+    }
+  }, [])
+
   const runUpload = useCallback(async (
     id: string,
     file: File,
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number
+    expiryDays: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => {
-    retryArgsRef.current.set(id, { file, pricing, walletId, recipientEmails, expiryDays })
+    retryArgsRef.current.set(id, { file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
     const startTime = Date.now()
     const totalChunks = Math.ceil(file.size / MULTIPART_CHUNK_SIZE_BYTES)
 
@@ -152,6 +260,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             fileName: file.name,
             fileSizeBytes: file.size,
             recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
+            message,
+            senderNotifyEmail,
             contentType: file.type || 'application/octet-stream',
             expiryDays,
           }),
@@ -262,9 +372,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number
+    expiryDays: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => {
-    batchRetryArgsRef.current.set(id, { entries, pricing, walletId, recipientEmails, expiryDays })
+    batchRetryArgsRef.current.set(id, { entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
     const startTime = Date.now()
     const totalBytes = entries.reduce((s, e) => s + e.file.size, 0)
     const uploadedByFile = new Array(entries.length).fill(0)
@@ -294,6 +406,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             contentType: file.type || 'application/octet-stream',
           })),
           recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
+          message,
+          senderNotifyEmail,
           expiryDays,
         }),
       }).then(r => r.json())
@@ -308,6 +422,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         files: { fileId: string; uploadId: string; fileName: string; fileSizeBytes: number; totalChunks: number }[]
       }
       batchMetaRef.current.set(id, { batchId, walletId })
+      batchFileResultsRef.current.set(id, fileResults)
 
       if (abortedRef.current.has(id)) {
         await fetchWithTimeout('/api/upload/batch/abort', {
@@ -316,52 +431,46 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({ batchId, walletId, reason: 'USER_ABANDONED' }),
         }).catch(() => {})
         batchMetaRef.current.delete(id)
+        batchFileResultsRef.current.delete(id)
         return
       }
 
-      let shareableLink: string | null = null
-      let uploadError: string | null = null
+      patch(id, {
+        batchFiles: fileResults.map((f, i) => ({
+          fileId: f.fileId,
+          path: entries[i].path,
+          sizeBytes: f.fileSizeBytes,
+          status: 'pending',
+          retryCount: 0,
+        })),
+      })
+
+      // Each file's own outcome is tracked independently (updateBatchFileStatus)
+      // instead of one shared kill-switch that used to abort every other
+      // in-flight file the moment any single one failed — a batch with 8/10
+      // files succeeding should let the sender decide (retry the 2, or Skip
+      // and proceed with 8), not silently discard the 8 that already worked.
+      let anyFailed = false
+      let batchCompleteFromServer = false
 
       const uploadOne = async (index: number) => {
-        if (abortedRef.current.has(id) || uploadError) return
+        if (abortedRef.current.has(id)) return
         const file = entries[index].file
         const meta = fileResults[index]
-        try {
-          const presignedUrls = await Promise.all(
-            Array.from({ length: meta.totalChunks }, async (_, i) => {
-              const res = await fetchWithTimeout('/api/upload/batch/part-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ batchId, fileId: meta.fileId, uploadId: meta.uploadId, partNumber: i + 1, walletId }),
-              }).then(r => r.json())
-              if (!res.success) throw new Error('Failed to get upload URL')
-              return res.data.presignedUrl as string
-            })
-          )
-
-          const parts = await uploadFileInChunks(
-            file,
-            MULTIPART_CHUNK_SIZE_BYTES,
-            presignedUrls,
-            [],
-            () => abortedRef.current.has(id),
-            (uploadedBytes) => {
-              uploadedByFile[index] = uploadedBytes
-              reportProgress()
-            }
-          )
-          if (abortedRef.current.has(id)) return
-
-          const completeRes = await fetchWithTimeout('/api/upload/batch/complete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ batchId, fileId: meta.fileId, uploadId: meta.uploadId, parts, walletId }),
-          }).then(r => r.json())
-          if (!completeRes.success) throw new Error(completeRes.message ?? 'Complete failed')
+        updateBatchFileStatus(id, meta.fileId, 'uploading')
+        const result = await uploadOneBatchFile(id, batchId, walletId, file, meta, (uploadedBytes) => {
+          uploadedByFile[index] = uploadedBytes
+          reportProgress()
+        })
+        if (abortedRef.current.has(id)) return
+        if (result.success) {
           uploadedByFile[index] = file.size
           reportProgress()
-        } catch (err) {
-          uploadError = err instanceof Error ? err.message : 'Upload failed'
+          updateBatchFileStatus(id, meta.fileId, 'done')
+          if (result.batchComplete) batchCompleteFromServer = true
+        } else {
+          anyFailed = true
+          updateBatchFileStatus(id, meta.fileId, 'failed')
         }
       }
 
@@ -376,19 +485,33 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       await Promise.all(workers)
 
       if (abortedRef.current.has(id)) return
-      if (uploadError) throw new Error(uploadError)
 
-      const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
-      shareableLink = `${appUrl}/download/${batchId}`
+      if (batchCompleteFromServer) {
+        const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
+        batchMetaRef.current.delete(id)
+        batchRetryArgsRef.current.delete(id)
+        batchFileResultsRef.current.delete(id)
+        patch(id, {
+          percent: 100,
+          uploadedBytes: totalBytes,
+          status: 'done',
+          shareableLink: `${appUrl}/download/${batchId}`,
+        })
+        return
+      }
 
-      batchMetaRef.current.delete(id)
-      batchRetryArgsRef.current.delete(id)
-      patch(id, {
-        percent: 100,
-        uploadedBytes: totalBytes,
-        status: 'done',
-        shareableLink,
-      })
+      if (anyFailed) {
+        // Stays 'partial' — batchMetaRef/batchRetryArgsRef/batchFileResultsRef
+        // are deliberately kept alive here (not cleared) so retryBatchFile
+        // and skipBatchFailedFiles can still act on this upload.
+        patch(id, { status: 'partial' })
+        return
+      }
+
+      // Every file reported success but the server never told us the batch
+      // was complete — shouldn't happen given finalizeBatchIfComplete's own
+      // logic, but fail loudly rather than leave the UI stuck in 'uploading'.
+      patch(id, { status: 'failed', error: 'Upload did not complete — please retry' })
     } catch (err) {
       if (abortedRef.current.has(id)) return
       patch(id, {
@@ -396,7 +519,83 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         error: err instanceof Error ? err.message : 'Upload failed',
       })
     }
-  }, [patch])
+  }, [patch, updateBatchFileStatus, uploadOneBatchFile])
+
+  // Retries exactly one still-failed file within a 'partial' batch.
+  const retryBatchFile = useCallback((id: string, fileId: string) => {
+    const args = batchRetryArgsRef.current.get(id)
+    const fileResults = batchFileResultsRef.current.get(id)
+    const meta = batchMetaRef.current.get(id)
+    if (!args || !fileResults || !meta) return
+    const index = fileResults.findIndex((f) => f.fileId === fileId)
+    if (index === -1) return
+
+    updateBatchFileStatus(id, fileId, 'uploading', true)
+    const file = args.entries[index].file
+    uploadOneBatchFile(id, meta.batchId, meta.walletId, file, fileResults[index]).then((result) => {
+      if (abortedRef.current.has(id)) return
+      if (!result.success) {
+        updateBatchFileStatus(id, fileId, 'failed')
+        return
+      }
+      updateBatchFileStatus(id, fileId, 'done')
+      if (result.batchComplete) {
+        const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
+        batchMetaRef.current.delete(id)
+        batchRetryArgsRef.current.delete(id)
+        batchFileResultsRef.current.delete(id)
+        patch(id, { status: 'done', percent: 100, shareableLink: `${appUrl}/download/${meta.batchId}` })
+      }
+    })
+  }, [patch, updateBatchFileStatus, uploadOneBatchFile])
+
+  // Retries every currently-failed file in a 'partial' batch at once — a
+  // bulk convenience wrapper around retryBatchFile (same per-file mechanism,
+  // just looped), not a separate upload path.
+  const retryAllFailedBatchFiles = useCallback((id: string) => {
+    const upload = uploads.find((u) => u.id === id)
+    const failedFileIds = (upload?.batchFiles ?? []).filter((f) => f.status === 'failed').map((f) => f.fileId)
+    failedFileIds.forEach((fileId) => retryBatchFile(id, fileId))
+  }, [uploads, retryBatchFile])
+
+  // Gives up on every currently-failed file in a 'partial' batch, refunds
+  // their share via the server, and activates the link with whatever
+  // succeeded. Reads current batchFiles from `uploads` state (not a ref)
+  // since it needs the live set of failed fileIds at click time.
+  const skipBatchFailedFiles = useCallback(async (id: string) => {
+    const meta = batchMetaRef.current.get(id)
+    if (!meta) return
+    const upload = uploads.find((u) => u.id === id)
+    const failedFileIds = (upload?.batchFiles ?? []).filter((f) => f.status === 'failed').map((f) => f.fileId)
+    if (failedFileIds.length === 0) return
+
+    try {
+      const res = await fetchWithTimeout('/api/upload/batch/finalize-partial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId: meta.batchId, walletId: meta.walletId, skipFileIds: failedFileIds }),
+      }).then(r => r.json())
+
+      if (!res.success) {
+        patch(id, { error: res.message ?? 'Could not finish the transfer' })
+        return
+      }
+
+      setUploads(prev => prev.map(u => u.id === id
+        ? { ...u, batchFiles: u.batchFiles?.map(f => failedFileIds.includes(f.fileId) ? { ...f, status: 'skipped' as const } : f) }
+        : u))
+
+      if (res.data.batchComplete) {
+        const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
+        batchMetaRef.current.delete(id)
+        batchRetryArgsRef.current.delete(id)
+        batchFileResultsRef.current.delete(id)
+        patch(id, { status: 'done', percent: 100, shareableLink: `${appUrl}/download/${meta.batchId}` })
+      }
+    } catch {
+      patch(id, { error: 'Network error — please try again' })
+    }
+  }, [uploads, patch])
 
   // Google Drive import — no bytes to chunk from the browser, so this is a
   // start-then-poll loop instead of runUpload/runBatchUpload's chunk loop.
@@ -410,9 +609,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     totalBytes: number,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number
+    expiryDays: number,
+    message?: string,
+    senderNotifyEmail?: string
   ) => {
-    driveRetryArgsRef.current.set(id, { items, displayName, totalBytes, walletId, recipientEmails, expiryDays })
+    driveRetryArgsRef.current.set(id, { items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
     const myGen = (drivePollGenRef.current.get(id) ?? 0) + 1
     drivePollGenRef.current.set(id, myGen)
 
@@ -423,6 +624,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({
           items,
           recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
+          message,
+          senderNotifyEmail,
           expiryDays,
         }),
       }).then(r => r.json())
@@ -484,7 +687,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number = DEFAULT_EXPIRY_DAYS
+    expiryDays: number = DEFAULT_EXPIRY_DAYS,
+    message?: string,
+    senderNotifyEmail?: string
   ): string => {
     const id = crypto.randomUUID()
     setUploads(prev => [...prev, {
@@ -499,8 +704,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       shareableLink: null,
       error: null,
       minimized: false,
+      createdAt: Date.now(),
     }])
-    runUpload(id, file, pricing, walletId, recipientEmails, expiryDays)
+    runUpload(id, file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
     return id
   }, [runUpload])
 
@@ -509,7 +715,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     pricing: PriceBreakdown,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number = DEFAULT_EXPIRY_DAYS
+    expiryDays: number = DEFAULT_EXPIRY_DAYS,
+    message?: string,
+    senderNotifyEmail?: string
   ): string => {
     const id = crypto.randomUUID()
     const totalBytes = entries.reduce((s, e) => s + e.file.size, 0)
@@ -525,8 +733,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       shareableLink: null,
       error: null,
       minimized: false,
+      createdAt: Date.now(),
     }])
-    runBatchUpload(id, entries, pricing, walletId, recipientEmails, expiryDays)
+    runBatchUpload(id, entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
     return id
   }, [runBatchUpload])
 
@@ -536,7 +745,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     totalBytes: number,
     walletId: string,
     recipientEmails: string[],
-    expiryDays: number = DEFAULT_EXPIRY_DAYS
+    expiryDays: number = DEFAULT_EXPIRY_DAYS,
+    message?: string,
+    senderNotifyEmail?: string
   ): string => {
     const id = crypto.randomUUID()
     setUploads(prev => [...prev, {
@@ -551,8 +762,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       shareableLink: null,
       error: null,
       minimized: false,
+      createdAt: Date.now(),
     }])
-    runDriveImport(id, items, displayName, totalBytes, walletId, recipientEmails, expiryDays)
+    runDriveImport(id, items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
     return id
   }, [runDriveImport])
 
@@ -561,21 +773,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     if (driveArgs) {
       abortedRef.current.delete(id)
       patch(id, { status: 'uploading', error: null })
-      runDriveImport(id, driveArgs.items, driveArgs.displayName, driveArgs.totalBytes, driveArgs.walletId, driveArgs.recipientEmails, driveArgs.expiryDays)
+      runDriveImport(id, driveArgs.items, driveArgs.displayName, driveArgs.totalBytes, driveArgs.walletId, driveArgs.recipientEmails, driveArgs.expiryDays, driveArgs.message, driveArgs.senderNotifyEmail)
       return
     }
     const batchArgs = batchRetryArgsRef.current.get(id)
     if (batchArgs) {
       abortedRef.current.delete(id)
       patch(id, { status: 'uploading', error: null })
-      runBatchUpload(id, batchArgs.entries, batchArgs.pricing, batchArgs.walletId, batchArgs.recipientEmails, batchArgs.expiryDays)
+      runBatchUpload(id, batchArgs.entries, batchArgs.pricing, batchArgs.walletId, batchArgs.recipientEmails, batchArgs.expiryDays, batchArgs.message, batchArgs.senderNotifyEmail)
       return
     }
     const args = retryArgsRef.current.get(id)
     if (!args) return
     abortedRef.current.delete(id)
     patch(id, { status: 'uploading', error: null })
-    runUpload(id, args.file, args.pricing, args.walletId, args.recipientEmails, args.expiryDays)
+    runUpload(id, args.file, args.pricing, args.walletId, args.recipientEmails, args.expiryDays, args.message, args.senderNotifyEmail)
   }, [runUpload, runBatchUpload, runDriveImport, patch])
 
   const abortUpload = useCallback(async (id: string) => {
@@ -657,7 +869,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <UploadContext.Provider value={{ uploads, startUpload, startBatchUpload, startDriveImport, retryUpload, abortUpload, minimizeUpload, dismissUpload }}>
+    <UploadContext.Provider value={{ uploads, startUpload, startBatchUpload, startDriveImport, retryUpload, retryBatchFile, retryAllFailedBatchFiles, skipBatchFailedFiles, abortUpload, minimizeUpload, dismissUpload }}>
       {children}
     </UploadContext.Provider>
   )

@@ -1,8 +1,8 @@
 'use client'
 
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
 import { getExtensionCostPaise, formatPaise } from '@/lib/pricing'
@@ -10,10 +10,27 @@ import { EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pri
 import ShareButtons from '@/components/ShareButtons'
 import RequestFileModal from '@/components/RequestFileModal'
 import ReceiveRequestsPanel from '@/components/ReceiveRequestsPanel'
-import { FileTypeIcon, PackageIcon, InboxIcon, CopyIcon, ShareIcon, ClockIcon, DownloadIcon, PlusCircleIcon, CheckCircleIcon } from '@/components/icons'
+import { FileTypeIcon, PackageIcon, InboxIcon, CopyIcon, ShareIcon, ClockIcon, DownloadIcon, PlusCircleIcon, CheckCircleIcon, EditIcon } from '@/components/icons'
 import type { Transfer } from '@/types'
 
 const EXTEND_TARGETS = [...EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD] as const
+
+// Sidebar's Request button links here with ?request=1 so it can open the
+// modal below from any page without needing its own global state — strips
+// the param right after so a refresh doesn't re-open it. useSearchParams()
+// needs its own Suspense boundary per Next.js's App Router rules, hence the
+// separate component instead of calling it straight in the page body.
+function RequestModalTrigger({ onOpen }: { onOpen: () => void }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  useEffect(() => {
+    if (searchParams.get('request') === '1') {
+      onOpen()
+      router.replace('/transfers')
+    }
+  }, [searchParams, router, onOpen])
+  return null
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -57,6 +74,7 @@ export default function TransfersPage() {
   // Receive-link ("request a file") state
   const [showRequestModal, setShowRequestModal] = useState(false)
   const [receiveRefreshKey, setReceiveRefreshKey] = useState(0)
+
 
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login')
@@ -121,7 +139,7 @@ export default function TransfersPage() {
 
   if (status === 'loading' || !session) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-[calc(100vh-56px)] flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     )
@@ -129,6 +147,9 @@ export default function TransfersPage() {
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-10">
+      <Suspense fallback={null}>
+        <RequestModalTrigger onOpen={() => setShowRequestModal(true)} />
+      </Suspense>
       <div className="flex items-center justify-between mb-8 gap-2">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">My Transfers</h1>
@@ -173,13 +194,17 @@ export default function TransfersPage() {
 
       {!loading && !error && transfers.length === 0 && (
         <div className="text-center py-20 space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-b from-accent to-[#7C3AED] text-white flex items-center justify-center shadow-lg shadow-accent/25">
             <PackageIcon className="w-8 h-8" />
           </div>
-          <div className="text-text-primary font-semibold text-lg">No transfers yet</div>
-          <div className="text-muted text-sm">Upload your first file to get a shareable link</div>
-          <Link href="/" className="inline-block bg-accent text-bg text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-accent/90 transition-colors mt-2">
-            Upload a File
+          <div>
+            <div className="text-text-primary font-bold text-xl">
+              Welcome{session?.user?.name ? `, ${session.user.name.split(' ')[0]}` : ''}!
+            </div>
+            <div className="text-muted text-sm mt-1">Your transfers will show up here once you send your first file.</div>
+          </div>
+          <Link href="/transfer/new" className="inline-block bg-gradient-to-r from-accent to-[#7C3AED] text-white text-sm font-bold px-6 py-3 rounded-xl hover:opacity-90 transition-opacity mt-2 shadow-md shadow-accent/20">
+            Send Your First File
           </Link>
         </div>
       )}
@@ -269,6 +294,13 @@ export default function TransfersPage() {
                     >
                       <DownloadIcon className="w-3.5 h-3.5" />
                     </button>
+                    <Link
+                      href={`/transfer/${t.fileId}`}
+                      title="Manage"
+                      className="p-1.5 border rounded-lg transition-colors border-border text-muted hover:border-accent hover:text-accent"
+                    >
+                      <EditIcon className="w-3.5 h-3.5" />
+                    </Link>
                   </div>
                 </div>
 

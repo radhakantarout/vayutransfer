@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useSession, signIn } from 'next-auth/react'
-import { AlertCircleIcon, DriveIcon, FolderIcon } from '@/components/icons'
+import { AlertCircleIcon, DriveIcon } from '@/components/icons'
 import type { DriveFileEntry } from '@/types'
 
 declare global {
@@ -73,16 +73,6 @@ interface Props {
   // files-selected footer) so this reads like a natural sibling of the
   // existing Add Files/Add Folder buttons in both places.
   variant?: 'primary' | 'compact'
-  // Mirrors the local Add Files vs. Add Folder split rather than one button
-  // trying to do both. Google's Picker changes what a single click on a
-  // folder row does depending on setSelectFolderEnabled: off, a click opens
-  // the folder (normal browsing, for picking individual files inside it);
-  // on, a click *selects* the folder itself and you must double-click to
-  // look inside it. Trying to support both in one button/one click-model
-  // was the source of the "no back / confusing" complaint — two clearly
-  // labeled entry points removes the ambiguity instead of fighting Google's
-  // own widget behavior.
-  mode: 'files' | 'folder'
   // Hands the resolved selection to the caller instead of showing any
   // confirm UI of its own — the caller (UploadZone -> the upload page)
   // folds these into the exact same file-list/pricing/confirm screen a
@@ -93,7 +83,7 @@ interface Props {
   onFilesResolved: (files: DriveFileEntry[], unsupported: string[]) => void
 }
 
-export default function GoogleDriveImportButton({ variant = 'primary', mode, onFilesResolved }: Props) {
+export default function GoogleDriveImportButton({ variant = 'primary', onFilesResolved }: Props) {
   const { status: sessionStatus } = useSession()
   const [busy, setBusy] = useState(false)
   // Distinguishes "waiting on the Picker/network" (fast) from "server is
@@ -134,7 +124,16 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
       if (!mountedRef.current) return
 
       const google = window.google!
-      const folderMode = mode === 'folder'
+      // One session picks both loose files and whole folders — Picker
+      // requires setSelectFolderEnabled(true) for folders to be selectable
+      // at all, which trades single-click-to-open-a-folder for single-
+      // click-to-select-it (double-click to browse inside instead). That's
+      // an acceptable, well-precedented cost now that the multi-view
+      // sidebar + breadcrumbs below already solve real "how do I go back"
+      // navigation — this flag only changes how you enter a folder, not
+      // how you leave one. Was previously split into two buttons (files-
+      // only vs folder-only) before that navigation fix existed.
+      //
       // Two labeled views ("My Drive" + "Shared with me") instead of one
       // bare DocsView — Picker only renders its left-hand source sidebar
       // (the thing that makes it actually look/feel like Drive rather than
@@ -153,7 +152,7 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
       const makeView = (label: string, ownedByMe: boolean) => {
         const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
           .setIncludeFolders(true)
-          .setSelectFolderEnabled(folderMode)
+          .setSelectFolderEnabled(true)
           .setLabel(label)
           .setMode(google.picker.DocsViewMode.LIST)
         if (!ownedByMe) view.setOwnedByMe(false)
@@ -163,7 +162,7 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
       const picker = new google.picker.PickerBuilder()
         .addView(makeView('My Drive', true))
         .addView(makeView('Shared with me', false))
-        .setTitle(folderMode ? 'Select a folder to import' : 'Select files to import')
+        .setTitle('Select files or folders to import')
         // Google's default dialog size left the grid cramped (2 rows
         // visible before scrolling) — this is near the widget's own max
         // of (1051, 650), auto-centered on screen.
@@ -213,10 +212,10 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
   }
 
   const buttonClass = variant === 'primary'
-    ? 'flex items-center gap-1.5 px-4 py-2 bg-accent/10 hover:bg-accent/20 border border-accent/30 text-accent text-sm font-medium rounded-lg transition-colors disabled:opacity-50'
+    ? 'flex items-center gap-2 px-4 py-2.5 bg-card border border-border text-text-primary text-sm font-medium rounded-xl shadow-sm hover:border-accent/50 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0'
     : 'flex items-center justify-center gap-1.5 flex-1 text-xs border border-border rounded-lg py-1.5 text-muted hover:border-accent hover:text-accent transition-colors disabled:opacity-50'
 
-  const label = resolving ? 'Reading Drive folder…' : busy ? 'Connecting…' : mode === 'folder' ? 'Drive Folder' : 'Drive Files'
+  const label = resolving ? 'Reading Drive folder…' : busy ? 'Connecting…' : 'Google Drive'
 
   return (
     <div className={variant === 'compact' ? 'flex-1 min-w-[45%]' : undefined}>
@@ -228,7 +227,7 @@ export default function GoogleDriveImportButton({ variant = 'primary', mode, onF
       >
         {busy
           ? <span className="w-3.5 h-3.5 flex-shrink-0 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-          : mode === 'folder' ? <FolderIcon className="w-4 h-4 flex-shrink-0" /> : <DriveIcon className="w-4 h-4 flex-shrink-0" />}
+          : <DriveIcon className="w-4 h-4 flex-shrink-0" />}
         {label}
       </button>
       {error && (

@@ -35,6 +35,8 @@ export type AuditEventType =
   | 'DRIVE_DISCONNECTED'
   | 'DRIVE_IMPORT_STARTED'
   | 'DRIVE_IMPORT_FAILED'
+  | 'TRANSFER_SETTINGS_UPDATED'
+  | 'TRANSFER_DELETED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -77,8 +79,25 @@ export interface Transfer {
   // for the silent abuse ceiling enforced separately.
   downloadsUsed: number
   recipientEmails?: string[]
+  // Optional note from the sender, shown in the recipient notification
+  // email — plain text, 200-char UI-enforced max (not re-validated
+  // server-side beyond a generous length cap; it's a courtesy message, not
+  // security-sensitive input).
+  message?: string
+  // Sender's own notification address — distinct from recipientEmails.
+  // When set, sendDownloadNotificationEmail fires once per download visit
+  // (not once per file in a batch). See app/api/download/[fileId]/route.ts.
+  senderNotifyEmail?: string
+  // Editable display name, independent of fileName (which stays whatever
+  // the first uploaded file/batch was called). Falls back to fileName
+  // everywhere it's shown when unset.
+  displayName?: string
+  passwordHash?: string
+  passwordEnabled?: boolean
   amountDeducted: number        // paise
-  status: 'pending' | 'active' | 'expired' | 'failed'
+  // 'deleted' — sender explicitly deleted the transfer (no refund; the
+  // underlying R2/S3 objects are removed too, see DELETE /api/transfers/[fileId]).
+  status: 'pending' | 'active' | 'expired' | 'failed' | 'deleted'
   // S3->R2 migration: every record has exactly one of these two populated,
   // matching storageBackend. Existing pre-migration records only ever have
   // s3Key; new uploads only ever get r2Key. See lib/aws/storage.ts.
@@ -123,7 +142,12 @@ export interface TransferFile {
   s3Key?: string
   r2Key?: string
   uploadId?: string             // set once the multipart upload for this file has started
-  status: 'pending' | 'uploaded' | 'failed'
+  // 'skipped' — the sender chose to proceed without this file after it
+  // failed and they declined to keep retrying; its share of the batch price
+  // gets refunded (see /api/upload/batch/[id]/finalize-partial) and the
+  // rest of the batch activates without it, same as if it were 'uploaded'
+  // for the purposes of "is this batch done".
+  status: 'pending' | 'uploaded' | 'failed' | 'skipped'
   createdAt: string             // ISO string
 }
 

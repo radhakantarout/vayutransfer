@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
+import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
 import { getItem, updateItem, putItem } from '@/lib/aws/dynamodb'
 import { getDownloadPresignedUrl, getKeyDownloadPresignedUrl } from '@/lib/aws/storage'
 import { getTransferFiles, transferFileKey } from '@/lib/transferBatch'
+import { sendDownloadNotificationEmail } from '@/lib/aws/ses'
 import { logAudit } from '@/lib/audit'
 import { MAX_DOWNLOADS_PER_LINK } from '@/constants/pricing'
 import type { ApiResponse, Transfer, Download } from '@/types'
@@ -38,6 +40,15 @@ export async function GET(
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: 'FILE_NOT_READY', message: 'File is not available for download' },
       { status: 404 }
+    )
+  }
+
+  // No file details at all until the password is verified — the recipient
+  // only learns anything about this transfer via POST /verify-password.
+  if (transfer.passwordEnabled) {
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: 'PASSWORD_REQUIRED', message: 'This transfer is password protected' },
+      { status: 401 }
     )
   }
 
@@ -128,6 +139,20 @@ export async function POST(
     )
   }
 
+  // Re-validated here too, not just at /verify-password — this is the
+  // route that actually mints presigned URLs, so it's the one that must
+  // never trust a client-side "already verified" flag.
+  if (transfer.passwordEnabled) {
+    const { password } = await req.json().catch(() => ({ password: undefined })) as { password?: string }
+    const valid = password ? await bcrypt.compare(password, transfer.passwordHash ?? '') : false
+    if (!valid) {
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: 'PASSWORD_REQUIRED', message: 'Incorrect password' },
+        { status: 401 }
+      )
+    }
+  }
+
   // Atomic increment with optimistic lock, still guarded by the silent
   // abuse ceiling so a burst of concurrent requests can't blow past it.
   const newDownloadsUsed = transfer.downloadsUsed + 1
@@ -167,6 +192,11 @@ export async function POST(
   const downloadUrl = batchFiles ? undefined : await getDownloadPresignedUrl(transfer)
 
   await putItem(downloadsTable, { ...baseRecord, outcome: 'success', downloadsUsedAtTime: newDownloadsUsed })
+
+  if (transfer.senderNotifyEmail) {
+    void sendDownloadNotificationEmail(transfer.senderNotifyEmail, transfer.fileName, attemptedAt)
+      .catch((err) => console.error('[ses] download notification failed to', transfer.senderNotifyEmail, err))
+  }
 
   const minutesToExpiry = Math.max(0, Math.round((new Date(transfer.expiryTime).getTime() - Date.now()) / 60000))
 

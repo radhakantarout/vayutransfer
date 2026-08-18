@@ -100,3 +100,14 @@ export async function deleteStorageObject(transfer: Transfer): Promise<void> {
     ? r2.deleteR2Object(key)
     : s3.deleteS3Object(key)
 }
+
+// Keyed variant for batch transfers — each raw file lives in its own
+// TransferFile record (own key via transferFileKey), not on the Transfer
+// record itself, so deleteStorageObject's transfer-level key lookup doesn't
+// apply. Used by DELETE /api/transfers/[fileId] to remove every file in a
+// batch being permanently deleted.
+export async function deleteStorageObjectByKey(backend: StorageBackend, key: string): Promise<void> {
+  return backend === 'R2'
+    ? r2.deleteR2Object(key)
+    : s3.deleteS3Object(key)
+}

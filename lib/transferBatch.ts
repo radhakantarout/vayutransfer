@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getItem, putItem, queryByPK, updateItem } from '@/lib/aws/dynamodb'
 import { initiateUpload, getBatchObjectKey, transferKey, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
 import { calculatePrice } from '@/lib/pricing'
-import { deductFromWallet, getWalletBalance } from '@/lib/wallet'
+import { deductFromWallet, getWalletBalance, refundWallet } from '@/lib/wallet'
 import { sendTransferLinkEmail } from '@/lib/aws/ses'
 import { logAudit } from '@/lib/audit'
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb'
@@ -63,6 +63,8 @@ export async function createBatchTransfer(params: {
   walletId: string
   files: IncomingBatchFile[]
   recipientEmails?: string[]
+  message?: string
+  senderNotifyEmail?: string
   expiryDays: number
 }): Promise<{
   batchId: string
@@ -71,7 +73,7 @@ export async function createBatchTransfer(params: {
   balanceBeforePaise: number
   chunkSizeBytes: number
 }> {
-  const { walletId, files, recipientEmails, expiryDays } = params
+  const { walletId, files, recipientEmails, message, senderNotifyEmail, expiryDays } = params
 
   const walletsTable = process.env.DYNAMO_WALLETS_TABLE ?? 'vayu-wallets'
   const wallet = await getItem<Wallet>(walletsTable, { walletId })
@@ -127,6 +129,8 @@ export async function createBatchTransfer(params: {
     billableGB: pricing.billableGB,
     downloadsUsed: 0,
     recipientEmails,
+    message,
+    senderNotifyEmail,
     amountDeducted: pricing.totalPaise,
     status: 'pending',
     storageBackend: NEW_UPLOAD_BACKEND,
@@ -228,6 +232,8 @@ export async function createDriveImportBatch(params: {
   walletId: string
   files: IncomingDriveFile[]
   recipientEmails?: string[]
+  message?: string
+  senderNotifyEmail?: string
   expiryDays: number
 }): Promise<{
   batchId: string
@@ -235,7 +241,7 @@ export async function createDriveImportBatch(params: {
   pricing: PriceBreakdown
   balanceBeforePaise: number
 }> {
-  const { walletId, files, recipientEmails, expiryDays } = params
+  const { walletId, files, recipientEmails, message, senderNotifyEmail, expiryDays } = params
   const totalSizeBytes = files.reduce((sum, f) => sum + f.fileSizeBytes, 0)
   const { batchId, pricing, balanceBeforePaise } = await deductForNewBatch(walletId, totalSizeBytes)
 
@@ -278,6 +284,8 @@ export async function createDriveImportBatch(params: {
     billableGB: pricing.billableGB,
     downloadsUsed: 0,
     recipientEmails,
+    message,
+    senderNotifyEmail,
     amountDeducted: pricing.totalPaise,
     status: 'pending',
     storageBackend: NEW_UPLOAD_BACKEND,
@@ -302,6 +310,59 @@ export async function createDriveImportBatch(params: {
 // this safe under concurrent callers — whichever request observes every
 // file uploaded AND wins the conditional write is the one that sends
 // email/logs the audit event, no matter how many finish in the same instant.
+// Shared by finalizeBatchIfComplete and finalizePartialBatch below — the
+// conditional write (status = 'pending' -> 'active') is what makes this
+// safe under concurrent callers, whichever caller wins it is the one that
+// sends the email/logs the audit event, no matter how many finish (or get
+// skipped) in the same instant.
+async function tryActivateBatch(transfer: Transfer, walletId: string): Promise<boolean> {
+  try {
+    await updateItem(
+      TRANSFERS_TABLE,
+      { fileId: transfer.fileId },
+      'SET #status = :active, completedAt = :now',
+      { ':active': 'active', ':now': new Date().toISOString(), ':pending': 'pending' },
+      '#status = :pending',
+      { '#status': 'status' }
+    )
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException) return false
+    throw err
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+  const shareableLink = `${appUrl}/download/${transfer.fileId}`
+  const recipients = transfer.recipientEmails ?? []
+  for (const email of recipients) {
+    sendTransferLinkEmail(email, transfer.fileName, shareableLink, transfer.expiryTime, transfer.message)
+      .catch((err) => console.error('[ses] email send failed to', email, err))
+  }
+
+  void logAudit({
+    eventType: 'UPLOAD_COMPLETED',
+    actor: 'user',
+    outcome: 'success',
+    walletId,
+    fileId: transfer.fileId,
+    amountPaise: transfer.amountDeducted,
+    metadata: {
+      fileCount: transfer.fileCount,
+      fileSizeBytes: transfer.fileSizeBytes,
+      expiryTime: transfer.expiryTime,
+      shareableLink,
+      recipientEmailsSent: recipients.length,
+    },
+  })
+
+  return true
+}
+
+// Marks one file of a batch 'uploaded' and, if that was the last one,
+// atomically flips the Transfer to 'active' and sends the recipient
+// emails — extracted from app/api/upload/batch/complete/route.ts so both
+// that route (client-driven completion) and the Drive import Lambda's
+// file-complete callback (server-driven completion) share the exact same
+// race-safe "last file wins" logic instead of a hand-copied duplicate.
 export async function finalizeBatchIfComplete(params: {
   batchId: string
   fileId: string
@@ -315,50 +376,52 @@ export async function finalizeBatchIfComplete(params: {
   if (!transfer) throw new Error('TRANSFER_NOT_FOUND')
 
   const allFiles = await getTransferFiles(transfer)
-  const allUploaded = allFiles.every((f) => (f.fileId === fileId ? true : f.status === 'uploaded'))
+  // 'skipped' counts as terminal here too — a batch can activate once every
+  // file has either uploaded successfully or been explicitly skipped after
+  // a failed retry (see finalizePartialBatch below), not just when all of
+  // them uploaded.
+  const allUploaded = allFiles.every((f) => (f.fileId === fileId ? true : f.status === 'uploaded' || f.status === 'skipped'))
 
-  let justActivated = false
-  if (allUploaded) {
-    try {
-      await updateItem(
-        TRANSFERS_TABLE,
-        { fileId: batchId },
-        'SET #status = :active, completedAt = :now',
-        { ':active': 'active', ':now': new Date().toISOString(), ':pending': 'pending' },
-        '#status = :pending',
-        { '#status': 'status' }
-      )
-      justActivated = true
-    } catch (err) {
-      if (!(err instanceof ConditionalCheckFailedException)) throw err
-    }
-  }
-
-  if (justActivated) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-    const shareableLink = `${appUrl}/download/${batchId}`
-    const recipients = transfer.recipientEmails ?? []
-    for (const email of recipients) {
-      sendTransferLinkEmail(email, transfer.fileName, shareableLink, transfer.expiryTime)
-        .catch((err) => console.error('[ses] email send failed to', email, err))
-    }
-
-    void logAudit({
-      eventType: 'UPLOAD_COMPLETED',
-      actor: 'user',
-      outcome: 'success',
-      walletId,
-      fileId: batchId,
-      amountPaise: transfer.amountDeducted,
-      metadata: {
-        fileCount: transfer.fileCount,
-        fileSizeBytes: transfer.fileSizeBytes,
-        expiryTime: transfer.expiryTime,
-        shareableLink,
-        recipientEmailsSent: recipients.length,
-      },
-    })
-  }
+  if (allUploaded) await tryActivateBatch(transfer, walletId)
 
   return { batchComplete: allUploaded }
+}
+
+// Called when the sender gives up retrying one or more still-failed files
+// in a batch and chooses to proceed without them ("Skip" in the upload
+// progress UI). Marks those files 'skipped', refunds only their share of
+// the original upfront deduction (the rest stays committed — this is a
+// reconciliation on top of the existing "deduct before upload" safety
+// model, not a replacement for it), and activates the batch with whatever
+// files did succeed. Never called for a batch that still has files
+// genuinely in flight — the caller (finalize-partial API route) only
+// offers this once every non-skipped file is already 'uploaded' or
+// terminally 'failed'.
+export async function finalizePartialBatch(params: {
+  batchId: string
+  walletId: string
+  skipFileIds: string[]
+}): Promise<{ batchComplete: boolean; refundedPaise: number }> {
+  const { batchId, walletId, skipFileIds } = params
+  if (skipFileIds.length === 0) return { batchComplete: false, refundedPaise: 0 }
+
+  const transfer = await getItem<Transfer>(TRANSFERS_TABLE, { fileId: batchId })
+  if (!transfer) throw new Error('TRANSFER_NOT_FOUND')
+
+  const allFilesBefore = await getTransferFiles(transfer)
+  const toSkip = allFilesBefore.filter((f) => skipFileIds.includes(f.fileId))
+  const skippedBytes = toSkip.reduce((sum, f) => sum + f.fileSizeBytes, 0)
+
+  await Promise.all(skipFileIds.map((fileId) => updateTransferFileStatus(batchId, fileId, 'skipped')))
+
+  const refundPricing = calculatePrice(skippedBytes)
+  if (refundPricing.totalPaise > 0) {
+    await refundWallet(walletId, refundPricing.totalPaise, batchId)
+  }
+
+  const allFiles = await getTransferFiles(transfer)
+  const allTerminal = allFiles.every((f) => f.status === 'uploaded' || f.status === 'skipped')
+  const batchComplete = allTerminal && (await tryActivateBatch(transfer, walletId))
+
+  return { batchComplete, refundedPaise: refundPricing.totalPaise }
 }

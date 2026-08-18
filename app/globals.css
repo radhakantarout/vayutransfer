@@ -104,6 +104,25 @@ body {
   .wind-stage { display: none; }
 }
 
+/* Gentle float for the upload dropzone's icon */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-4px); }
+}
+
+/* One-shot confetti burst on the New Transfer flow's Upload Complete step */
+@keyframes confetti {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(90px) rotate(180deg); opacity: 0; }
+}
+
+/* Wrong-password shake on the download page's password gate */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+
 /* VayuStudio — floating photo grid animations */
 @keyframes float-col {
   0%, 100% { transform: translateY(0px); }

@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       items?: { id: string; mimeType: string }[]
       recipientEmails?: string[]
+      message?: string
+      senderNotifyEmail?: string
       expiryDays?: number
     }
     const items = body.items ?? []
@@ -127,6 +129,8 @@ export async function POST(req: NextRequest) {
         exportMimeType: f.exportMimeType,
       })),
       recipientEmails: body.recipientEmails,
+      message: body.message,
+      senderNotifyEmail: body.senderNotifyEmail,
       expiryDays,
     })
 

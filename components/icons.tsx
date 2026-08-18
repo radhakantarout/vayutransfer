@@ -211,6 +211,14 @@ export function ShareIcon(props: IconProps) {
   )
 }
 
+export function SendIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" />
+    </svg>
+  )
+}
+
 export function InboxIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -267,6 +275,42 @@ export function SpeedIcon(props: IconProps) {
   )
 }
 
+export function QrCodeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <path d="M14 14h3v3h-3z" /><path d="M20 14v3" /><path d="M14 20h3" /><path d="M20 20h.01" />
+    </svg>
+  )
+}
+
+export function EditIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  )
+}
+
+export function TrashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" /><path d="M14 11v6" />
+    </svg>
+  )
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
 export function ArrowRightIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -293,10 +337,12 @@ export function DriveIcon(props: IconProps) {
 
 const EXT_ICON: Record<string, (props: IconProps) => JSX.Element> = {
   jpg: ImageIcon, jpeg: ImageIcon, png: ImageIcon, gif: ImageIcon, webp: ImageIcon, svg: ImageIcon, bmp: ImageIcon, avif: ImageIcon,
-  mp4: VideoIcon, webm: VideoIcon, mov: VideoIcon, m4v: VideoIcon,
+  raw: ImageIcon, cr2: ImageIcon, nef: ImageIcon, arw: ImageIcon, dng: ImageIcon,
+  mp4: VideoIcon, webm: VideoIcon, mov: VideoIcon, m4v: VideoIcon, avi: VideoIcon, mkv: VideoIcon,
   mp3: AudioIcon, wav: AudioIcon, ogg: AudioIcon, m4a: AudioIcon,
   pdf: PdfIcon,
   zip: ArchiveIcon, rar: ArchiveIcon, '7z': ArchiveIcon,
+  xlsx: DocumentTextIcon, xls: DocumentTextIcon,
   txt: DocumentTextIcon, md: DocumentTextIcon, csv: DocumentTextIcon, json: DocumentTextIcon,
   log: DocumentTextIcon, xml: DocumentTextIcon, yaml: DocumentTextIcon, yml: DocumentTextIcon,
   js: DocumentTextIcon, ts: DocumentTextIcon, tsx: DocumentTextIcon, jsx: DocumentTextIcon,
@@ -312,4 +358,29 @@ export function FileTypeIcon({ fileName, isFolder, ...props }: IconProps & { fil
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   const Icon = EXT_ICON[ext] ?? FileIcon
   return <Icon {...props} />
+}
+
+// Per-extension accent color for contexts that want a colorful, scannable
+// file list (folder yellow, video blue, image green, RAW purple, PDF red,
+// spreadsheet green, zip orange, audio purple) — opt-in via this helper
+// rather than baked into FileTypeIcon itself, since most existing call
+// sites intentionally use one contextual color (muted/accent/selected)
+// instead of per-type coloring.
+const EXT_COLOR: Record<string, string> = {
+  jpg: 'text-emerald-400', jpeg: 'text-emerald-400', png: 'text-emerald-400', gif: 'text-emerald-400',
+  webp: 'text-emerald-400', svg: 'text-emerald-400', bmp: 'text-emerald-400', avif: 'text-emerald-400',
+  raw: 'text-purple-400', cr2: 'text-purple-400', nef: 'text-purple-400', arw: 'text-purple-400', dng: 'text-purple-400',
+  mp4: 'text-blue-400', webm: 'text-blue-400', mov: 'text-blue-400', m4v: 'text-blue-400', avi: 'text-blue-400', mkv: 'text-blue-400',
+  mp3: 'text-violet-400', wav: 'text-violet-400', ogg: 'text-violet-400', m4a: 'text-violet-400',
+  pdf: 'text-red-400',
+  zip: 'text-orange-400', rar: 'text-orange-400', '7z': 'text-orange-400',
+  xlsx: 'text-emerald-400', xls: 'text-emerald-400', csv: 'text-emerald-400',
+  doc: 'text-blue-300', docx: 'text-blue-300',
+}
+const FOLDER_COLOR = 'text-amber-400'
+
+export function fileTypeColor(fileName: string, isFolder?: boolean): string {
+  if (isFolder) return FOLDER_COLOR
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
+  return EXT_COLOR[ext] ?? 'text-muted'
 }

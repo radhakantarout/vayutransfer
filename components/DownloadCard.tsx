@@ -18,7 +18,7 @@ interface BatchFileUrl extends BatchFileInfo {
   downloadUrl: string
 }
 
-type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error'
+type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error' | 'password-required'
 
 // Below this, zipping in the browser (fetch + JSZip, no server round trip)
 // is fast enough and avoids spinning up a Lambda for what's usually a
@@ -74,6 +74,13 @@ export default function DownloadCard({ fileId }: Props) {
   const [fetchedUrls, setFetchedUrls] = useState<Map<string, string> | null>(null)
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
   const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordError, setPasswordError] = useState(false)
+  const [verifyingPassword, setVerifyingPassword] = useState(false)
+  // The password that actually verified successfully — resent with the
+  // real download POST too, since that route re-validates independently
+  // rather than trusting this component's local "already verified" state.
+  const verifiedPasswordRef = useRef<string | null>(null)
   // Generation counter: guards against a stale poll/zip loop from a
   // previous "Download All" click (or an unmounted component) still
   // running and calling setState after a newer click superseded it.
@@ -97,11 +104,40 @@ export default function DownloadCard({ fileId }: Props) {
         } else {
           if (data.error === 'LINK_EXPIRED') setState('expired')
           else if (data.error === 'DOWNLOAD_LIMIT_REACHED') setState('exhausted')
+          else if (data.error === 'PASSWORD_REQUIRED') setState('password-required')
           else { setState('error'); setErrorMsg(data.message ?? 'Something went wrong') }
         }
       })
       .catch(() => { setState('error'); setErrorMsg('Network error') })
   }, [fileId])
+
+  const handleVerifyPassword = async () => {
+    if (!passwordInput) return
+    setVerifyingPassword(true)
+    setPasswordError(false)
+    try {
+      const res = await fetch(`/api/download/${fileId}/verify-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setPasswordError(true)
+        return
+      }
+      verifiedPasswordRef.current = passwordInput
+      setFileName(data.data.fileName)
+      setFileSizeBytes(data.data.fileSizeBytes)
+      setExpiryTime(data.data.expiryTime)
+      if (data.data.fileCount) setBatchFiles(data.data.files ?? [])
+      setState('ready')
+    } catch {
+      setPasswordError(true)
+    } finally {
+      setVerifyingPassword(false)
+    }
+  }
 
   // Live countdown timer
   useEffect(() => {
@@ -116,7 +152,13 @@ export default function DownloadCard({ fileId }: Props) {
   // URL back at once — one slot pays for the whole selection, individual
   // file clicks afterwards just reuse the cached URLs (no extra cost).
   const fetchDownloadUrls = async (): Promise<{ downloadUrl?: string; files?: BatchFileUrl[] } | null> => {
-    const res = await fetch(`/api/download/${fileId}`, { method: 'POST' })
+    const res = await fetch(`/api/download/${fileId}`, {
+      method: 'POST',
+      ...(verifiedPasswordRef.current && {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: verifiedPasswordRef.current }),
+      }),
+    })
     const data = await res.json()
     if (!data.success) {
       if (data.error === 'LINK_EXPIRED') setState('expired')
@@ -304,6 +346,41 @@ export default function DownloadCard({ fileId }: Props) {
         <div className="text-muted text-sm">
           This link has reached its download limit.
         </div>
+      </div>
+    )
+  }
+
+  if (state === 'password-required') {
+    return (
+      <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-4">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+          <LockIcon className="w-7 h-7" />
+        </div>
+        <div>
+          <div className="text-text-primary font-semibold text-lg">This transfer is password protected</div>
+          <div className="text-muted text-sm mt-1">Enter the password to view and download these files.</div>
+        </div>
+        <div className={`space-y-2 ${passwordError ? 'motion-safe:animate-[shake_0.4s_ease-in-out]' : ''}`}>
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyPassword() }}
+            placeholder="Password"
+            autoFocus
+            className={`w-full bg-bg border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none text-center ${
+              passwordError ? 'border-danger' : 'border-border focus:border-accent/60'
+            }`}
+          />
+          {passwordError && <div className="text-xs text-danger">Incorrect password — please try again.</div>}
+        </div>
+        <button
+          onClick={handleVerifyPassword}
+          disabled={!passwordInput || verifyingPassword}
+          className="w-full bg-accent text-bg font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {verifyingPassword ? 'Checking…' : 'Unlock'}
+        </button>
       </div>
     )
   }

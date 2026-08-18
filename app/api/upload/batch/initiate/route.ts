@@ -17,10 +17,12 @@ export async function POST(req: NextRequest) {
       walletId?: string
       files?: IncomingBatchFile[]
       recipientEmails?: string[]
+      message?: string
+      senderNotifyEmail?: string
       expiryDays?: number
     }
 
-    const { walletId, files, recipientEmails } = body
+    const { walletId, files, recipientEmails, message, senderNotifyEmail } = body
     const expiryDays = EXPIRY_DAY_OPTIONS.includes(body.expiryDays as typeof EXPIRY_DAY_OPTIONS[number])
       ? body.expiryDays!
       : DEFAULT_EXPIRY_DAYS
@@ -82,7 +84,7 @@ export async function POST(req: NextRequest) {
 
     const balanceBefore = await getWalletBalance(walletId)
     const { batchId, files: fileResults, pricing, chunkSizeBytes } = await createBatchTransfer({
-      walletId, files, recipientEmails, expiryDays,
+      walletId, files, recipientEmails, message, senderNotifyEmail, expiryDays,
     })
 
     void logAudit({

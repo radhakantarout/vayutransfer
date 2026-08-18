@@ -110,13 +110,22 @@ export async function sendTransferLinkEmail(
   recipient: string,
   fileName: string,
   downloadUrl: string,
-  expiryTime: string
+  expiryTime: string,
+  message?: string
 ): Promise<void> {
   const expiry = new Date(expiryTime).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
     dateStyle: 'medium',
     timeStyle: 'short',
   })
+
+  // Escaped, not interpolated as-is — this is the one field in this email
+  // that's free-text typed by the sender, unlike fileName (derived from an
+  // uploaded file's own name) or the other values here.
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const messageHtml = message
+    ? `<div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;color:#E0EAF8;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(message)}</div>`
+    : ''
 
   const html = `
 <!DOCTYPE html>
@@ -128,6 +137,7 @@ export async function sendTransferLinkEmail(
     <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
 
     <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;">A file is ready for you</h2>
+    ${messageHtml}
 
     <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
       <div style="font-weight:600;margin-bottom:4px;">${fileName}</div>
@@ -156,7 +166,63 @@ export async function sendTransferLinkEmail(
         Body: {
           Html: { Data: html, Charset: 'UTF-8' },
           Text: {
-            Data: `Your file "${fileName}" is ready.\n\nDownload here: ${downloadUrl}\n\nExpires: ${expiry} IST`,
+            Data: `Your file "${fileName}" is ready.\n${message ? `\n${message}\n` : ''}\nDownload here: ${downloadUrl}\n\nExpires: ${expiry} IST`,
+            Charset: 'UTF-8',
+          },
+        },
+      },
+    })
+  )
+}
+
+// Sent to Transfer.senderNotifyEmail once per download visit (not once per
+// file in a batch — see the call site in app/api/download/[fileId]/route.ts,
+// which already mints every file's presigned URL in one POST).
+export async function sendDownloadNotificationEmail(
+  recipient: string,
+  fileName: string,
+  downloadedAt: string
+): Promise<void> {
+  const when = new Date(downloadedAt).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Your file was downloaded</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;">Your file was just downloaded</h2>
+
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;">
+      <div style="font-weight:600;margin-bottom:4px;">${fileName}</div>
+      <div style="color:#5A7090;font-size:14px;">Downloaded ${when} IST</div>
+    </div>
+
+    <div style="color:#5A7090;font-size:12px;line-height:1.6;">
+      You're getting this because you asked to be notified on this transfer. You can keep sharing the same link — it still works until it expires.
+    </div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuTransfer <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [recipient] },
+      Message: {
+        Subject: { Data: `"${fileName}" was just downloaded` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: {
+            Data: `Your file "${fileName}" was just downloaded.\n\nDownloaded: ${when} IST`,
             Charset: 'UTF-8',
           },
         },

@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { formatPaise } from '@/lib/pricing'
 import type { DashboardUsage } from '@/app/api/dashboard/usage/route'
 
@@ -69,24 +68,18 @@ export default function DashboardPage() {
   }, [status])
 
   if (status === 'loading' || status === 'unauthenticated') {
-    return <div className="min-h-screen bg-bg" />
+    return <div className="min-h-[calc(100vh-56px)] bg-bg" />
   }
 
   const maxDayBytes = usage ? Math.max(1, ...usage.dailySeries.map((d) => d.bytes)) : 1
 
   return (
-    <div className="min-h-screen bg-bg">
-      <header className="border-b border-border bg-card/80 backdrop-blur-sm">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-4">
-          <Link href="/" className="text-muted hover:text-text-primary transition-colors text-sm">
-            ← Back
-          </Link>
-          <span className="font-bold text-accent text-xl">VayuTransfer</span>
-          <span className="text-muted text-sm">Dashboard</span>
-        </div>
-      </header>
-
+    <div className="min-h-[calc(100vh-56px)] bg-bg">
       <main className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary">Recent Activity</h1>
+          <p className="text-sm text-muted mt-0.5">Your storage usage and transfer history</p>
+        </div>
         {loading ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 bg-card border border-border rounded-2xl animate-pulse" />)}

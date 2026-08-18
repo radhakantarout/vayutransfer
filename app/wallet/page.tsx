@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import Link from 'next/link'
 import TopupModal from '@/components/TopupModal'
 import { formatPaise } from '@/lib/pricing'
 import type { Transaction } from '@/types'
@@ -47,17 +46,10 @@ export default function WalletPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg">
-      <header className="border-b border-border bg-card/80 backdrop-blur-sm">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-4">
-          <Link href="/" className="text-muted hover:text-text-primary transition-colors text-sm">
-            ← Back
-          </Link>
-          <span className="font-bold text-accent text-xl">VayuTransfer</span>
-        </div>
-      </header>
-
+    <div className="min-h-[calc(100vh-56px)] bg-bg">
       <main className="max-w-2xl mx-auto px-4 py-10 space-y-6">
+        <h1 className="text-2xl font-bold text-text-primary">Wallet</h1>
+
         {/* Balance card */}
         <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-4">
           <div className="text-muted text-sm">Current Balance</div>
