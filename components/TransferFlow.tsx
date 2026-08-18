@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
 import QRCode from 'qrcode'
@@ -190,6 +190,19 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
 
   return (
     <div className={variant === 'dedicated' ? 'min-h-[calc(100vh-56px)] py-10 px-4' : 'w-full'}>
+      {/* Deep-link support: /transfer/new?tx=<transferId> (e.g. clicked from
+          the "Uploading…" badge on /transfers) attaches this instance to an
+          already-running upload tracked in the global context, landing
+          straight on step 4 via the status-sync effect above. No-ops
+          silently if `tx` doesn't match anything currently tracked (stale
+          link, different browser/tab, or the upload already finished and
+          was dismissed). */}
+      {variant === 'dedicated' && (
+        <Suspense fallback={null}>
+          <TxAttacher uploads={uploads} currentUploadId={currentUploadId} onAttach={setCurrentUploadId} />
+        </Suspense>
+      )}
+
       {/* Step 1 — empty dropzone */}
       {step === 'select' && totalCount === 0 && (
         renderIdle ? renderIdle(dropzone) : <div className="max-w-md mx-auto">{dropzone}</div>
@@ -409,6 +422,27 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
       )}
     </div>
   )
+}
+
+// useSearchParams() needs its own Suspense boundary per Next.js's App
+// Router rules — isolated here so only the 'dedicated' variant pays for it.
+function TxAttacher({
+  uploads, currentUploadId, onAttach,
+}: {
+  uploads: ActiveUpload[]
+  currentUploadId: string | null
+  onAttach: (id: string) => void
+}) {
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (currentUploadId) return
+    const tx = searchParams.get('tx')
+    if (!tx) return
+    const match = uploads.find((u) => u.transferId === tx)
+    if (match) onAttach(match.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, uploads, currentUploadId])
+  return null
 }
 
 // ─── Step 4 — Uploading ─────────────────────────────────────────────────────

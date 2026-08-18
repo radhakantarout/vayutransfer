@@ -22,6 +22,12 @@ export interface BatchFileProgress {
 
 export interface ActiveUpload {
   id: string
+  // The server-side Transfer's own fileId/batchId, once known (set right
+  // after initiate returns — well before completion, unlike shareableLink
+  // which only exists once done). Lets other pages (e.g. /transfers) match
+  // a pending Transfer record back to this in-progress upload to deep-link
+  // into its live step-4 progress view.
+  transferId?: string
   fileName: string
   totalBytes: number
   uploadedBytes: number
@@ -281,6 +287,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       metaRef.current.set(id, { fileId, uploadId, s3Key, walletId })
+      patch(id, { transferId: fileId })
 
       // If aborted during initiation/resume-check, clean up immediately
       if (abortedRef.current.has(id)) {
@@ -436,6 +443,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       patch(id, {
+        transferId: batchId,
         batchFiles: fileResults.map((f, i) => ({
           fileId: f.fileId,
           path: entries[i].path,
@@ -638,6 +646,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const { batchId, jobId } = initRes.data as { batchId: string; jobId: string }
       driveMetaRef.current.set(id, { batchId, walletId })
+      patch(id, { transferId: batchId })
 
       if (abortedRef.current.has(id)) return
 

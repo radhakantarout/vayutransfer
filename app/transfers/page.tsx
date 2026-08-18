@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
+import { useUpload } from '@/lib/upload-context'
 import { getExtensionCostPaise, formatPaise } from '@/lib/pricing'
 import { EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
@@ -52,6 +53,7 @@ export default function TransfersPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const { refreshBalance } = useWallet()
+  const { uploads } = useUpload()
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -219,6 +221,13 @@ export default function TransfersPage() {
             const appUrl = typeof window !== 'undefined' ? window.location.origin : ''
             const shareLink = `${appUrl}/download/${t.fileId}`
             const badge = statusBadge(t.status, expired)
+            // Only live/clickable if this browser tab is still tracking the
+            // upload in memory — the global upload context isn't persisted,
+            // so a different tab/device or a page reload has no way to
+            // resume showing its live progress.
+            const liveUpload = t.status === 'pending'
+              ? uploads.find((u) => u.transferId === t.fileId && (u.status === 'uploading' || u.status === 'partial'))
+              : undefined
 
             // Expiry extension — deliberately allowed even once expired-by-time,
             // as long as the target still lands before the file's real
@@ -240,9 +249,19 @@ export default function TransfersPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-text-primary truncate">{t.fileName}</span>
-                        <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>
-                          {badge.label}
-                        </span>
+                        {liveUpload ? (
+                          <button
+                            onClick={() => router.push(`/transfer/new?tx=${t.fileId}`)}
+                            title="View upload progress"
+                            className={`text-[11px] font-medium px-2 py-0.5 rounded-full hover:underline cursor-pointer ${badge.cls}`}
+                          >
+                            {badge.label} ({liveUpload.percent}%)
+                          </button>
+                        ) : (
+                          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>
+                            {badge.label}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2.5 text-xs text-muted mt-1 flex-wrap">
                         <span>{formatBytes(t.fileSizeBytes)}</span>
