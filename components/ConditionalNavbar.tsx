@@ -12,6 +12,7 @@ import Footer from './Footer'
 export function ConditionalNavbar() {
   const pathname = usePathname()
   if (pathname.startsWith('/studio')) return null
+  if (pathname.startsWith('/admin')) return null
   return <Navbar />
 }
 
@@ -21,6 +22,7 @@ export function ConditionalFooter() {
   const pathname = usePathname()
   const { data: session } = useSession()
   if (pathname.startsWith('/studio')) return null
+  if (pathname.startsWith('/admin')) return null
   if (session) return null
   return <Footer />
 }

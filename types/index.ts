@@ -37,6 +37,9 @@ export type AuditEventType =
   | 'DRIVE_IMPORT_FAILED'
   | 'TRANSFER_SETTINGS_UPDATED'
   | 'TRANSFER_DELETED'
+  | 'USER_BLOCKED'
+  | 'USER_UNBLOCKED'
+  | 'USER_WARNED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -285,7 +288,7 @@ export interface AuditEvent {
   fileId?: string
   txnId?: string
   downloadId?: string
-  actor: 'user' | 'system' | 'razorpay' | 'scheduler'
+  actor: 'user' | 'system' | 'razorpay' | 'scheduler' | 'admin'
   outcome: 'success' | 'failure' | 'warning'
   amountPaise?: number
   metadata?: Record<string, unknown>

@@ -13,12 +13,16 @@ export const authOptions: NextAuthOptions = {
     async signIn({ user, account }) {
       if (account?.provider === 'google' && user.id && user.email && user.name) {
         const { getOrCreateUser } = await import('@/lib/users')
-        await getOrCreateUser({
+        const record = await getOrCreateUser({
           id: user.id,
           email: user.email,
           name: user.name,
           image: user.image,
         })
+        // Full lockout, not just an upload restriction — a blocked account
+        // can't establish a session at all. Set via the platform-admin
+        // block/unblock routes (app/api/admin/users/[userId]/*).
+        if (record.status === 'blocked') return false
       }
       return true
     },

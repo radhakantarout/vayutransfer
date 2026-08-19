@@ -11,6 +11,7 @@ export default function ConditionalSidebar() {
   const pathname = usePathname()
   const { data: session } = useSession()
   if (pathname.startsWith('/studio')) return null
+  if (pathname.startsWith('/admin')) return null
   if (!session) return null
   return <Sidebar />
 }

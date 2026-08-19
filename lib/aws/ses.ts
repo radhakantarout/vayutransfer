@@ -911,3 +911,159 @@ export async function sendStorageOverageReminderEmail(
     },
   }))
 }
+
+// ─── VayuTransfer — Platform Admin ──────────────────────────────────────────
+
+// Fired once per brand-new user (not on repeat logins) — see
+// lib/users.ts#getOrCreateUser.
+export async function sendNewUserSignupNotificationEmail(
+  adminEmail: string,
+  userName: string,
+  userEmail: string,
+  joinedAt: string
+): Promise<void> {
+  const joined = new Date(joinedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>New user registered</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Platform Admin notification</div>
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;">New user registered</h2>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;border:1px solid #1E2D45;">
+      <div style="font-weight:600;">${userName}</div>
+      <div style="color:#5A7090;font-size:14px;margin-top:2px;">${userEmail}</div>
+      <div style="color:#5A7090;font-size:12px;margin-top:8px;">Joined ${joined} IST</div>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuTransfer <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [adminEmail] },
+    Message: {
+      Subject: { Data: `New user registered: ${userEmail}` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `New user registered\n\n${userName}\n${userEmail}\nJoined ${joined} IST`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+// Admin-triggered, up to 3 times before a manual block — see
+// app/api/admin/users/[userId]/warn/route.ts.
+export async function sendAccountWarningEmail(
+  email: string,
+  name: string,
+  reason: string,
+  warningNumber: number
+): Promise<void> {
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const isFinal = warningNumber >= 3
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Account warning</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;color:${isFinal ? '#FF6B6B' : '#FBBF24'};">
+      ${isFinal ? 'Final warning' : `Warning ${warningNumber} of 3`} — account activity flagged
+    </h2>
+    <p style="color:#E0EAF8;font-size:14px;line-height:1.6;">Hi ${escapeHtml(name)},</p>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #1E2D45;color:#E0EAF8;font-size:14px;line-height:1.6;">
+      ${escapeHtml(reason)}
+    </div>
+    <p style="color:#5A7090;font-size:13px;line-height:1.6;">
+      ${isFinal
+        ? 'This is your final warning. Continued activity like this may result in your account being blocked.'
+        : 'Please review our Terms of Service. Repeated warnings may lead to your account being blocked.'}
+    </p>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuTransfer <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [email] },
+    Message: {
+      Subject: { Data: isFinal ? 'Final warning about your VayuTransfer account' : `Warning ${warningNumber}/3 about your VayuTransfer account` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Hi ${name},\n\n${isFinal ? 'Final warning' : `Warning ${warningNumber} of 3`} about your account:\n\n${reason}`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+export async function sendAccountBlockedEmail(email: string, name: string, reason: string): Promise<void> {
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Account blocked</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;color:#FF6B6B;">Your account has been blocked</h2>
+    <p style="color:#E0EAF8;font-size:14px;line-height:1.6;">Hi ${escapeHtml(name)},</p>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin:16px 0;border:1px solid #1E2D45;color:#E0EAF8;font-size:14px;line-height:1.6;">
+      ${escapeHtml(reason)}
+    </div>
+    <p style="color:#5A7090;font-size:13px;line-height:1.6;">
+      If you believe this is a mistake, reply to this email or contact support@vayutransfer.com.
+    </p>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuTransfer <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [email] },
+    Message: {
+      Subject: { Data: 'Your VayuTransfer account has been blocked' },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Hi ${name},\n\nYour account has been blocked.\n\n${reason}\n\nIf you believe this is a mistake, contact support@vayutransfer.com.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
+export async function sendAccountUnblockedEmail(email: string, name: string): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Account restored</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;color:#00E5A0;">Your account has been restored</h2>
+    <p style="color:#E0EAF8;font-size:14px;line-height:1.6;">Hi ${name}, your account is active again — you can sign in and use VayuTransfer as normal.</p>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuTransfer <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [email] },
+    Message: {
+      Subject: { Data: 'Your VayuTransfer account has been restored' },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Hi ${name}, your account is active again — you can sign in and use VayuTransfer as normal.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}

@@ -3,7 +3,7 @@ import type { AuditEventType } from '@/types'
 
 interface LogAuditParams {
   eventType: AuditEventType
-  actor: 'user' | 'system' | 'razorpay' | 'scheduler'
+  actor: 'user' | 'system' | 'razorpay' | 'scheduler' | 'admin'
   outcome: 'success' | 'failure' | 'warning'
   walletId?: string
   fileId?: string

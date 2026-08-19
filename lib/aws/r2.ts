@@ -1,4 +1,4 @@
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, DeleteObjectCommand, ListPartsCommand } from '@aws-sdk/client-s3'
+import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, DeleteObjectCommand, ListPartsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import type { CompletedPart } from './s3'
@@ -140,4 +140,34 @@ export async function listR2Parts(r2Key: string, uploadId: string): Promise<Comp
   } catch {
     return null
   }
+}
+
+// Platform-admin only (app/api/admin/r2-sync) — full bucket listing, never
+// called on a user-facing path. Capped iteration count as a safety net
+// against a runaway loop if ContinuationToken pagination ever misbehaves.
+const MAX_LIST_PAGES = 2000
+
+export async function listR2BucketStats(): Promise<{ totalObjects: number; totalBytes: number }> {
+  let totalObjects = 0
+  let totalBytes = 0
+  let continuationToken: string | undefined
+  let pages = 0
+
+  do {
+    const res = await r2Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      })
+    )
+    for (const obj of res.Contents ?? []) {
+      totalObjects += 1
+      totalBytes += obj.Size ?? 0
+    }
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined
+    pages += 1
+  } while (continuationToken && pages < MAX_LIST_PAGES)
+
+  return { totalObjects, totalBytes }
 }

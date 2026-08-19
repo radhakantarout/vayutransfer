@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getItem, putItem, updateItem } from '@/lib/aws/dynamodb'
 import { getOrCreateWallet } from '@/lib/wallet'
 import { logAudit } from '@/lib/audit'
+import { sendNewUserSignupNotificationEmail } from '@/lib/aws/ses'
 import type { Transaction } from '@/types'
 
 const USERS_TABLE = process.env.DYNAMO_USERS_TABLE ?? 'vayu-users'
@@ -17,6 +18,16 @@ export interface User {
   walletId: string
   plan: 'free' | 'premium'
   bonusGiven: boolean
+  // Platform-admin moderation state. Absent/'active' is the default for
+  // every pre-existing user — only ever set by the admin block/warn/unblock
+  // routes (app/api/admin/users/[userId]/*). 'blocked' is enforced at
+  // sign-in (lib/auth.ts's signIn callback denies the session outright),
+  // not per-route, so it's a full lockout rather than a partial restriction.
+  status?: 'active' | 'warned' | 'blocked'
+  warningCount?: number
+  lastWarningAt?: string
+  blockedAt?: string
+  blockedReason?: string
   createdAt: string
   updatedAt: string
 }
@@ -87,6 +98,12 @@ export async function getOrCreateUser(profile: {
     amountPaise: SIGNUP_BONUS_PAISE,
     metadata: { userId, email: profile.email, bonusPaise: SIGNUP_BONUS_PAISE },
   })
+
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL
+  if (adminEmail) {
+    sendNewUserSignupNotificationEmail(adminEmail, user.name, user.email, now)
+      .catch((e) => console.error('[ses] new user signup notification failed', e))
+  }
 
   return user
 }
