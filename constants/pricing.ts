@@ -30,7 +30,12 @@ export const MAX_EXPIRY_DAYS_FROM_UPLOAD = 19
 // number to reason about.
 export const EXTENSION_RATE_PAISE_PER_GB = Math.round(FLAT_RATE_PAISE_PER_GB / 2)
 
-export const MAX_FILE_SIZE_GB = 10
+// Real technical ceiling, not an arbitrary product limit: uploads are
+// chunked at MULTIPART_CHUNK_SIZE_BYTES (50MB) below, and S3/R2's
+// multipart protocol caps every upload at 10,000 parts — 10,000 * 50MB ≈
+// 488GB per file. 400GB leaves real margin under that hard limit while
+// comfortably covering everything the product actually needs to support.
+export const MAX_FILE_SIZE_GB = 400
 
 export const RATE_LIMIT_UPLOADS_PER_HOUR = 10
 
