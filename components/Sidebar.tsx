@@ -1,9 +1,8 @@
 'use client'
 
-import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
-import { useSession, signIn, signOut } from 'next-auth/react'
+import { useSession, signOut } from 'next-auth/react'
 import { useState } from 'react'
 import { useWallet } from '@/lib/wallet-context'
 import { useTheme } from '@/lib/theme-context'
@@ -20,7 +19,9 @@ const NAV_ITEMS = [
 ]
 
 export default function Sidebar() {
-  const { data: session, status } = useSession()
+  // ConditionalSidebar never renders this component until `session` is
+  // truthy, so there's no anonymous/loading branch to handle here.
+  const { data: session } = useSession()
   const pathname = usePathname()
   const router = useRouter()
   const { walletId, balancePaise, refreshBalance, topupOpen, openTopup, closeTopup } = useWallet()
@@ -60,19 +61,72 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Sticks just below the always-present Navbar (h-14 = 56px), not at
-          viewport top-0 — otherwise it would slide underneath the navbar
-          during scroll instead of sitting flush below it. */}
-      <aside className="flex flex-col items-center w-[76px] flex-shrink-0 min-h-[calc(100vh-56px)] sticky top-14 border-r border-border bg-card overflow-y-auto py-4 gap-1">
-        {/* Logo */}
-        <button onClick={() => go('/')} className="mb-3 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-          <Image src="/logo.png" alt="VayuTransfer" width={34} height={34} className="h-[34px] w-[34px]" />
-        </button>
+      {/* Fixed one-screen-tall rail, independent of page content height.
+          `self-start` stops it stretching to match its flex-row sibling
+          (the main content column, which grows arbitrarily tall on pages
+          like My Transfers) — without it, the browser's default flex
+          "stretch" would drag the whole rail (and the wallet button at its
+          bottom) down with the page. A real `h-` (not `min-h-`) plus
+          `sticky top-14` keeps it pinned to one viewport's worth of height
+          just below the always-present Navbar (h-14 = 56px), on both
+          desktop and mobile. */}
+      <aside className="flex flex-col items-center w-[76px] flex-shrink-0 self-start h-[calc(100vh-56px)] sticky top-14 border-r border-border bg-card py-4 gap-1">
+        {/* Profile — replaces the old logo slot. The Navbar's own logo
+            already handles home navigation, so a second one here was
+            redundant. Deliberately NOT inside any overflow-scrolling
+            container (unlike the nav list below), so its dropdown can open
+            outside the rail's bounds instead of being clipped by it. */}
+        <div className="relative mb-3">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="rounded-full shadow-sm hover:shadow-md transition-shadow"
+          >
+            {session?.user?.image ? (
+              <Image
+                src={session.user.image}
+                alt={session.user.name ?? 'User'}
+                width={34} height={34}
+                className="rounded-full border border-border"
+              />
+            ) : (
+              <div className="w-[34px] h-[34px] rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent text-xs font-bold">
+                {session?.user?.name?.[0]?.toUpperCase() ?? 'U'}
+              </div>
+            )}
+          </button>
+
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+              <div className="absolute left-full top-0 ml-2 z-40 bg-card border border-border rounded-xl shadow-xl py-1 min-w-[180px]">
+                <button
+                  onClick={() => { setMenuOpen(false); go('/profile') }}
+                  className="block w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors"
+                >
+                  Profile
+                </button>
+                <button
+                  onClick={toggle}
+                  className="w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors"
+                >
+                  {theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                </button>
+                <div className="border-t border-border my-1" />
+                <button
+                  onClick={() => { setMenuOpen(false); signOut({ callbackUrl: '/' }) }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Send */}
         <button
           onClick={() => go('/transfer/new')}
-          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl bg-gradient-to-b from-accent to-[#7C3AED] text-white shadow-md shadow-accent/25 hover:shadow-lg hover:shadow-accent/30 hover:-translate-y-0.5 transition-all"
+          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl bg-gradient-to-b from-accent to-[#7C3AED] text-white shadow-md shadow-accent/25 hover:shadow-lg hover:shadow-accent/30 hover:-translate-y-0.5 transition-all flex-shrink-0"
         >
           <SendIcon className="w-4 h-4" />
           <span className="text-[10px] font-bold leading-none">Send</span>
@@ -81,19 +135,23 @@ export default function Sidebar() {
         {/* Request */}
         <button
           onClick={() => go('/transfers?request=1')}
-          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl border border-border bg-bg text-muted hover:text-accent hover:border-accent/50 hover:-translate-y-0.5 transition-all shadow-sm"
+          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl border border-border bg-bg text-muted hover:text-accent hover:border-accent/50 hover:-translate-y-0.5 transition-all shadow-sm flex-shrink-0"
         >
           <InboxIcon className="w-4 h-4" />
           <span className="text-[10px] font-bold leading-none">Request</span>
         </button>
 
-        {/* Nav items */}
-        <nav className="flex flex-col items-center gap-1 mt-2 w-full px-2">
+        {/* Nav items — the one part of the rail that scrolls internally
+            (min-h-0 lets it actually shrink instead of forcing the flex
+            column to overflow) so a very short viewport never pushes the
+            wallet button below the fold; on normal-height screens this
+            never scrolls at all. */}
+        <nav className="flex flex-col items-center gap-1 mt-2 w-full px-2 overflow-y-auto min-h-0">
           {NAV_ITEMS.map(({ label, href, icon: Icon }) => (
             <button
               key={href}
               onClick={() => go(href)}
-              className={`flex flex-col items-center gap-1 w-16 py-2 rounded-xl text-[10px] font-medium transition-all ${
+              className={`flex flex-col items-center gap-1 w-16 py-2 rounded-xl text-[10px] font-medium transition-all flex-shrink-0 ${
                 isActive(href)
                   ? 'bg-accent/10 text-accent shadow-inner'
                   : 'text-muted hover:bg-border/40 hover:text-text-primary'
@@ -108,83 +166,16 @@ export default function Sidebar() {
         <div className="flex-1" />
 
         {/* Wallet balance + recharge */}
-        {session && walletId && (
+        {walletId && (
           <button
             onClick={openTopup}
             title={`₹${(balancePaise / 100).toFixed(2)} — tap to recharge`}
-            className="flex flex-col items-center gap-1 w-16 py-2.5 mb-1 rounded-2xl bg-bg border border-border shadow-sm hover:border-accent/50 hover:-translate-y-0.5 transition-all"
+            className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl bg-bg border border-border shadow-sm hover:border-accent/50 hover:-translate-y-0.5 transition-all flex-shrink-0"
           >
             <WalletIcon className="w-4 h-4 text-success flex-shrink-0" />
             <span className="text-[10px] font-bold text-success leading-none tabular-nums truncate max-w-[56px]">₹{Math.round(balancePaise / 100)}</span>
           </button>
         )}
-
-        {/* User footer */}
-        <div className="relative">
-          {status === 'loading' ? (
-            <div className="w-9 h-9 rounded-full bg-border/40 animate-pulse" />
-          ) : session ? (
-            <>
-              <button
-                onClick={() => setMenuOpen((v) => !v)}
-                className="rounded-full shadow-sm hover:shadow-md transition-shadow"
-              >
-                {session.user?.image ? (
-                  <Image
-                    src={session.user.image}
-                    alt={session.user.name ?? 'User'}
-                    width={34} height={34}
-                    className="rounded-full border border-border"
-                  />
-                ) : (
-                  <div className="w-[34px] h-[34px] rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent text-xs font-bold">
-                    {session.user?.name?.[0]?.toUpperCase() ?? 'U'}
-                  </div>
-                )}
-              </button>
-
-              {menuOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute left-full bottom-0 ml-2 z-20 bg-card border border-border rounded-xl shadow-xl py-1 min-w-[180px]">
-                    <button
-                      onClick={() => { setMenuOpen(false); go('/profile') }}
-                      className="block w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors"
-                    >
-                      Profile
-                    </button>
-                    <button
-                      onClick={toggle}
-                      className="w-full text-left px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors"
-                    >
-                      {theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                    </button>
-                    <div className="border-t border-border my-1" />
-                    <button
-                      onClick={() => { setMenuOpen(false); signOut({ callbackUrl: '/' }) }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                </>
-              )}
-            </>
-          ) : (
-            <button
-              onClick={() => signIn('google')}
-              title="Sign in"
-              className="w-9 h-9 rounded-full flex items-center justify-center bg-white border border-gray-200 hover:bg-gray-100 transition-colors"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-            </button>
-          )}
-        </div>
       </aside>
 
       {topupOpen && walletId && (

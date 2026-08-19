@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import { useSession, signIn, signOut } from 'next-auth/react'
+import { useSession, signIn } from 'next-auth/react'
 import { useState, useEffect } from 'react'
 import { useTheme } from '@/lib/theme-context'
 
@@ -27,7 +27,6 @@ const STUDIO_URL = process.env.NEXT_PUBLIC_STUDIO_URL ?? `${process.env.NEXT_PUB
 export default function Navbar() {
   const { data: session, status } = useSession()
   const pathname = usePathname()
-  const [menuOpen, setMenuOpen]     = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { theme, toggle } = useTheme()
 
@@ -40,7 +39,7 @@ export default function Navbar() {
     return () => { document.body.style.overflow = '' }
   }, [mobileOpen])
 
-  const closeAll = () => { setMenuOpen(false); setMobileOpen(false) }
+  const closeAll = () => { setMobileOpen(false) }
 
   return (
     <>
@@ -103,63 +102,14 @@ export default function Navbar() {
               )}
             </button>
 
-            {/* Desktop auth — hidden on mobile */}
+            {/* Desktop auth — hidden on mobile. Signed-in users get nothing
+                here: profile, sign-out, and theme toggle's sibling all live
+                in the always-visible sidebar now, so a second profile
+                icon/dropdown here would just be a redundant duplicate. */}
             <div className="hidden md:flex items-center gap-2">
               {status === 'loading' ? (
                 <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
-              ) : session ? (
-                <>
-                  {/* Wallet balance lives in the sidebar now (always visible
-                      once signed in) — not duplicated here. */}
-
-                  {/* Avatar dropdown */}
-                  <div className="relative">
-                    <button
-                      onClick={() => setMenuOpen((v) => !v)}
-                      className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                    >
-                      {session.user?.image ? (
-                        <Image
-                          src={session.user.image}
-                          alt={session.user.name ?? 'User'}
-                          width={32} height={32}
-                          className="rounded-full ring-2 ring-accent/20 shadow-sm"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-b from-accent to-[#7C3AED] flex items-center justify-center text-white text-sm font-bold shadow-sm">
-                          {session.user?.name?.[0]?.toUpperCase() ?? 'U'}
-                        </div>
-                      )}
-                      <svg className="w-3.5 h-3.5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {menuOpen && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                        <div className="absolute right-0 top-11 z-20 bg-card border border-border rounded-xl shadow-xl py-1 min-w-[160px]">
-                          <Link href="/profile" onClick={() => setMenuOpen(false)}
-                            className="block px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors">
-                            Profile
-                          </Link>
-                          <Link href="/transfers" onClick={() => setMenuOpen(false)}
-                            className="block px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors">
-                            My Transfers
-                          </Link>
-                          <div className="border-t border-border my-1" />
-                          <button
-                            onClick={() => { setMenuOpen(false); signOut({ callbackUrl: '/' }) }}
-                            className="w-full text-left px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors"
-                          >
-                            Sign Out
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </>
-              ) : (
+              ) : !session ? (
                 <button
                   onClick={() => signIn('google')}
                   className="flex items-center gap-2 bg-white text-gray-800 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-100 hover:shadow-md hover:-translate-y-0.5 transition-all shadow-sm border border-gray-200"
@@ -172,7 +122,7 @@ export default function Navbar() {
                   </svg>
                   Sign in
                 </button>
-              )}
+              ) : null}
             </div>
 
             {/* Mobile hamburger — anonymous only; signed-in users get the
