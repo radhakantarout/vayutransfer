@@ -54,6 +54,13 @@ export async function POST(
         { status: 409 }
       )
     }
+    if (receiveRequest.maxSizeBytes && totalSizeBytes > receiveRequest.maxSizeBytes) {
+      const maxGB = (receiveRequest.maxSizeBytes / (1024 * 1024 * 1024)).toFixed(1)
+      return NextResponse.json<ApiResponse<never>>(
+        { success: false, error: 'FILE_TOO_LARGE', message: `This request only accepts up to ${maxGB}GB total` },
+        { status: 400 }
+      )
+    }
 
     let result
     try {

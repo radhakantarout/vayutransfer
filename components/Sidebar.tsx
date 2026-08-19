@@ -134,7 +134,7 @@ export default function Sidebar() {
 
         {/* Request */}
         <button
-          onClick={() => go('/transfers?request=1')}
+          onClick={() => go('/transfer/request')}
           className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl border border-border bg-bg text-muted hover:text-accent hover:border-accent/50 hover:-translate-y-0.5 transition-all shadow-sm flex-shrink-0"
         >
           <InboxIcon className="w-4 h-4" />

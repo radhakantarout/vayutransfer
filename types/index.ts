@@ -163,7 +163,20 @@ export interface ReceiveRequest {
   requestId: string
   walletId: string
   requesterEmail: string
+  requestTitle?: string
   message?: string
+  // Optional cap tighter than the platform-wide MAX_FILE_SIZE_GB, chosen by
+  // the requester at creation time — enforced in
+  // /api/receive/[requestId]/initiate alongside the existing global cap.
+  maxSizeBytes?: number
+  // 'invited' just controls who the link gets emailed to at creation time
+  // (sendReceiveRequestInviteEmail) — the upload link itself still has no
+  // identity check, same as 'anyone'. Not an access-control gate.
+  accessMode?: 'anyone' | 'invited'
+  invitedEmails?: string[]
+  // Whether sendFileReceivedEmail fires on fulfillment. Defaults to true
+  // when absent (pre-existing requests, created before this field existed).
+  notifyOnUpload?: boolean
   status: 'pending' | 'uploading' | 'fulfilled' | 'expired' | 'cancelled'
   // Set once an upload has actually started — points at the batch Transfer
   // (its fileId doubles as the batchId) created for this request.

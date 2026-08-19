@@ -349,6 +349,68 @@ export async function sendFileReceivedEmail(
   )
 }
 
+// Sent to each address on ReceiveRequest.invitedEmails at creation time
+// when accessMode === 'invited'. Purely informational — the upload link
+// itself has no identity check, so this doesn't gate anything; it's just
+// how "only invited people" actually reaches the people who were invited.
+export async function sendReceiveRequestInviteEmail(
+  email: string,
+  requesterName: string,
+  requestTitle: string,
+  uploadUrl: string,
+  message?: string
+): Promise<void> {
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const messageHtml = message
+    ? `<div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;color:#E0EAF8;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(message)}</div>`
+    : ''
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${escapeHtml(requestTitle)}</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuTransfer</div>
+    <div style="color:#5A7090;font-size:14px;margin-bottom:32px;">Secure file transfer. Prepaid. No surprises.</div>
+
+    <h2 style="font-size:20px;font-weight:600;margin:0 0 16px;">${escapeHtml(requesterName)} asked you to send some files</h2>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;margin-bottom:24px;border:1px solid #1E2D45;font-weight:600;">
+      ${escapeHtml(requestTitle)}
+    </div>
+    ${messageHtml}
+
+    <a href="${uploadUrl}"
+       style="display:block;background:#00C6FF;color:#0B0F1A;text-align:center;padding:14px;border-radius:8px;font-weight:700;font-size:16px;text-decoration:none;margin-bottom:24px;">
+      Upload Files
+    </a>
+
+    <div style="color:#5A7090;font-size:12px;line-height:1.6;">
+      No account needed on your end — click the button, pick your files, done.
+    </div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(
+    new SendEmailCommand({
+      Source: `VayuTransfer <${FROM_EMAIL}>`,
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: { Data: `${requesterName} requested files: ${requestTitle}` },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: {
+            Data: `${requesterName} asked you to send some files via VayuTransfer.\n\n${requestTitle}${message ? `\n\n${message}` : ''}\n\nUpload here: ${uploadUrl}`,
+            Charset: 'UTF-8',
+          },
+        },
+      },
+    })
+  )
+}
+
 export async function sendWalletCreditedEmail(
   email: string,
   amountPaise: number,

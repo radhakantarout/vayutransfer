@@ -1,37 +1,19 @@
 'use client'
 
 import { useSession } from 'next-auth/react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState, Suspense } from 'react'
+import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
 import { useUpload } from '@/lib/upload-context'
 import { getExtensionCostPaise, formatPaise } from '@/lib/pricing'
 import { EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD } from '@/constants/pricing'
 import ShareButtons from '@/components/ShareButtons'
-import RequestFileModal from '@/components/RequestFileModal'
 import ReceiveRequestsPanel from '@/components/ReceiveRequestsPanel'
 import { FileTypeIcon, PackageIcon, InboxIcon, CopyIcon, ShareIcon, ClockIcon, DownloadIcon, PlusCircleIcon, CheckCircleIcon, EditIcon } from '@/components/icons'
 import type { Transfer } from '@/types'
 
 const EXTEND_TARGETS = [...EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD] as const
-
-// Sidebar's Request button links here with ?request=1 so it can open the
-// modal below from any page without needing its own global state — strips
-// the param right after so a refresh doesn't re-open it. useSearchParams()
-// needs its own Suspense boundary per Next.js's App Router rules, hence the
-// separate component instead of calling it straight in the page body.
-function RequestModalTrigger({ onOpen }: { onOpen: () => void }) {
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  useEffect(() => {
-    if (searchParams.get('request') === '1') {
-      onOpen()
-      router.replace('/transfers')
-    }
-  }, [searchParams, router, onOpen])
-  return null
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -72,11 +54,6 @@ export default function TransfersPage() {
   const [extendingFor, setExtendingFor] = useState<string | null>(null)
   const [extending, setExtending] = useState(false)
   const [extendError, setExtendError] = useState<string | null>(null)
-
-  // Receive-link ("request a file") state
-  const [showRequestModal, setShowRequestModal] = useState(false)
-  const [receiveRefreshKey, setReceiveRefreshKey] = useState(0)
-
 
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login')
@@ -149,22 +126,19 @@ export default function TransfersPage() {
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-10">
-      <Suspense fallback={null}>
-        <RequestModalTrigger onOpen={() => setShowRequestModal(true)} />
-      </Suspense>
       <div className="flex items-center justify-between mb-8 gap-2">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">My Transfers</h1>
           <p className="text-sm text-muted mt-0.5">Links you've shared and files you've received</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowRequestModal(true)}
+          <Link
+            href="/transfer/request"
             className="flex items-center gap-1.5 bg-card border border-border text-text-primary text-sm font-semibold px-4 py-2 rounded-xl hover:border-accent/60 hover:shadow-sm transition-all"
           >
             <InboxIcon className="w-4 h-4" />
             Request a File
-          </button>
+          </Link>
           <Link
             href="/"
             className="flex items-center gap-1.5 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 hover:shadow-md transition-all"
@@ -175,14 +149,7 @@ export default function TransfersPage() {
         </div>
       </div>
 
-      {showRequestModal && (
-        <RequestFileModal
-          onClose={() => setShowRequestModal(false)}
-          onCreated={() => setReceiveRefreshKey((k) => k + 1)}
-        />
-      )}
-
-      <ReceiveRequestsPanel refreshKey={receiveRefreshKey} />
+      <ReceiveRequestsPanel />
 
       {loading && (
         <div className="flex justify-center py-20">

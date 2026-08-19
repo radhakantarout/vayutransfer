@@ -84,9 +84,11 @@ export async function POST(
         { '#s': 'status' }
       )
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-      sendFileReceivedEmail(receiveRequest.requesterEmail, transfer.fileName, transfer.fileCount ?? 1, `${appUrl}/download/${batchId}`)
-        .catch((e) => console.error('[ses] file received email failed', e))
+      if (receiveRequest.notifyOnUpload !== false) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+        sendFileReceivedEmail(receiveRequest.requesterEmail, transfer.fileName, transfer.fileCount ?? 1, `${appUrl}/download/${batchId}`)
+          .catch((e) => console.error('[ses] file received email failed', e))
+      }
 
       void logAudit({
         eventType: 'RECEIVE_UPLOAD_COMPLETED',

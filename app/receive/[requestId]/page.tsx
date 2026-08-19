@@ -4,25 +4,18 @@ interface Props {
   params: { requestId: string }
 }
 
+// The global Navbar (real logo) and Footer already render around every
+// page — this used to duplicate both with its own text-only "VayuTransfer"
+// header and a second footer, left over from before the app-wide chrome
+// was always-on. Dropped so this page's theme/branding matches the rest
+// of the app (including the signed-in Send/Request flow) instead of
+// drifting with its own copy.
 export default function ReceivePage({ params }: Props) {
   return (
-    <div className="min-h-screen bg-bg flex flex-col">
-      <main className="flex-1 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md space-y-6">
-          <div className="text-center space-y-1">
-            <div className="font-bold text-accent text-2xl">VayuTransfer</div>
-            <div className="text-muted text-sm">Someone requested a file from you.</div>
-          </div>
-
-          <ReceivePageContent requestId={params.requestId} />
-        </div>
-      </main>
-
-      <footer className="border-t border-border py-4">
-        <p className="text-center text-xs text-muted">
-          © {new Date().getFullYear()} VayuTransfer · Fast. Secure. Prepaid.
-        </p>
-      </footer>
-    </div>
+    <main className="min-h-[calc(100vh-56px)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        <ReceivePageContent requestId={params.requestId} />
+      </div>
+    </main>
   )
 }
