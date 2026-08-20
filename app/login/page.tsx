@@ -3,8 +3,8 @@
 import { signIn, useSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, Suspense } from 'react'
+import Image from 'next/image'
 import Link from 'next/link'
-import AuthMarketingPanel from '@/components/AuthMarketingPanel'
 import EmailOtpForm from '@/components/EmailOtpForm'
 
 function GoogleGlyph() {
@@ -41,17 +41,13 @@ function LoginPageInner() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-        <AuthMarketingPanel
-          title="Welcome back."
-          subtitle="Your wallet, your transfers, right where you left them."
-        />
-
-        <div className="bg-card border border-border rounded-2xl p-8 flex flex-col justify-center space-y-5">
-          <div>
-            <h2 className="text-xl font-bold text-text-primary">Sign in</h2>
-            <p className="text-sm text-muted mt-1">We'll email you a one-time code — no password needed.</p>
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="bg-card border border-border rounded-2xl p-8 space-y-6">
+          <div className="text-center">
+            <Image src="/logo.png" alt="VayuTransfer" width={40} height={40} className="rounded-xl shadow-sm mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-text-primary">Welcome back</h1>
+            <p className="text-muted text-sm mt-2">Sign in to get back to your wallet and transfers</p>
           </div>
 
           <EmailOtpForm mode="login" callbackUrl="/" initialEmail={initialEmail} />
@@ -64,7 +60,7 @@ function LoginPageInner() {
 
           <button
             onClick={() => signIn('google', { callbackUrl: '/' })}
-            className="w-full flex items-center justify-center gap-3 bg-white text-gray-800 font-semibold py-3 px-4 rounded-xl hover:bg-gray-100 hover:shadow-md hover:-translate-y-0.5 transition-all border border-gray-200 shadow-sm"
+            className="w-full flex items-center justify-center gap-3 bg-white text-gray-800 font-semibold py-3 px-4 rounded-xl hover:bg-gray-100 transition-colors border border-gray-200"
           >
             <GoogleGlyph />
             Continue with Google
