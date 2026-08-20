@@ -111,7 +111,10 @@ export default function Navbar() {
                 <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
               ) : !session ? (
                 <>
-                  <Link href="/login" className={desktopLinkClass('/login')}>
+                  <Link
+                    href="/login"
+                    className="border border-border text-text-primary text-sm font-semibold px-4 py-2 rounded-lg hover:border-accent hover:text-accent hover:-translate-y-0.5 transition-all"
+                  >
                     Sign in
                   </Link>
                   <Link
