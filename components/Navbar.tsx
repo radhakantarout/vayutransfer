@@ -110,12 +110,17 @@ export default function Navbar() {
               {status === 'loading' ? (
                 <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
               ) : !session ? (
-                <Link
-                  href="/signup"
-                  className="flex items-center gap-2 bg-gradient-to-r from-accent to-[#7C3AED] text-white text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 hover:shadow-md hover:-translate-y-0.5 transition-all shadow-sm"
-                >
-                  Sign up
-                </Link>
+                <>
+                  <Link href="/login" className={desktopLinkClass('/login')}>
+                    Sign in
+                  </Link>
+                  <Link
+                    href="/signup"
+                    className="flex items-center gap-2 bg-gradient-to-r from-accent to-[#7C3AED] text-white text-sm font-semibold px-4 py-2 rounded-lg hover:opacity-90 hover:shadow-md hover:-translate-y-0.5 transition-all shadow-sm"
+                  >
+                    Sign up
+                  </Link>
+                </>
               ) : null}
             </div>
 
@@ -185,18 +190,27 @@ export default function Navbar() {
           </a>
 
           {/* Auth section — anonymous only in this drawer (see wrapping
-              condition above), so this is always the sign-in button. */}
-          <div className="mt-4">
+              condition above). */}
+          <div className="mt-4 space-y-2">
             {status === 'loading' ? (
               <div className="h-12 bg-border/40 rounded-xl animate-pulse" />
             ) : (
-              <Link
-                href="/signup"
-                onClick={closeAll}
-                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent to-[#7C3AED] text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity text-sm"
-              >
-                Sign up
-              </Link>
+              <>
+                <Link
+                  href="/signup"
+                  onClick={closeAll}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent to-[#7C3AED] text-white font-bold py-3 rounded-xl hover:opacity-90 transition-opacity text-sm"
+                >
+                  Sign up
+                </Link>
+                <Link
+                  href="/login"
+                  onClick={closeAll}
+                  className="w-full flex items-center justify-center gap-2 border border-border text-text-primary font-semibold py-3 rounded-xl hover:bg-border/40 transition-colors text-sm"
+                >
+                  Sign in
+                </Link>
+              </>
             )}
           </div>
         </div>
