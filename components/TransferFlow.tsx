@@ -179,7 +179,7 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
     )
   }
 
-  const dropzone = (
+  const dropzoneCard = (
     <UploadZone
       onFilesSelect={handleFilesSelect}
       entries={entries}
@@ -187,6 +187,23 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
       onDriveFilesSelect={handleDriveFilesSelect}
     />
   )
+
+  // Anonymous visitors on the homepage: the empty dropzone card looks and
+  // sounds fully interactive (Browse Files, Google Drive, drag-drop) but
+  // none of it should actually run until they have an account — a
+  // transparent overlay catches every click on the card (including on its
+  // own inner buttons) and sends them to /signup instead, without dimming
+  // the card the way UploadZone's own `disabled` prop would (that's for
+  // mid-upload states, not this — the card should still look inviting).
+  // Only applies to the empty-state card; once files are picked (which
+  // can't happen here since the overlay blocks that) the rest of the flow
+  // already gates at the review step instead.
+  const dropzone = variant === 'embedded' && !session ? (
+    <div className="relative cursor-pointer" onClick={() => router.push('/signup')}>
+      <div className="absolute inset-0 z-10" />
+      {dropzoneCard}
+    </div>
+  ) : dropzoneCard
 
   return (
     <div className={variant === 'dedicated' ? 'min-h-[calc(100vh-56px)] py-10 px-4' : 'w-full'}>
