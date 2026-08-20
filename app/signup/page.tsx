@@ -18,7 +18,7 @@ function GoogleGlyph() {
   )
 }
 
-export default function LoginPage() {
+export default function SignupPage() {
   const { status } = useSession()
   const router = useRouter()
 
@@ -38,17 +38,24 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
         <AuthMarketingPanel
-          title="Welcome back."
-          subtitle="Your wallet, your transfers, right where you left them."
+          title="Send it like the wind."
+          subtitle="Create your VayuTransfer account in seconds — no password to set, nothing to remember."
         />
 
         <div className="bg-card border border-border rounded-2xl p-8 flex flex-col justify-center space-y-5">
           <div>
-            <h2 className="text-xl font-bold text-text-primary">Sign in</h2>
-            <p className="text-sm text-muted mt-1">We'll email you a one-time code — no password needed.</p>
+            <h2 className="text-xl font-bold text-text-primary">Create your account</h2>
+            <p className="text-sm text-muted mt-1">Just your email — we'll send you a one-time code.</p>
           </div>
 
-          <EmailOtpForm mode="login" callbackUrl="/" />
+          <EmailOtpForm mode="signup" callbackUrl="/" />
+
+          <p className="text-xs text-muted leading-relaxed">
+            By creating an account, you agree to our{' '}
+            <a href="/terms" target="_blank" className="text-accent hover:underline">Terms of Service</a>
+            {' '}and{' '}
+            <a href="/privacy" target="_blank" className="text-accent hover:underline">Privacy &amp; Cookie Statement</a>.
+          </p>
 
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />
@@ -65,8 +72,8 @@ export default function LoginPage() {
           </button>
 
           <p className="text-sm text-muted text-center">
-            New here?{' '}
-            <Link href="/signup" className="text-accent font-semibold hover:underline">Create an account</Link>
+            Already have an account?{' '}
+            <Link href="/login" className="text-accent font-semibold hover:underline">Sign in</Link>
           </p>
         </div>
       </div>

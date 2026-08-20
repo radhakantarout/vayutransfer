@@ -1067,3 +1067,35 @@ export async function sendAccountUnblockedEmail(email: string, name: string): Pr
     },
   }))
 }
+
+// Email/OTP signup+sign-in (lib/emailOtp.ts) — own function, separate
+// from VayuStudios' sendClientOtpEmail, same 6-digit/10-minute shape.
+export async function sendSignupOtpEmail(email: string, otp: string): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:400px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;text-align:center;">
+    <div style="font-size:22px;font-weight:700;color:#00C6FF;margin-bottom:24px;">VayuTransfer</div>
+    <p style="color:#8BAAB8;font-size:14px;margin:0 0 24px;">Here's your one-time code to sign in:</p>
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:20px;margin-bottom:24px;">
+      <div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#00C6FF;font-family:monospace;">${otp}</div>
+    </div>
+    <p style="color:#5A7090;font-size:12px;margin:0;">Valid for 10 minutes. Do not share this with anyone.</p>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuTransfer <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [email] },
+    Message: {
+      Subject: { Data: `${otp} is your VayuTransfer verification code` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `Your VayuTransfer OTP: ${otp}\n\nValid for 10 minutes. Do not share this with anyone.`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}

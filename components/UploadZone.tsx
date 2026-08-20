@@ -548,13 +548,6 @@ export default function UploadZone({
                 {onDriveFilesSelect && <GoogleDriveImportButton variant="primary" onFilesResolved={handleDriveResolved} />}
               </div>
             </div>
-            <div className="flex items-center justify-center gap-2 flex-wrap">
-              {['Up to 10 GB', 'Any file type', 'Folder structure preserved'].map((pill) => (
-                <span key={pill} className="text-[11px] text-muted bg-bg border border-border rounded-full px-2.5 py-1">
-                  {pill}
-                </span>
-              ))}
-            </div>
           </>
         )}
       </div>
