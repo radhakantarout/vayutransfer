@@ -3,20 +3,30 @@
 import { useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { MailIcon } from '@/components/icons'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 type Step = 'email' | 'otp'
 
-export default function EmailOtpForm({ mode, callbackUrl = '/' }: { mode: 'signup' | 'login'; callbackUrl?: string }) {
+export default function EmailOtpForm({
+  mode, callbackUrl = '/', initialEmail = '',
+}: {
+  mode: 'signup' | 'login'
+  callbackUrl?: string
+  initialEmail?: string
+}) {
   const router = useRouter()
   const [step, setStep] = useState<Step>('email')
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(initialEmail)
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Set only for the ACCOUNT_EXISTS case on the signup page — renders a
+  // "Sign in instead" link rather than the plain error text.
+  const [accountExists, setAccountExists] = useState(false)
 
   const requestOtp = async () => {
     const trimmed = email.trim().toLowerCase()
@@ -27,15 +37,18 @@ export default function EmailOtpForm({ mode, callbackUrl = '/' }: { mode: 'signu
     setLoading(true)
     setError(null)
     setNotice(null)
+    setAccountExists(false)
     try {
       const res = await fetch('/api/auth/otp/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: trimmed }),
+        body: JSON.stringify({ email: trimmed, mode }),
       })
       const data = await res.json()
       if (data.success) {
         setStep('otp')
+      } else if (data.error === 'ACCOUNT_EXISTS') {
+        setAccountExists(true)
       } else if (res.status === 429) {
         // A code was already sent recently and is presumably still valid
         // (within the 10-minute window) — let them proceed to enter it
@@ -89,7 +102,7 @@ export default function EmailOtpForm({ mode, callbackUrl = '/' }: { mode: 'signu
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); setAccountExists(false) }}
               onKeyDown={(e) => e.key === 'Enter' && requestOtp()}
               placeholder="you@example.com"
               autoFocus
@@ -97,6 +110,14 @@ export default function EmailOtpForm({ mode, callbackUrl = '/' }: { mode: 'signu
             />
           </div>
         </div>
+        {accountExists && (
+          <div className="text-xs text-accent bg-accent/10 border border-accent/20 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+            <span>An account with this email already exists.</span>
+            <Link href={`/login?email=${encodeURIComponent(email.trim().toLowerCase())}`} className="font-semibold hover:underline flex-shrink-0">
+              Sign in →
+            </Link>
+          </div>
+        )}
         {error && <div className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">{error}</div>}
         <button
           onClick={requestOtp}

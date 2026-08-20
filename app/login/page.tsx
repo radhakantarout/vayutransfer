@@ -1,8 +1,8 @@
 'use client'
 
 import { signIn, useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import AuthMarketingPanel from '@/components/AuthMarketingPanel'
 import EmailOtpForm from '@/components/EmailOtpForm'
@@ -18,9 +18,15 @@ function GoogleGlyph() {
   )
 }
 
-export default function LoginPage() {
+// Wraps the email/OTP form's initial value so someone bounced here from
+// the signup page (via "An account with this email already exists ->
+// Sign in") doesn't have to retype it. useSearchParams() needs its own
+// Suspense boundary per Next.js's App Router rules — see LoginPage below.
+function LoginPageInner() {
   const { status } = useSession()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialEmail = searchParams.get('email') ?? ''
 
   useEffect(() => {
     if (status === 'authenticated') router.replace('/')
@@ -48,7 +54,7 @@ export default function LoginPage() {
             <p className="text-sm text-muted mt-1">We'll email you a one-time code — no password needed.</p>
           </div>
 
-          <EmailOtpForm mode="login" callbackUrl="/" />
+          <EmailOtpForm mode="login" callbackUrl="/" initialEmail={initialEmail} />
 
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />
@@ -71,5 +77,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <LoginPageInner />
+    </Suspense>
   )
 }

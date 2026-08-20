@@ -147,10 +147,19 @@ function nameFromEmail(email: string): string {
 // account is returned rather than creating a second one. Verifying the
 // OTP is proof of owning the inbox, which is the standard bar for signing
 // into whichever existing account uses that address.
-export async function getOrCreateUserByEmail(email: string): Promise<User> {
+// Used by the signup page (via /api/auth/otp/request) to warn "you already
+// have an account, sign in instead" before sending a code — and by
+// getOrCreateUserByEmail below to avoid ever creating a duplicate.
+export async function findUserByEmail(email: string): Promise<User | null> {
   const normalized = email.trim().toLowerCase()
   const existing = await queryItems<User>(USERS_TABLE, 'email-index', 'email = :e', { ':e': normalized })
-  if (existing[0]) return existing[0]
+  return existing[0] ?? null
+}
+
+export async function getOrCreateUserByEmail(email: string): Promise<User> {
+  const normalized = email.trim().toLowerCase()
+  const existing = await findUserByEmail(normalized)
+  if (existing) return existing
 
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 24)
   const userId = `email_${hash}`
