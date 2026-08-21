@@ -3,6 +3,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
 
+// File System Access API — Chromium desktop + Android Chrome only (not in
+// TypeScript's DOM lib yet as a Window member, unlike the handle
+// interfaces it returns, which lib.dom.d.ts already declares).
+declare global {
+  interface Window {
+    showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
+  }
+}
+
 interface Props {
   fileId: string
 }
@@ -20,18 +29,31 @@ interface BatchFileUrl extends BatchFileInfo {
 
 type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error' | 'password-required'
 
+// Where a batch download actually goes depends on what the browser can do:
+// File System Access API (Chromium desktop + Android Chrome) writes every
+// file straight to a folder the user picks, preserving relativePath as
+// real subfolders — no zip involved, no unzip step for the user
+// afterwards. Everywhere else (Safari/iOS entirely, Firefox) falls back
+// to the existing zip strategy below, since there's no browser API that
+// can write multiple files with folder structure without one.
+const SUPPORTS_DIRECTORY_PICKER = typeof window !== 'undefined' && 'showDirectoryPicker' in window
+
 // Below this, zipping in the browser (fetch + JSZip, no server round trip)
 // is fast enough and avoids spinning up a Lambda for what's usually a
 // handful of files. At/above it, the batch is handed to the dedicated
 // vayu-transfer-zip Lambda job — browser memory and a single-threaded zip
 // loop don't scale to multi-GB folders the way the streaming server-side
 // pipeline does. Mirrors VayuStudios' proven print-portal threshold.
+// (Only reached when SUPPORTS_DIRECTORY_PICKER is false — the direct-to-
+// folder path above has no such Lambda-timeout ceiling to route around.)
 const CLIENT_ZIP_THRESHOLD_BYTES = 1024 * 1024 * 1024 // 1GB
 
 type ZipJobState =
   | { phase: 'idle' }
   | { phase: 'creating'; processed: number; total: number }
   | { phase: 'ready'; downloadUrl: string; filename: string }
+  // Direct-to-folder finished — nothing to click, files are already saved.
+  | { phase: 'direct-done' }
   | { phase: 'error'; message: string }
 
 function formatBytes(bytes: number): string {
@@ -250,6 +272,51 @@ export default function DownloadCard({ fileId }: Props) {
     setZipJob({ phase: 'ready', downloadUrl: url, filename: zipFilename })
   }
 
+  // File System Access API path — no zip at all. Each file is streamed
+  // (fetch's response body piped straight to a FileSystemWritableFileStream)
+  // directly onto disk inside the folder the user picked, so nothing is
+  // ever fully buffered in browser memory the way JSZip's blob() approach
+  // is. relativePath segments become real nested folders via
+  // getDirectoryHandle(..., {create:true}), matching how the zip paths
+  // already use relativePath as the in-archive path.
+  const downloadAllDirectToFolder = async (myGen: number) => {
+    if (!batchFiles || !window.showDirectoryPicker) return
+    const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+    if (myGen !== zipGen.current) return
+
+    setZipJob({ phase: 'creating', processed: 0, total: batchFiles.length })
+    const data = await fetchDownloadUrls()
+    if (myGen !== zipGen.current) return
+    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
+    if (!urls) throw new Error('Could not get download links')
+
+    let processed = 0
+    for (const f of batchFiles) {
+      if (myGen !== zipGen.current) return
+      const url = urls.get(f.fileId)
+      if (!url) continue
+
+      const path = (f.relativePath || f.fileName).split('/').filter(Boolean)
+      const segments = path.length > 0 ? path : [f.fileName]
+      let dir = rootHandle
+      for (const segment of segments.slice(0, -1)) {
+        dir = await dir.getDirectoryHandle(segment, { create: true })
+      }
+      const fileHandle = await dir.getFileHandle(segments[segments.length - 1], { create: true })
+      const writable = await fileHandle.createWritable()
+
+      const res = await fetch(url)
+      if (!res.ok || !res.body) throw new Error(`Could not fetch ${f.fileName}`)
+      await res.body.pipeTo(writable)
+
+      processed++
+      if (myGen === zipGen.current) setZipJob({ phase: 'creating', processed, total: batchFiles.length })
+    }
+
+    if (myGen !== zipGen.current) return
+    setZipJob({ phase: 'direct-done' })
+  }
+
   // Large batches (>=1GB): hand off to the dedicated zip Lambda job and
   // poll status every 2s until ready.
   const downloadAllServerSide = async (myGen: number) => {
@@ -282,10 +349,28 @@ export default function DownloadCard({ fileId }: Props) {
     }
   }
 
-  // "Download All" — picks the zip strategy by total batch size.
+  // "Download All" — direct-to-folder (no zip) when the browser supports
+  // it; otherwise the existing zip strategy, picked by total batch size.
   const handleDownloadAll = async () => {
     if (!batchFiles) return
     const myGen = ++zipGen.current
+
+    if (SUPPORTS_DIRECTORY_PICKER) {
+      try {
+        await downloadAllDirectToFolder(myGen)
+      } catch (err) {
+        if (myGen !== zipGen.current) return
+        // User closed the folder picker without choosing one — not an
+        // error, just back to idle so they can try again.
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          setZipJob({ phase: 'idle' })
+          return
+        }
+        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
+      }
+      return
+    }
+
     setZipJob({ phase: 'creating', processed: 0, total: 0 })
     try {
       const totalBytes = batchFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0)
@@ -459,9 +544,24 @@ export default function DownloadCard({ fileId }: Props) {
           </div>
         )}
 
+        {/* Proactive heads-up, not just an after-the-fact error — shown
+            before they even click, only when there's no browser API that
+            can save multiple files with folder structure without a zip. */}
+        {isBatch && !SUPPORTS_DIRECTORY_PICKER && zipJob.phase === 'idle' && (
+          <div className="text-xs text-muted bg-bg border border-border rounded-lg px-3 py-2.5">
+            Your browser can&apos;t save multiple files straight to a folder, so these will download as a single ZIP you can extract afterwards.
+          </div>
+        )}
+
         {isBatch && zipJob.phase === 'error' && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
             {zipJob.message}
+          </div>
+        )}
+
+        {isBatch && zipJob.phase === 'direct-done' && (
+          <div className="bg-success/10 border border-success/30 rounded-lg px-4 py-3 text-sm text-success text-center">
+            All {batchFiles?.length ?? 0} files saved to your chosen folder, with the original folder structure intact.
           </div>
         )}
 
@@ -474,6 +574,14 @@ export default function DownloadCard({ fileId }: Props) {
             <DownloadIcon className="w-5 h-5" />
             Download ZIP ({batchFiles?.length ?? 0} files)
           </a>
+        ) : isBatch && zipJob.phase === 'direct-done' ? (
+          <button
+            onClick={handleDownloadAll}
+            className="w-full border border-border text-text-primary font-bold py-4 rounded-xl text-lg hover:border-accent/60 transition-colors flex items-center justify-center gap-2"
+          >
+            <DownloadIcon className="w-5 h-5" />
+            Download Again
+          </button>
         ) : (
           <button
             onClick={isBatch ? handleDownloadAll : handleDownload}
@@ -483,7 +591,9 @@ export default function DownloadCard({ fileId }: Props) {
             <DownloadIcon className="w-5 h-5" />
             {isBatch
               ? zipJob.phase === 'creating'
-                ? zipJob.total > 0 ? `Zipping… ${zipJob.processed}/${zipJob.total}` : 'Starting…'
+                ? zipJob.total > 0
+                  ? `${SUPPORTS_DIRECTORY_PICKER ? 'Downloading' : 'Zipping'}… ${zipJob.processed}/${zipJob.total}`
+                  : 'Starting…'
                 : `Download All (${batchFiles?.length ?? 0} files)`
               : downloading ? 'Preparing download...' : 'Download File'}
           </button>
