@@ -190,8 +190,12 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
     <UploadZone
       onFilesSelect={handleFilesSelect}
       entries={entries}
-      driveEntries={driveSelection}
-      onDriveFilesSelect={handleDriveFilesSelect}
+      // Google Drive import temporarily disabled — see
+      // memory/drive_import_size_cap.md. Not passing onDriveFilesSelect
+      // (UploadZone only renders the Drive button when it's set) is the
+      // whole change; nothing else in this file needed to move since
+      // driveSelection simply stays permanently empty now. Re-add these
+      // two props to re-enable.
     />
   )
 
@@ -247,8 +251,6 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
               entries={entries}
               selectedPath={selectedPath}
               onSelectPath={setSelectedPath}
-              driveEntries={driveSelection}
-              onDriveFilesSelect={handleDriveFilesSelect}
               enableDuplicateCheck
             />
             <button
