@@ -34,7 +34,7 @@ export default function PriceCalculator({ fileSizeBytes, walletBalancePaise, onP
     <div className="space-y-2">
       <div className="flex items-center justify-between rounded-xl px-4 py-3 border bg-bg border-border">
         <span className="text-sm text-muted">
-          {formatGB(fileSizeBytes)} · You'll pay
+          {formatGB(fileSizeBytes)} · Deducted from your wallet
         </span>
         <span className="font-bold text-lg text-text-primary">
           {pricing.totalFormatted}

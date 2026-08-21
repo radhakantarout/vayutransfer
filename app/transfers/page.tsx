@@ -140,7 +140,7 @@ export default function TransfersPage() {
             Request a File
           </Link>
           <Link
-            href="/"
+            href="/transfer/new"
             className="flex items-center gap-1.5 bg-accent text-bg text-sm font-semibold px-4 py-2 rounded-xl hover:bg-accent/90 hover:shadow-md transition-all"
           >
             <PlusCircleIcon className="w-4 h-4" />

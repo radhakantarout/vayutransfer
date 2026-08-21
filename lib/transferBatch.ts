@@ -65,6 +65,7 @@ export async function createBatchTransfer(params: {
   recipientEmails?: string[]
   message?: string
   senderNotifyEmail?: string
+  displayName?: string
   expiryDays: number
 }): Promise<{
   batchId: string
@@ -73,7 +74,7 @@ export async function createBatchTransfer(params: {
   balanceBeforePaise: number
   chunkSizeBytes: number
 }> {
-  const { walletId, files, recipientEmails, message, senderNotifyEmail, expiryDays } = params
+  const { walletId, files, recipientEmails, message, senderNotifyEmail, displayName, expiryDays } = params
 
   const walletsTable = process.env.DYNAMO_WALLETS_TABLE ?? 'vayu-wallets'
   const wallet = await getItem<Wallet>(walletsTable, { walletId })
@@ -131,6 +132,7 @@ export async function createBatchTransfer(params: {
     recipientEmails,
     message,
     senderNotifyEmail,
+    displayName,
     amountDeducted: pricing.totalPaise,
     status: 'pending',
     storageBackend: NEW_UPLOAD_BACKEND,
@@ -234,6 +236,7 @@ export async function createDriveImportBatch(params: {
   recipientEmails?: string[]
   message?: string
   senderNotifyEmail?: string
+  displayName?: string
   expiryDays: number
 }): Promise<{
   batchId: string
@@ -241,7 +244,7 @@ export async function createDriveImportBatch(params: {
   pricing: PriceBreakdown
   balanceBeforePaise: number
 }> {
-  const { walletId, files, recipientEmails, message, senderNotifyEmail, expiryDays } = params
+  const { walletId, files, recipientEmails, message, senderNotifyEmail, displayName, expiryDays } = params
   const totalSizeBytes = files.reduce((sum, f) => sum + f.fileSizeBytes, 0)
   const { batchId, pricing, balanceBeforePaise } = await deductForNewBatch(walletId, totalSizeBytes)
 
@@ -286,6 +289,7 @@ export async function createDriveImportBatch(params: {
     recipientEmails,
     message,
     senderNotifyEmail,
+    displayName,
     amountDeducted: pricing.totalPaise,
     status: 'pending',
     storageBackend: NEW_UPLOAD_BACKEND,

@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
       recipientEmails?: string[]
       message?: string
       senderNotifyEmail?: string
+      displayName?: string
       expiryDays?: number
     }
     const items = body.items ?? []
@@ -131,6 +132,7 @@ export async function POST(req: NextRequest) {
       recipientEmails: body.recipientEmails,
       message: body.message,
       senderNotifyEmail: body.senderNotifyEmail,
+      displayName: body.displayName,
       expiryDays,
     })
 

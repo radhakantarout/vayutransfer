@@ -21,6 +21,7 @@ import { EXPIRY_DAY_OPTIONS, DEFAULT_EXPIRY_DAYS, MAX_EXPIRY_DAYS_FROM_UPLOAD } 
 import type { PriceBreakdown, FileEntry, DriveFileEntry } from '@/types'
 
 const MAX_MESSAGE_CHARS = 200
+const MAX_TITLE_CHARS = 100
 type Step = 'select' | 'review' | 'uploading' | 'complete'
 
 function formatBytes(bytes: number): string {
@@ -87,6 +88,8 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null)
   const [recipientEmails, setRecipientEmails] = useState<string[]>([])
+  const [displayName, setDisplayName] = useState('')
+  const [titleTouched, setTitleTouched] = useState(false)
   const [message, setMessage] = useState('')
   const [senderNotifyEmail, setSenderNotifyEmail] = useState('')
   const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS)
@@ -141,22 +144,25 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
     setSelectedPath(null)
   }
 
-  const canUpload = !!walletId && agreedToTerms && !!pricing && balancePaise >= (pricing?.totalPaise ?? 0)
+  const titleValid = displayName.trim().length > 0
+  const canUpload = !!walletId && agreedToTerms && titleValid && !!pricing && balancePaise >= (pricing?.totalPaise ?? 0)
 
   const handleCreateTransfer = () => {
     if (!pricing || !walletId || totalCount === 0) return
+    if (!titleValid) { setTitleTouched(true); return }
     setError(null)
     const trimmedMessage = message.trim() || undefined
     const trimmedNotify = senderNotifyEmail.trim() || undefined
+    const trimmedTitle = displayName.trim()
     const id = driveSelection.length > 0
       ? startDriveImport(
           driveSelection.map((f) => ({ id: f.driveFileId, mimeType: f.mimeType })),
           driveSelection.length === 1 ? driveSelection[0].name : `${driveSelection.length} files`,
-          totalSizeBytes, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify
+          totalSizeBytes, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify, trimmedTitle
         )
       : entries.length === 1
-      ? startUpload(entries[0].file, pricing, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify)
-      : startBatchUpload(entries, pricing, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify)
+      ? startUpload(entries[0].file, pricing, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify, trimmedTitle)
+      : startBatchUpload(entries, pricing, walletId, recipientEmails, expiryDays, trimmedMessage, trimmedNotify, trimmedTitle)
     setCurrentUploadId(id)
     setStep('uploading')
     setEntries([])
@@ -166,7 +172,8 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
   const resetAll = () => {
     setStep('select')
     setEntries([]); setDriveSelection([]); setSelectedPath(null)
-    setPricing(null); setRecipientEmails([]); setMessage(''); setSenderNotifyEmail('')
+    setPricing(null); setRecipientEmails([]); setDisplayName(''); setTitleTouched(false)
+    setMessage(''); setSenderNotifyEmail('')
     setExpiryDays(DEFAULT_EXPIRY_DAYS); setShowAdvanced(false); setAgreedToTerms(false)
     setCurrentUploadId(null); setError(null)
   }
@@ -310,6 +317,28 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
                 </button>
               </div>
 
+              <div>
+                <label className="text-sm text-muted block mb-1.5">
+                  Give a title to this transfer <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value.slice(0, MAX_TITLE_CHARS))}
+                  onBlur={() => setTitleTouched(true)}
+                  placeholder="e.g. Wedding photos, Q3 report..."
+                  className={`w-full bg-bg border rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors ${
+                    titleTouched && !titleValid ? 'border-danger focus:border-danger' : 'border-border focus:border-accent/60'
+                  }`}
+                />
+                <div className="flex items-center justify-between mt-1">
+                  {titleTouched && !titleValid ? (
+                    <span className="text-[11px] text-danger">A title is required</span>
+                  ) : <span />}
+                  <span className="text-[11px] text-muted">{displayName.length}/{MAX_TITLE_CHARS}</span>
+                </div>
+              </div>
+
               <EmailTagInput emails={recipientEmails} onChange={setRecipientEmails} />
 
               <div>
@@ -396,7 +425,9 @@ export default function TransferFlow({ variant, renderIdle }: TransferFlowProps)
                 disabled={!canUpload}
                 className="w-full bg-gradient-to-r from-accent to-[#7C3AED] text-white font-bold py-3.5 rounded-xl hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {!agreedToTerms
+                {!titleValid
+                  ? 'Give this transfer a title'
+                  : !agreedToTerms
                   ? 'Agree to terms to upload'
                   : !canUpload && balancePaise < (pricing?.totalPaise ?? 0)
                   ? 'Add credits to upload'

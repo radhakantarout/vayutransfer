@@ -56,7 +56,8 @@ interface UploadContextType {
     recipientEmails: string[],
     expiryDays?: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => string
   startBatchUpload: (
     entries: FileEntry[],
@@ -65,7 +66,8 @@ interface UploadContextType {
     recipientEmails: string[],
     expiryDays?: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => string
   // Google Drive import — bytes never pass through the browser, so unlike
   // the two above this has no File/FileEntry to chunk. `items` are the ids
@@ -74,6 +76,8 @@ interface UploadContextType {
   // for the progress card's label — the server is the source of truth for
   // what actually gets billed. Progress is stage-based (poll, not byte
   // events) since Drive doesn't cheaply expose per-byte download progress.
+  // (transferTitle is a separate concept — the Transfer's own title field,
+  // distinct from this displayName progress-card label.)
   startDriveImport: (
     items: { id: string; mimeType: string }[],
     displayName: string,
@@ -82,7 +86,8 @@ interface UploadContextType {
     recipientEmails: string[],
     expiryDays?: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => string
   retryUpload: (id: string) => void
   // Batch-only — retries exactly one still-failed file within a 'partial'
@@ -116,11 +121,11 @@ const UploadContext = createContext<UploadContextType>({
 })
 
 type UploadMeta = { fileId: string; uploadId: string; s3Key: string; walletId: string }
-type RetryArgs = { file: File; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
+type RetryArgs = { file: File; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string; transferTitle?: string }
 type BatchMeta = { batchId: string; walletId: string }
-type BatchRetryArgs = { entries: FileEntry[]; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
+type BatchRetryArgs = { entries: FileEntry[]; pricing: PriceBreakdown; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string; transferTitle?: string }
 type DriveMeta = { batchId: string; walletId: string }
-type DriveRetryArgs = { items: { id: string; mimeType: string }[]; displayName: string; totalBytes: number; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string }
+type DriveRetryArgs = { items: { id: string; mimeType: string }[]; displayName: string; totalBytes: number; walletId: string; recipientEmails: string[]; expiryDays: number; message?: string; senderNotifyEmail?: string; transferTitle?: string }
 // How many files upload in parallel within one batch — unbounded concurrency
 // on a large multi-file selection is what caused the VayuStudios bulk-upload
 // stall (see memory: bulk_upload_reliability_fix); keep this modest.
@@ -223,9 +228,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => {
-    retryArgsRef.current.set(id, { file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
+    retryArgsRef.current.set(id, { file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle })
     const startTime = Date.now()
     const totalChunks = Math.ceil(file.size / MULTIPART_CHUNK_SIZE_BYTES)
 
@@ -268,6 +274,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
             message,
             senderNotifyEmail,
+            displayName: transferTitle,
             contentType: file.type || 'application/octet-stream',
             expiryDays,
           }),
@@ -381,9 +388,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => {
-    batchRetryArgsRef.current.set(id, { entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
+    batchRetryArgsRef.current.set(id, { entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle })
     const startTime = Date.now()
     const totalBytes = entries.reduce((s, e) => s + e.file.size, 0)
     const uploadedByFile = new Array(entries.length).fill(0)
@@ -415,6 +423,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
           message,
           senderNotifyEmail,
+          displayName: transferTitle,
           expiryDays,
         }),
       }).then(r => r.json())
@@ -619,9 +628,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ) => {
-    driveRetryArgsRef.current.set(id, { items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail })
+    driveRetryArgsRef.current.set(id, { items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle })
     const myGen = (drivePollGenRef.current.get(id) ?? 0) + 1
     drivePollGenRef.current.set(id, myGen)
 
@@ -634,6 +644,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           recipientEmails: recipientEmails.length > 0 ? recipientEmails : undefined,
           message,
           senderNotifyEmail,
+          displayName: transferTitle,
           expiryDays,
         }),
       }).then(r => r.json())
@@ -698,7 +709,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number = DEFAULT_EXPIRY_DAYS,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ): string => {
     const id = crypto.randomUUID()
     setUploads(prev => [...prev, {
@@ -715,7 +727,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       minimized: false,
       createdAt: Date.now(),
     }])
-    runUpload(id, file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
+    runUpload(id, file, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle)
     return id
   }, [runUpload])
 
@@ -726,7 +738,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number = DEFAULT_EXPIRY_DAYS,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ): string => {
     const id = crypto.randomUUID()
     const totalBytes = entries.reduce((s, e) => s + e.file.size, 0)
@@ -744,7 +757,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       minimized: false,
       createdAt: Date.now(),
     }])
-    runBatchUpload(id, entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
+    runBatchUpload(id, entries, pricing, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle)
     return id
   }, [runBatchUpload])
 
@@ -756,7 +769,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     recipientEmails: string[],
     expiryDays: number = DEFAULT_EXPIRY_DAYS,
     message?: string,
-    senderNotifyEmail?: string
+    senderNotifyEmail?: string,
+    transferTitle?: string
   ): string => {
     const id = crypto.randomUUID()
     setUploads(prev => [...prev, {
@@ -773,7 +787,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       minimized: false,
       createdAt: Date.now(),
     }])
-    runDriveImport(id, items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail)
+    runDriveImport(id, items, displayName, totalBytes, walletId, recipientEmails, expiryDays, message, senderNotifyEmail, transferTitle)
     return id
   }, [runDriveImport])
 
@@ -782,21 +796,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     if (driveArgs) {
       abortedRef.current.delete(id)
       patch(id, { status: 'uploading', error: null })
-      runDriveImport(id, driveArgs.items, driveArgs.displayName, driveArgs.totalBytes, driveArgs.walletId, driveArgs.recipientEmails, driveArgs.expiryDays, driveArgs.message, driveArgs.senderNotifyEmail)
+      runDriveImport(id, driveArgs.items, driveArgs.displayName, driveArgs.totalBytes, driveArgs.walletId, driveArgs.recipientEmails, driveArgs.expiryDays, driveArgs.message, driveArgs.senderNotifyEmail, driveArgs.transferTitle)
       return
     }
     const batchArgs = batchRetryArgsRef.current.get(id)
     if (batchArgs) {
       abortedRef.current.delete(id)
       patch(id, { status: 'uploading', error: null })
-      runBatchUpload(id, batchArgs.entries, batchArgs.pricing, batchArgs.walletId, batchArgs.recipientEmails, batchArgs.expiryDays, batchArgs.message, batchArgs.senderNotifyEmail)
+      runBatchUpload(id, batchArgs.entries, batchArgs.pricing, batchArgs.walletId, batchArgs.recipientEmails, batchArgs.expiryDays, batchArgs.message, batchArgs.senderNotifyEmail, batchArgs.transferTitle)
       return
     }
     const args = retryArgsRef.current.get(id)
     if (!args) return
     abortedRef.current.delete(id)
     patch(id, { status: 'uploading', error: null })
-    runUpload(id, args.file, args.pricing, args.walletId, args.recipientEmails, args.expiryDays, args.message, args.senderNotifyEmail)
+    runUpload(id, args.file, args.pricing, args.walletId, args.recipientEmails, args.expiryDays, args.message, args.senderNotifyEmail, args.transferTitle)
   }, [runUpload, runBatchUpload, runDriveImport, patch])
 
   const abortUpload = useCallback(async (id: string) => {
