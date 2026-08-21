@@ -1,11 +1,15 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon, CheckCircleIcon } from '@/components/icons'
+import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
 
 // File System Access API — Chromium desktop + Android Chrome only (not in
 // TypeScript's DOM lib yet as a Window member, unlike the handle
-// interfaces it returns, which lib.dom.d.ts already declares).
+// interfaces it returns, which lib.dom.d.ts already declares). Every iOS
+// browser (Chrome, Firefox, Safari — Apple requires them all to run on
+// WebKit) and Firefox everywhere lack this entirely; there's no fallback
+// multi-file download for them, just the per-file Preview/Download
+// buttons already in the file list below.
 declare global {
   interface Window {
     showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
@@ -29,48 +33,12 @@ interface BatchFileUrl extends BatchFileInfo {
 
 type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error' | 'password-required'
 
-// Where a batch download actually goes depends on what the browser can do:
-// File System Access API (Chromium desktop + Android Chrome) writes every
-// file straight to a folder the user picks, preserving relativePath as
-// real subfolders — no zip involved, no unzip step for the user
-// afterwards. Everywhere else (Safari/iOS entirely, Firefox) falls back
-// to the existing zip strategy below, since there's no browser API that
-// can write multiple files with folder structure without one.
 const SUPPORTS_DIRECTORY_PICKER = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
-// All iOS browsers (Chrome, Firefox, Safari — Apple requires every one of
-// them to run on WebKit) share the same restriction: a download not tied
-// to a direct, synchronous user tap is unreliable, no matter how it's
-// paced. There's no feature to detect for this (it's not an API gap, it's
-// a gesture-blocking heuristic), so this is a plain UA check, same as the
-// well-known "is this iPad reporting as a Mac" workaround below.
-const IS_IOS = typeof navigator !== 'undefined' && (
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-)
-
-// Spacing out automated downloads is a commonly-used mitigation for
-// desktop Chrome's own multi-download throttling — it is NOT a documented,
-// guaranteed limit (Chromium doesn't publish one), and it does nothing for
-// IS_IOS, where the constraint isn't about speed at all.
-const SEQUENTIAL_DOWNLOAD_DELAY_MS = 600
-
-// Below this, zipping in the browser (fetch + JSZip, no server round trip)
-// is fast enough and avoids spinning up a Lambda for what's usually a
-// handful of files. At/above it, the batch is handed to the dedicated
-// vayu-transfer-zip Lambda job — browser memory and a single-threaded zip
-// loop don't scale to multi-GB folders the way the streaming server-side
-// pipeline does. Mirrors VayuStudios' proven print-portal threshold.
-// (Only reached when SUPPORTS_DIRECTORY_PICKER is false — the direct-to-
-// folder path above has no such Lambda-timeout ceiling to route around.)
-const CLIENT_ZIP_THRESHOLD_BYTES = 1024 * 1024 * 1024 // 1GB
-
-type ZipJobState =
+type FolderJobState =
   | { phase: 'idle' }
   | { phase: 'creating'; processed: number; total: number }
-  | { phase: 'ready'; downloadUrl: string; filename: string }
-  // Direct-to-folder finished — nothing to click, files are already saved.
-  | { phase: 'direct-done' }
+  | { phase: 'done' }
   | { phase: 'error'; message: string }
 
 function formatBytes(bytes: number): string {
@@ -89,9 +57,7 @@ function formatCountdown(expiryTime: string): string {
   return `${m}m ${s}s remaining`
 }
 
-// Triggers a raw browser save without opening/navigating the current tab —
-// safe to call once per file even inside a loop (no popup-blocker issue
-// since it's not window.open).
+// Triggers a raw browser save without opening/navigating the current tab.
 function triggerDownload(url: string, fileName: string) {
   const a = document.createElement('a')
   a.href = url
@@ -112,13 +78,7 @@ export default function DownloadCard({ fileId }: Props) {
   const [batchFiles, setBatchFiles] = useState<BatchFileInfo[] | null>(null)
   const [fetchedUrls, setFetchedUrls] = useState<Map<string, string> | null>(null)
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
-  const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
-  // Which files are checked (defaults to all — "select all" is just
-  // leaving every box ticked) and which have actually been triggered for
-  // download so far, so the list can show a checkmark per file.
-  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set())
-  const [downloadedFileIds, setDownloadedFileIds] = useState<Set<string>>(new Set())
-  const [sequentialProgress, setSequentialProgress] = useState<{ processed: number; total: number } | null>(null)
+  const [folderJob, setFolderJob] = useState<FolderJobState>({ phase: 'idle' })
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordError, setPasswordError] = useState(false)
   const [verifyingPassword, setVerifyingPassword] = useState(false)
@@ -126,13 +86,13 @@ export default function DownloadCard({ fileId }: Props) {
   // real download POST too, since that route re-validates independently
   // rather than trusting this component's local "already verified" state.
   const verifiedPasswordRef = useRef<string | null>(null)
-  // Generation counter: guards against a stale poll/zip loop from a
-  // previous "Download All" click (or an unmounted component) still
-  // running and calling setState after a newer click superseded it.
-  const zipGen = useRef(0)
+  // Generation counter: guards against a stale run from a previous click
+  // (or an unmounted component) still calling setState after a newer
+  // click superseded it.
+  const jobGen = useRef(0)
 
   useEffect(() => {
-    return () => { zipGen.current++ }
+    return () => { jobGen.current++ }
   }, [])
 
   // On mount: GET = info only, no counter increment
@@ -155,27 +115,6 @@ export default function DownloadCard({ fileId }: Props) {
       })
       .catch(() => { setState('error'); setErrorMsg('Network error') })
   }, [fileId])
-
-  // Default every file to selected — "select all" is just leaving every
-  // checkbox ticked, not a separate mode.
-  useEffect(() => {
-    if (batchFiles) setSelectedFileIds(new Set(batchFiles.map((f) => f.fileId)))
-  }, [batchFiles])
-
-  const allSelected = !!batchFiles && batchFiles.length > 0 && batchFiles.every((f) => selectedFileIds.has(f.fileId))
-  const toggleFileSelected = (fid: string) => {
-    setSequentialProgress(null)
-    setSelectedFileIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(fid)) next.delete(fid); else next.add(fid)
-      return next
-    })
-  }
-  const toggleSelectAll = () => {
-    if (!batchFiles) return
-    setSequentialProgress(null)
-    setSelectedFileIds(allSelected ? new Set() : new Set(batchFiles.map((f) => f.fileId)))
-  }
 
   const handleVerifyPassword = async () => {
     if (!passwordInput) return
@@ -265,10 +204,7 @@ export default function DownloadCard({ fileId }: Props) {
       }
       const url = urls?.get(only)
       const target = batchFiles?.find((f) => f.fileId === only)
-      if (url && target) {
-        triggerDownload(url, target.fileName)
-        setDownloadedFileIds((prev) => new Set(prev).add(only))
-      }
+      if (url && target) triggerDownload(url, target.fileName)
     } catch {
       setErrorMsg('Network error — please try again')
     } finally {
@@ -276,219 +212,59 @@ export default function DownloadCard({ fileId }: Props) {
     }
   }
 
-  // Small batches: zip entirely in the browser, one save instead of N
-  // separate automatic downloads (which Chrome silently throttles/blocks
-  // past a handful in a row). relativePath is used as the in-zip path so
-  // folder structure from the original upload is preserved.
-  const downloadAllClientSide = async (myGen: number) => {
-    if (!batchFiles) return
-    const data = await fetchDownloadUrls()
-    if (myGen !== zipGen.current) return
-    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
-    if (!urls) throw new Error('Could not get download links')
-
-    const zipFilename = `${(fileName || 'files').replace(/[^a-z0-9]+/gi, '-')}.zip`
-    const { default: JSZip } = await import('jszip')
-    const zip = new JSZip()
-    const usedNames = new Set<string>()
-    let processed = 0
-
-    for (const f of batchFiles) {
-      if (myGen !== zipGen.current) return
-      const url = urls.get(f.fileId)
-      if (!url) continue
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`Could not fetch ${f.fileName}`)
-      const blob = await res.blob()
-
-      let name = f.relativePath || f.fileName
-      if (usedNames.has(name)) {
-        const dot = name.lastIndexOf('.')
-        name = dot === -1 ? `${name}-${f.fileId.slice(0, 8)}` : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
-      }
-      usedNames.add(name)
-      zip.file(name, blob)
-
-      processed++
-      if (myGen === zipGen.current) setZipJob({ phase: 'creating', processed, total: batchFiles.length })
-    }
-
-    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' })
-    if (myGen !== zipGen.current) return
-    const url = URL.createObjectURL(zipBlob)
-    setZipJob({ phase: 'ready', downloadUrl: url, filename: zipFilename })
-  }
-
-  // File System Access API path — no zip at all. Each file is streamed
-  // (fetch's response body piped straight to a FileSystemWritableFileStream)
-  // directly onto disk inside the folder the user picked, so nothing is
-  // ever fully buffered in browser memory the way JSZip's blob() approach
-  // is. relativePath segments become real nested folders via
-  // getDirectoryHandle(..., {create:true}), matching how the zip paths
-  // already use relativePath as the in-archive path.
-  const downloadAllDirectToFolder = async (myGen: number) => {
+  // The only "download everything" path — File System Access API only.
+  // Each file is streamed (fetch's response body piped straight to a
+  // FileSystemWritableFileStream) directly onto disk inside the folder
+  // the user picked, never fully buffered in browser memory.
+  // relativePath segments become real nested folders via
+  // getDirectoryHandle(..., {create:true}).
+  const handleDownloadAllToFolder = async () => {
     if (!batchFiles || !window.showDirectoryPicker) return
-    const targets = batchFiles.filter((f) => selectedFileIds.has(f.fileId))
-    if (targets.length === 0) return
-    const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
-    if (myGen !== zipGen.current) return
+    const myGen = ++jobGen.current
+    try {
+      const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+      if (myGen !== jobGen.current) return
 
-    setZipJob({ phase: 'creating', processed: 0, total: targets.length })
-    const data = await fetchDownloadUrls()
-    if (myGen !== zipGen.current) return
-    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
-    if (!urls) throw new Error('Could not get download links')
+      setFolderJob({ phase: 'creating', processed: 0, total: batchFiles.length })
+      const data = await fetchDownloadUrls()
+      if (myGen !== jobGen.current) return
+      const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
+      if (!urls) throw new Error('Could not get download links')
 
-    let processed = 0
-    for (const f of targets) {
-      if (myGen !== zipGen.current) return
-      const url = urls.get(f.fileId)
-      if (!url) continue
+      let processed = 0
+      for (const f of batchFiles) {
+        if (myGen !== jobGen.current) return
+        const url = urls.get(f.fileId)
+        if (!url) continue
 
-      const path = (f.relativePath || f.fileName).split('/').filter(Boolean)
-      const segments = path.length > 0 ? path : [f.fileName]
-      let dir = rootHandle
-      for (const segment of segments.slice(0, -1)) {
-        dir = await dir.getDirectoryHandle(segment, { create: true })
-      }
-      const fileHandle = await dir.getFileHandle(segments[segments.length - 1], { create: true })
-      const writable = await fileHandle.createWritable()
+        const path = (f.relativePath || f.fileName).split('/').filter(Boolean)
+        const segments = path.length > 0 ? path : [f.fileName]
+        let dir = rootHandle
+        for (const segment of segments.slice(0, -1)) {
+          dir = await dir.getDirectoryHandle(segment, { create: true })
+        }
+        const fileHandle = await dir.getFileHandle(segments[segments.length - 1], { create: true })
+        const writable = await fileHandle.createWritable()
 
-      const res = await fetch(url)
-      if (!res.ok || !res.body) throw new Error(`Could not fetch ${f.fileName}`)
-      await res.body.pipeTo(writable)
+        const res = await fetch(url)
+        if (!res.ok || !res.body) throw new Error(`Could not fetch ${f.fileName}`)
+        await res.body.pipeTo(writable)
 
-      processed++
-      setDownloadedFileIds((prev) => new Set(prev).add(f.fileId))
-      if (myGen === zipGen.current) setZipJob({ phase: 'creating', processed, total: targets.length })
-    }
-
-    if (myGen !== zipGen.current) return
-    setZipJob({ phase: 'direct-done' })
-  }
-
-  // Fallback for browsers without the File System Access API: trigger
-  // each selected file's own individual download (same triggerDownload
-  // used by a manual per-row click) one at a time, paced by
-  // SEQUENTIAL_DOWNLOAD_DELAY_MS, ticking each off as it goes. This does
-  // NOT preserve folder structure (every browser saves flat to its
-  // default downloads location) and, on IS_IOS specifically, likely only
-  // the first file actually lands — see the IS_IOS notice shown in the UI.
-  const downloadSelectedSequentially = async (myGen: number) => {
-    if (!batchFiles) return
-    const targets = batchFiles.filter((f) => selectedFileIds.has(f.fileId))
-    if (targets.length === 0) return
-
-    const data = await fetchDownloadUrls()
-    if (myGen !== zipGen.current) return
-    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
-    if (!urls) throw new Error('Could not get download links')
-
-    setSequentialProgress({ processed: 0, total: targets.length })
-    for (let i = 0; i < targets.length; i++) {
-      if (myGen !== zipGen.current) return
-      const f = targets[i]
-      const url = urls.get(f.fileId)
-      if (url) {
-        triggerDownload(url, f.fileName)
-        setDownloadedFileIds((prev) => new Set(prev).add(f.fileId))
-      }
-      setSequentialProgress({ processed: i + 1, total: targets.length })
-      if (i < targets.length - 1) await new Promise((r) => setTimeout(r, SEQUENTIAL_DOWNLOAD_DELAY_MS))
-    }
-  }
-
-  // Large batches (>=1GB): hand off to the dedicated zip Lambda job and
-  // poll status every 2s until ready.
-  const downloadAllServerSide = async (myGen: number) => {
-    const initRes = await fetch(`/api/download/${fileId}/zip`, { method: 'POST' }).then((r) => r.json())
-    if (!initRes.success) {
-      throw new Error(initRes.message ?? 'Could not start zip creation')
-    }
-    const { jobId } = initRes.data as { jobId: string }
-
-    while (myGen === zipGen.current) {
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      if (myGen !== zipGen.current) return
-      const statusRes = await fetch(`/api/download/${fileId}/zip/status/${jobId}`).then((r) => r.json())
-      if (!statusRes.success) throw new Error('Lost track of the zip job')
-      const s = statusRes.data as {
-        status: string; processed: number; total: number
-        downloadUrl?: string; zipFileName?: string; errorMessage?: string
+        processed++
+        if (myGen === jobGen.current) setFolderJob({ phase: 'creating', processed, total: batchFiles.length })
       }
 
-      if (myGen !== zipGen.current) return
-
-      if (s.status === 'ready' && s.downloadUrl && s.zipFileName) {
-        setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.zipFileName })
+      if (myGen !== jobGen.current) return
+      setFolderJob({ phase: 'done' })
+    } catch (err) {
+      if (myGen !== jobGen.current) return
+      // User closed the folder picker without choosing one — not an
+      // error, just back to idle so they can try again.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setFolderJob({ phase: 'idle' })
         return
       }
-      if (s.status === 'failed') {
-        throw new Error(s.errorMessage ?? 'Zip creation failed')
-      }
-      setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
-    }
-  }
-
-  // Primary action — respects the checkbox selection (default: everything
-  // checked). Direct-to-folder where the browser supports it; otherwise
-  // the new sequential-with-ticks path, which works everywhere with no
-  // zip and no size ceiling, at the cost of no folder structure and (on
-  // IS_IOS) likely only downloading the first file — see the notice shown
-  // above this button in that case.
-  const handleDownloadSelected = async () => {
-    if (!batchFiles || selectedFileIds.size === 0) return
-    const myGen = ++zipGen.current
-
-    if (SUPPORTS_DIRECTORY_PICKER) {
-      try {
-        await downloadAllDirectToFolder(myGen)
-      } catch (err) {
-        if (myGen !== zipGen.current) return
-        // User closed the folder picker without choosing one — not an
-        // error, just back to idle so they can try again.
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          setZipJob({ phase: 'idle' })
-          return
-        }
-        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
-      }
-      return
-    }
-
-    setSequentialProgress(null)
-    try {
-      await downloadSelectedSequentially(myGen)
-      // Left in place (not reset to null) once finished — processed ===
-      // total is itself the "done" signal the render checks for, same as
-      // how zipJob's own terminal phases work.
-    } catch (err) {
-      if (myGen === zipGen.current) {
-        setSequentialProgress(null)
-        setErrorMsg(err instanceof Error ? err.message : 'Could not download the selected files. Please try again or download individually.')
-      }
-    }
-  }
-
-  // Secondary option, always available regardless of selection — the
-  // original zip strategy, unchanged, for anyone who'd rather wait for one
-  // file than get several separate downloads (or is on IS_IOS, where that's
-  // the only reliable "everything in one action" option).
-  const handleDownloadAsZip = async () => {
-    if (!batchFiles) return
-    const myGen = ++zipGen.current
-    setZipJob({ phase: 'creating', processed: 0, total: 0 })
-    try {
-      const totalBytes = batchFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0)
-      if (totalBytes < CLIENT_ZIP_THRESHOLD_BYTES) {
-        await downloadAllClientSide(myGen)
-      } else {
-        await downloadAllServerSide(myGen)
-      }
-    } catch (err) {
-      if (myGen === zipGen.current) {
-        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
-      }
+      setFolderJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
     }
   }
 
@@ -605,56 +381,33 @@ export default function DownloadCard({ fileId }: Props) {
 
         {isBatch && batchFiles.length > 0 && (
           <div className="border border-border rounded-xl overflow-hidden">
-            <label className="flex items-center gap-2.5 px-4 py-2 border-b border-border bg-bg cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleSelectAll}
-                className="w-4 h-4 accent-[#00C6FF] flex-shrink-0"
-              />
-              <span className="text-xs font-medium text-muted">
-                {allSelected ? 'All selected' : `${selectedFileIds.size} of ${batchFiles.length} selected`}
-              </span>
-            </label>
             <div className="max-h-64 overflow-y-auto divide-y divide-border">
-              {batchFiles.map((f) => {
-                const downloaded = downloadedFileIds.has(f.fileId)
-                return (
-                  <div key={f.fileId} className="flex items-center gap-3 px-4 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={selectedFileIds.has(f.fileId)}
-                      onChange={() => toggleFileSelected(f.fileId)}
-                      className="w-4 h-4 accent-[#00C6FF] flex-shrink-0"
-                    />
-                    <span className="w-8 h-8 rounded-lg bg-bg text-muted flex items-center justify-center flex-shrink-0">
-                      <FileTypeIcon fileName={f.fileName} className="w-4 h-4" />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-text-primary truncate flex items-center gap-1.5">
-                        {f.relativePath || f.fileName}
-                        {downloaded && <CheckCircleIcon className="w-3.5 h-3.5 text-success flex-shrink-0" />}
-                      </div>
-                      <div className="text-xs text-muted">{formatBytes(f.fileSizeBytes)}</div>
-                    </div>
-                    <button
-                      onClick={() => handlePreview(f.fileId)}
-                      disabled={previewLoading === f.fileId}
-                      className="text-muted hover:text-accent transition-colors p-1.5 flex-shrink-0 disabled:opacity-50"
-                      title="Preview"
-                    >
-                      <EyeIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleFileRowDownload(f.fileId)}
-                      disabled={downloading}
-                      className="text-xs font-medium text-accent hover:underline px-2 py-1 flex-shrink-0 disabled:opacity-50"
-                    >
-                      Download
-                    </button>
+              {batchFiles.map((f) => (
+                <div key={f.fileId} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="w-8 h-8 rounded-lg bg-bg text-muted flex items-center justify-center flex-shrink-0">
+                    <FileTypeIcon fileName={f.fileName} className="w-4 h-4" />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-text-primary truncate">{f.relativePath || f.fileName}</div>
+                    <div className="text-xs text-muted">{formatBytes(f.fileSizeBytes)}</div>
                   </div>
-                )
-              })}
+                  <button
+                    onClick={() => handlePreview(f.fileId)}
+                    disabled={previewLoading === f.fileId}
+                    className="text-muted hover:text-accent transition-colors p-1.5 flex-shrink-0 disabled:opacity-50"
+                    title="Preview"
+                  >
+                    <EyeIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleFileRowDownload(f.fileId)}
+                    disabled={downloading}
+                    className="text-xs font-medium text-accent hover:underline px-2 py-1 flex-shrink-0 disabled:opacity-50"
+                  >
+                    Download
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -673,81 +426,45 @@ export default function DownloadCard({ fileId }: Props) {
           </div>
         )}
 
-        {/* Proactive heads-up, not just an after-the-fact error — shown
-            before they even click. Only relevant where there's no browser
-            API that can save multiple files with folder structure
-            without one; IS_IOS gets its own honest wording since even the
-            sequential fallback below is unreliable there. */}
-        {isBatch && !SUPPORTS_DIRECTORY_PICKER && zipJob.phase === 'idle' && !sequentialProgress && (
-          <div className="text-xs text-muted bg-bg border border-border rounded-lg px-3 py-2.5">
-            {IS_IOS
-              ? <>On iPhone/iPad, "Download Selected" may only reliably grab the first file — tap Download next to each file above one at a time, or use "Download all as one ZIP" below.</>
-              : <>Your browser can&apos;t save multiple files straight to a folder — "Download Selected" will trigger each one individually instead, or use "Download all as one ZIP" below.</>}
-          </div>
-        )}
-
-        {isBatch && zipJob.phase === 'error' && (
+        {isBatch && folderJob.phase === 'error' && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
-            {zipJob.message}
+            {folderJob.message}
           </div>
         )}
 
-        {isBatch && zipJob.phase === 'direct-done' && (
+        {isBatch && folderJob.phase === 'done' && (
           <div className="bg-success/10 border border-success/30 rounded-lg px-4 py-3 text-sm text-success text-center">
-            All {selectedFileIds.size} file{selectedFileIds.size !== 1 ? 's' : ''} saved to your chosen folder, with the original folder structure intact.
+            All {batchFiles.length} files saved to your chosen folder, with the original folder structure intact.
           </div>
         )}
 
-        {isBatch && sequentialProgress && sequentialProgress.processed === sequentialProgress.total && (
-          <div className="bg-success/10 border border-success/30 rounded-lg px-4 py-3 text-sm text-success text-center">
-            {sequentialProgress.total} download{sequentialProgress.total !== 1 ? 's' : ''} triggered — check your browser&apos;s downloads for each file.
-          </div>
+        {isBatch && (
+          SUPPORTS_DIRECTORY_PICKER ? (
+            <button
+              onClick={handleDownloadAllToFolder}
+              disabled={folderJob.phase === 'creating'}
+              className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <DownloadIcon className="w-5 h-5" />
+              {folderJob.phase === 'creating'
+                ? folderJob.total > 0 ? `Saving to folder… ${folderJob.processed}/${folderJob.total}` : 'Starting…'
+                : `Download All (${batchFiles.length} files)`}
+            </button>
+          ) : (
+            <div className="text-sm text-muted bg-bg border border-border rounded-lg px-4 py-3 text-center">
+              Your browser can&apos;t download multiple files at once here — please use Preview and Download on each file above individually.
+            </div>
+          )
         )}
 
-        {isBatch && zipJob.phase === 'ready' && (
-          <a
-            href={zipJob.downloadUrl}
-            download={zipJob.filename}
-            className="w-full bg-success text-bg font-bold py-4 rounded-xl text-lg hover:bg-success/90 transition-colors flex items-center justify-center gap-2"
+        {!isBatch && (
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <DownloadIcon className="w-5 h-5" />
-            Download ZIP ({batchFiles?.length ?? 0} files)
-          </a>
-        )}
-
-        <button
-          onClick={isBatch ? handleDownloadSelected : handleDownload}
-          disabled={
-            downloading ||
-            zipJob.phase === 'creating' ||
-            (isBatch && selectedFileIds.size === 0) ||
-            (!!sequentialProgress && sequentialProgress.processed < sequentialProgress.total)
-          }
-          className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-        >
-          <DownloadIcon className="w-5 h-5" />
-          {isBatch
-            ? zipJob.phase === 'creating'
-              ? zipJob.total > 0 ? `Saving to folder… ${zipJob.processed}/${zipJob.total}` : 'Starting…'
-              : sequentialProgress && sequentialProgress.processed < sequentialProgress.total
-                ? `Downloading… ${sequentialProgress.processed}/${sequentialProgress.total}`
-                : `Download Selected (${selectedFileIds.size})`
-            : downloading ? 'Preparing download...' : 'Download File'}
-        </button>
-
-        {/* Always available regardless of selection — the original zip
-            strategy, unchanged. Hidden when direct-to-folder is available
-            since it's strictly better there (real folder structure, no
-            zip step) and offering both would just be confusing. */}
-        {isBatch && !SUPPORTS_DIRECTORY_PICKER && (
-          <button
-            onClick={handleDownloadAsZip}
-            disabled={zipJob.phase === 'creating'}
-            className="w-full text-muted text-sm hover:text-text-primary transition-colors py-1 disabled:opacity-50"
-          >
-            {zipJob.phase === 'creating'
-              ? `Zipping… ${zipJob.processed}/${zipJob.total}`
-              : 'Download all as one ZIP file instead'}
+            {downloading ? 'Preparing download...' : 'Download File'}
           </button>
         )}
       </div>
