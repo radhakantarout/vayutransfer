@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
 import { resolveDriveSelection, type ResolvedDriveFile } from '@/lib/googleDrive/resolveSelection'
-import { MAX_FILE_SIZE_GB } from '@/constants/pricing'
+import { MAX_DRIVE_IMPORT_SIZE_GB } from '@/constants/pricing'
 import type { ApiResponse } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -39,10 +39,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const maxBytes = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
+    const maxBytes = MAX_DRIVE_IMPORT_SIZE_GB * 1024 * 1024 * 1024
     if (totalSizeBytes > maxBytes) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: 'FILE_TOO_LARGE', message: `Total selection exceeds ${MAX_FILE_SIZE_GB}GB limit` },
+        {
+          success: false,
+          error: 'FILE_TOO_LARGE',
+          message: `Google Drive import works best for smaller transfers — up to ${MAX_DRIVE_IMPORT_SIZE_GB}GB total. For larger files, download them to your device first and use Browse Files instead.`,
+        },
         { status: 400 }
       )
     }

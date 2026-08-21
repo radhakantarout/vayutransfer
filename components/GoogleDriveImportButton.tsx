@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSession, signIn } from 'next-auth/react'
 import { AlertCircleIcon, DriveIcon } from '@/components/icons'
+import { MAX_DRIVE_IMPORT_SIZE_GB } from '@/constants/pricing'
 import type { DriveFileEntry } from '@/types'
 
 declare global {
@@ -223,6 +224,7 @@ export default function GoogleDriveImportButton({ variant = 'primary', onFilesRe
         type="button"
         onClick={(e) => { e.stopPropagation(); handleClick() }}
         disabled={busy}
+        title={`Works best for smaller transfers — up to ${MAX_DRIVE_IMPORT_SIZE_GB}GB total`}
         className={buttonClass}
       >
         {busy
@@ -230,6 +232,17 @@ export default function GoogleDriveImportButton({ variant = 'primary', onFilesRe
           : <DriveIcon className="w-4 h-4 flex-shrink-0" />}
         {label}
       </button>
+      {/* Proactive heads-up, not just an after-the-fact error — Drive
+          import runs through a single Lambda invocation bounded by AWS's
+          hard 900s execution limit (see constants/pricing.ts), unlike
+          direct browser upload which has no such ceiling. Only shown in
+          the roomier primary placement (empty dropzone), not the tight
+          two-button compact row in the files-selected footer. */}
+      {variant === 'primary' && !error && (
+        <p className="text-[11px] text-muted mt-1.5 text-center">
+          Best for transfers up to {MAX_DRIVE_IMPORT_SIZE_GB}GB — for larger files, download to your device and use Browse Files
+        </p>
+      )}
       {error && (
         <div className="flex items-start gap-1.5 mt-1.5 text-xs text-danger">
           <AlertCircleIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />

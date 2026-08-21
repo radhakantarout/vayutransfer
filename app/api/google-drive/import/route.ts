@@ -10,7 +10,7 @@ import { createDriveImportBatch } from '@/lib/transferBatch'
 import { queryItems, putItem } from '@/lib/aws/dynamodb'
 import { logAudit } from '@/lib/audit'
 import {
-  MAX_FILE_SIZE_GB,
+  MAX_DRIVE_IMPORT_SIZE_GB,
   RATE_LIMIT_UPLOADS_PER_HOUR,
   EXPIRY_DAY_OPTIONS,
   DEFAULT_EXPIRY_DAYS,
@@ -111,10 +111,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const maxBytes = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
+    const maxBytes = MAX_DRIVE_IMPORT_SIZE_GB * 1024 * 1024 * 1024
     if (totalSizeBytes > maxBytes) {
       return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: 'FILE_TOO_LARGE', message: `Total selection exceeds ${MAX_FILE_SIZE_GB}GB limit` },
+        {
+          success: false,
+          error: 'FILE_TOO_LARGE',
+          message: `Google Drive import works best for smaller transfers — up to ${MAX_DRIVE_IMPORT_SIZE_GB}GB total. For larger files, download them to your device first and use Browse Files instead.`,
+        },
         { status: 400 }
       )
     }
