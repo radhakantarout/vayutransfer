@@ -4,6 +4,7 @@ import { Inter, Sora } from 'next/font/google'
 import './globals.css'
 import Providers from '@/components/Providers'
 import { ConditionalNavbar, ConditionalFooter } from '@/components/ConditionalNavbar'
+import ConditionalSidebar from '@/components/ConditionalSidebar'
 import UploadWidget from '@/components/UploadWidget'
 
 // Self-hosted via next/font (built at compile time, no CDN/CSP dependency).
@@ -62,7 +63,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className={`${inter.variable} ${sora.variable} min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full font-sans`}>
         <Providers>
           {!isStudioDomain && <ConditionalNavbar />}
-          <div className="flex-1">{children}</div>
+          <div className="flex-1 flex">
+            {!isStudioDomain && <ConditionalSidebar />}
+            <div className="flex-1 min-w-0">{children}</div>
+          </div>
           {!isStudioDomain && <ConditionalFooter />}
           {!isStudioDomain && <UploadWidget />}
         </Providers>

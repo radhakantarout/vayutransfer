@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getItem, updateItem } from '@/lib/aws/dynamodb'
+import { getItem } from '@/lib/aws/dynamodb'
 import { completeUpload } from '@/lib/aws/storage'
-import { getTransferFiles, transferFileKey, updateTransferFileStatus } from '@/lib/transferBatch'
-import { sendTransferLinkEmail } from '@/lib/aws/ses'
-import { logAudit } from '@/lib/audit'
-import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb'
+import { transferFileKey, finalizeBatchIfComplete } from '@/lib/transferBatch'
 import type { ApiResponse, Transfer, TransferFile } from '@/types'
 
 const TRANSFER_FILES_TABLE = process.env.DYNAMO_TRANSFER_FILES_TABLE ?? 'vayu-transfer-files'
@@ -50,64 +47,14 @@ export async function POST(req: NextRequest) {
     }
 
     await completeUpload(transferFile.storageBackend, transferFileKey(transferFile), uploadId, parts)
-    await updateTransferFileStatus(batchId, fileId, 'uploaded')
-
-    // Whichever request observes every file uploaded flips the batch to
-    // active — the conditional write ensures only one caller ever wins the
-    // race and sends the recipient email, no matter how many files finish
-    // in the same instant.
-    const allFiles = await getTransferFiles(transfer)
-    const allUploaded = allFiles.every((f) => f.fileId === fileId ? true : f.status === 'uploaded')
-
-    let justActivated = false
-    if (allUploaded) {
-      try {
-        await updateItem(
-          transfersTable,
-          { fileId: batchId },
-          'SET #status = :active, completedAt = :now',
-          { ':active': 'active', ':now': new Date().toISOString(), ':pending': 'pending' },
-          '#status = :pending',
-          { '#status': 'status' }
-        )
-        justActivated = true
-      } catch (err) {
-        if (!(err instanceof ConditionalCheckFailedException)) throw err
-      }
-    }
-
-    if (justActivated) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-      const shareableLink = `${appUrl}/download/${batchId}`
-      const recipients = transfer.recipientEmails ?? []
-      for (const email of recipients) {
-        sendTransferLinkEmail(email, transfer.fileName, shareableLink, transfer.expiryTime)
-          .catch((err) => console.error('[ses] email send failed to', email, err))
-      }
-
-      void logAudit({
-        eventType: 'UPLOAD_COMPLETED',
-        actor: 'user',
-        outcome: 'success',
-        walletId,
-        fileId: batchId,
-        amountPaise: transfer.amountDeducted,
-        metadata: {
-          fileCount: transfer.fileCount,
-          fileSizeBytes: transfer.fileSizeBytes,
-          expiryTime: transfer.expiryTime,
-          shareableLink,
-          recipientEmailsSent: recipients.length,
-        },
-      })
-    }
+    const { batchComplete } = await finalizeBatchIfComplete({ batchId, fileId, walletId })
 
     return NextResponse.json<ApiResponse<{
       fileId: string
       batchComplete: boolean
     }>>({
       success: true,
-      data: { fileId, batchComplete: allUploaded },
+      data: { fileId, batchComplete },
     })
   } catch (err) {
     console.error('[upload/batch/complete]', err)

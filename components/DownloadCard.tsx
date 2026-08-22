@@ -3,6 +3,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
 
+// File System Access API — Chromium desktop + Android Chrome only (not in
+// TypeScript's DOM lib yet as a Window member, unlike the handle
+// interfaces it returns, which lib.dom.d.ts already declares). Every iOS
+// browser (Chrome, Firefox, Safari — Apple requires them all to run on
+// WebKit) and Firefox everywhere lack this entirely; there's no fallback
+// multi-file download for them, just the per-file Preview/Download
+// buttons already in the file list below.
+declare global {
+  interface Window {
+    showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
+  }
+}
+
 interface Props {
   fileId: string
 }
@@ -18,20 +31,14 @@ interface BatchFileUrl extends BatchFileInfo {
   downloadUrl: string
 }
 
-type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error'
+type State = 'loading' | 'ready' | 'expired' | 'exhausted' | 'error' | 'password-required'
 
-// Below this, zipping in the browser (fetch + JSZip, no server round trip)
-// is fast enough and avoids spinning up a Lambda for what's usually a
-// handful of files. At/above it, the batch is handed to the dedicated
-// vayu-transfer-zip Lambda job — browser memory and a single-threaded zip
-// loop don't scale to multi-GB folders the way the streaming server-side
-// pipeline does. Mirrors VayuStudios' proven print-portal threshold.
-const CLIENT_ZIP_THRESHOLD_BYTES = 1024 * 1024 * 1024 // 1GB
+const SUPPORTS_DIRECTORY_PICKER = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
-type ZipJobState =
+type FolderJobState =
   | { phase: 'idle' }
   | { phase: 'creating'; processed: number; total: number }
-  | { phase: 'ready'; downloadUrl: string; filename: string }
+  | { phase: 'done' }
   | { phase: 'error'; message: string }
 
 function formatBytes(bytes: number): string {
@@ -50,9 +57,7 @@ function formatCountdown(expiryTime: string): string {
   return `${m}m ${s}s remaining`
 }
 
-// Triggers a raw browser save without opening/navigating the current tab —
-// safe to call once per file even inside a loop (no popup-blocker issue
-// since it's not window.open).
+// Triggers a raw browser save without opening/navigating the current tab.
 function triggerDownload(url: string, fileName: string) {
   const a = document.createElement('a')
   a.href = url
@@ -73,14 +78,21 @@ export default function DownloadCard({ fileId }: Props) {
   const [batchFiles, setBatchFiles] = useState<BatchFileInfo[] | null>(null)
   const [fetchedUrls, setFetchedUrls] = useState<Map<string, string> | null>(null)
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
-  const [zipJob, setZipJob] = useState<ZipJobState>({ phase: 'idle' })
-  // Generation counter: guards against a stale poll/zip loop from a
-  // previous "Download All" click (or an unmounted component) still
-  // running and calling setState after a newer click superseded it.
-  const zipGen = useRef(0)
+  const [folderJob, setFolderJob] = useState<FolderJobState>({ phase: 'idle' })
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordError, setPasswordError] = useState(false)
+  const [verifyingPassword, setVerifyingPassword] = useState(false)
+  // The password that actually verified successfully — resent with the
+  // real download POST too, since that route re-validates independently
+  // rather than trusting this component's local "already verified" state.
+  const verifiedPasswordRef = useRef<string | null>(null)
+  // Generation counter: guards against a stale run from a previous click
+  // (or an unmounted component) still calling setState after a newer
+  // click superseded it.
+  const jobGen = useRef(0)
 
   useEffect(() => {
-    return () => { zipGen.current++ }
+    return () => { jobGen.current++ }
   }, [])
 
   // On mount: GET = info only, no counter increment
@@ -97,11 +109,40 @@ export default function DownloadCard({ fileId }: Props) {
         } else {
           if (data.error === 'LINK_EXPIRED') setState('expired')
           else if (data.error === 'DOWNLOAD_LIMIT_REACHED') setState('exhausted')
+          else if (data.error === 'PASSWORD_REQUIRED') setState('password-required')
           else { setState('error'); setErrorMsg(data.message ?? 'Something went wrong') }
         }
       })
       .catch(() => { setState('error'); setErrorMsg('Network error') })
   }, [fileId])
+
+  const handleVerifyPassword = async () => {
+    if (!passwordInput) return
+    setVerifyingPassword(true)
+    setPasswordError(false)
+    try {
+      const res = await fetch(`/api/download/${fileId}/verify-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setPasswordError(true)
+        return
+      }
+      verifiedPasswordRef.current = passwordInput
+      setFileName(data.data.fileName)
+      setFileSizeBytes(data.data.fileSizeBytes)
+      setExpiryTime(data.data.expiryTime)
+      if (data.data.fileCount) setBatchFiles(data.data.files ?? [])
+      setState('ready')
+    } catch {
+      setPasswordError(true)
+    } finally {
+      setVerifyingPassword(false)
+    }
+  }
 
   // Live countdown timer
   useEffect(() => {
@@ -116,7 +157,13 @@ export default function DownloadCard({ fileId }: Props) {
   // URL back at once — one slot pays for the whole selection, individual
   // file clicks afterwards just reuse the cached URLs (no extra cost).
   const fetchDownloadUrls = async (): Promise<{ downloadUrl?: string; files?: BatchFileUrl[] } | null> => {
-    const res = await fetch(`/api/download/${fileId}`, { method: 'POST' })
+    const res = await fetch(`/api/download/${fileId}`, {
+      method: 'POST',
+      ...(verifiedPasswordRef.current && {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: verifiedPasswordRef.current }),
+      }),
+    })
     const data = await res.json()
     if (!data.success) {
       if (data.error === 'LINK_EXPIRED') setState('expired')
@@ -165,97 +212,59 @@ export default function DownloadCard({ fileId }: Props) {
     }
   }
 
-  // Small batches: zip entirely in the browser, one save instead of N
-  // separate automatic downloads (which Chrome silently throttles/blocks
-  // past a handful in a row). relativePath is used as the in-zip path so
-  // folder structure from the original upload is preserved.
-  const downloadAllClientSide = async (myGen: number) => {
-    if (!batchFiles) return
-    const data = await fetchDownloadUrls()
-    if (myGen !== zipGen.current) return
-    const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
-    if (!urls) throw new Error('Could not get download links')
+  // The only "download everything" path — File System Access API only.
+  // Each file is streamed (fetch's response body piped straight to a
+  // FileSystemWritableFileStream) directly onto disk inside the folder
+  // the user picked, never fully buffered in browser memory.
+  // relativePath segments become real nested folders via
+  // getDirectoryHandle(..., {create:true}).
+  const handleDownloadAllToFolder = async () => {
+    if (!batchFiles || !window.showDirectoryPicker) return
+    const myGen = ++jobGen.current
+    try {
+      const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+      if (myGen !== jobGen.current) return
 
-    const zipFilename = `${(fileName || 'files').replace(/[^a-z0-9]+/gi, '-')}.zip`
-    const { default: JSZip } = await import('jszip')
-    const zip = new JSZip()
-    const usedNames = new Set<string>()
-    let processed = 0
+      setFolderJob({ phase: 'creating', processed: 0, total: batchFiles.length })
+      const data = await fetchDownloadUrls()
+      if (myGen !== jobGen.current) return
+      const urls = data?.files ? new Map(data.files.map((f) => [f.fileId, f.downloadUrl])) : fetchedUrls
+      if (!urls) throw new Error('Could not get download links')
 
-    for (const f of batchFiles) {
-      if (myGen !== zipGen.current) return
-      const url = urls.get(f.fileId)
-      if (!url) continue
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`Could not fetch ${f.fileName}`)
-      const blob = await res.blob()
+      let processed = 0
+      for (const f of batchFiles) {
+        if (myGen !== jobGen.current) return
+        const url = urls.get(f.fileId)
+        if (!url) continue
 
-      let name = f.relativePath || f.fileName
-      if (usedNames.has(name)) {
-        const dot = name.lastIndexOf('.')
-        name = dot === -1 ? `${name}-${f.fileId.slice(0, 8)}` : `${name.slice(0, dot)}-${f.fileId.slice(0, 8)}${name.slice(dot)}`
-      }
-      usedNames.add(name)
-      zip.file(name, blob)
+        const path = (f.relativePath || f.fileName).split('/').filter(Boolean)
+        const segments = path.length > 0 ? path : [f.fileName]
+        let dir = rootHandle
+        for (const segment of segments.slice(0, -1)) {
+          dir = await dir.getDirectoryHandle(segment, { create: true })
+        }
+        const fileHandle = await dir.getFileHandle(segments[segments.length - 1], { create: true })
+        const writable = await fileHandle.createWritable()
 
-      processed++
-      if (myGen === zipGen.current) setZipJob({ phase: 'creating', processed, total: batchFiles.length })
-    }
+        const res = await fetch(url)
+        if (!res.ok || !res.body) throw new Error(`Could not fetch ${f.fileName}`)
+        await res.body.pipeTo(writable)
 
-    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' })
-    if (myGen !== zipGen.current) return
-    const url = URL.createObjectURL(zipBlob)
-    setZipJob({ phase: 'ready', downloadUrl: url, filename: zipFilename })
-  }
-
-  // Large batches (>=1GB): hand off to the dedicated zip Lambda job and
-  // poll status every 2s until ready.
-  const downloadAllServerSide = async (myGen: number) => {
-    const initRes = await fetch(`/api/download/${fileId}/zip`, { method: 'POST' }).then((r) => r.json())
-    if (!initRes.success) {
-      throw new Error(initRes.message ?? 'Could not start zip creation')
-    }
-    const { jobId } = initRes.data as { jobId: string }
-
-    while (myGen === zipGen.current) {
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      if (myGen !== zipGen.current) return
-      const statusRes = await fetch(`/api/download/${fileId}/zip/status/${jobId}`).then((r) => r.json())
-      if (!statusRes.success) throw new Error('Lost track of the zip job')
-      const s = statusRes.data as {
-        status: string; processed: number; total: number
-        downloadUrl?: string; zipFileName?: string; errorMessage?: string
+        processed++
+        if (myGen === jobGen.current) setFolderJob({ phase: 'creating', processed, total: batchFiles.length })
       }
 
-      if (myGen !== zipGen.current) return
-
-      if (s.status === 'ready' && s.downloadUrl && s.zipFileName) {
-        setZipJob({ phase: 'ready', downloadUrl: s.downloadUrl, filename: s.zipFileName })
+      if (myGen !== jobGen.current) return
+      setFolderJob({ phase: 'done' })
+    } catch (err) {
+      if (myGen !== jobGen.current) return
+      // User closed the folder picker without choosing one — not an
+      // error, just back to idle so they can try again.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setFolderJob({ phase: 'idle' })
         return
       }
-      if (s.status === 'failed') {
-        throw new Error(s.errorMessage ?? 'Zip creation failed')
-      }
-      setZipJob({ phase: 'creating', processed: s.processed, total: s.total })
-    }
-  }
-
-  // "Download All" — picks the zip strategy by total batch size.
-  const handleDownloadAll = async () => {
-    if (!batchFiles) return
-    const myGen = ++zipGen.current
-    setZipJob({ phase: 'creating', processed: 0, total: 0 })
-    try {
-      const totalBytes = batchFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0)
-      if (totalBytes < CLIENT_ZIP_THRESHOLD_BYTES) {
-        await downloadAllClientSide(myGen)
-      } else {
-        await downloadAllServerSide(myGen)
-      }
-    } catch (err) {
-      if (myGen === zipGen.current) {
-        setZipJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
-      }
+      setFolderJob({ phase: 'error', message: err instanceof Error ? err.message : 'Could not download all files. Please try again or download individually.' })
     }
   }
 
@@ -304,6 +313,41 @@ export default function DownloadCard({ fileId }: Props) {
         <div className="text-muted text-sm">
           This link has reached its download limit.
         </div>
+      </div>
+    )
+  }
+
+  if (state === 'password-required') {
+    return (
+      <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-4">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-accent/10 text-accent flex items-center justify-center">
+          <LockIcon className="w-7 h-7" />
+        </div>
+        <div>
+          <div className="text-text-primary font-semibold text-lg">This transfer is password protected</div>
+          <div className="text-muted text-sm mt-1">Enter the password to view and download these files.</div>
+        </div>
+        <div className={`space-y-2 ${passwordError ? 'motion-safe:animate-[shake_0.4s_ease-in-out]' : ''}`}>
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleVerifyPassword() }}
+            placeholder="Password"
+            autoFocus
+            className={`w-full bg-bg border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none text-center ${
+              passwordError ? 'border-danger' : 'border-border focus:border-accent/60'
+            }`}
+          />
+          {passwordError && <div className="text-xs text-danger">Incorrect password — please try again.</div>}
+        </div>
+        <button
+          onClick={handleVerifyPassword}
+          disabled={!passwordInput || verifyingPassword}
+          className="w-full bg-accent text-bg font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {verifyingPassword ? 'Checking…' : 'Unlock'}
+        </button>
       </div>
     )
   }
@@ -382,33 +426,45 @@ export default function DownloadCard({ fileId }: Props) {
           </div>
         )}
 
-        {isBatch && zipJob.phase === 'error' && (
+        {isBatch && folderJob.phase === 'error' && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
-            {zipJob.message}
+            {folderJob.message}
           </div>
         )}
 
-        {isBatch && zipJob.phase === 'ready' ? (
-          <a
-            href={zipJob.downloadUrl}
-            download={zipJob.filename}
-            className="w-full bg-success text-bg font-bold py-4 rounded-xl text-lg hover:bg-success/90 transition-colors flex items-center justify-center gap-2"
-          >
-            <DownloadIcon className="w-5 h-5" />
-            Download ZIP ({batchFiles?.length ?? 0} files)
-          </a>
-        ) : (
+        {isBatch && folderJob.phase === 'done' && (
+          <div className="bg-success/10 border border-success/30 rounded-lg px-4 py-3 text-sm text-success text-center">
+            All {batchFiles.length} files saved to your chosen folder, with the original folder structure intact.
+          </div>
+        )}
+
+        {isBatch && (
+          SUPPORTS_DIRECTORY_PICKER ? (
+            <button
+              onClick={handleDownloadAllToFolder}
+              disabled={folderJob.phase === 'creating'}
+              className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <DownloadIcon className="w-5 h-5" />
+              {folderJob.phase === 'creating'
+                ? folderJob.total > 0 ? `Saving to folder… ${folderJob.processed}/${folderJob.total}` : 'Starting…'
+                : `Download All (${batchFiles.length} files)`}
+            </button>
+          ) : (
+            <div className="text-sm text-muted bg-bg border border-border rounded-lg px-4 py-3 text-center">
+              Your browser can&apos;t download multiple files at once here — please use Preview and Download on each file above individually.
+            </div>
+          )
+        )}
+
+        {!isBatch && (
           <button
-            onClick={isBatch ? handleDownloadAll : handleDownload}
-            disabled={downloading || zipJob.phase === 'creating'}
+            onClick={handleDownload}
+            disabled={downloading}
             className="w-full bg-accent text-bg font-bold py-4 rounded-xl text-lg hover:bg-accent/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <DownloadIcon className="w-5 h-5" />
-            {isBatch
-              ? zipJob.phase === 'creating'
-                ? zipJob.total > 0 ? `Zipping… ${zipJob.processed}/${zipJob.total}` : 'Starting…'
-                : `Download All (${batchFiles?.length ?? 0} files)`
-              : downloading ? 'Preparing download...' : 'Download File'}
+            {downloading ? 'Preparing download...' : 'Download File'}
           </button>
         )}
       </div>

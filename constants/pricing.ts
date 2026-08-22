@@ -30,7 +30,24 @@ export const MAX_EXPIRY_DAYS_FROM_UPLOAD = 19
 // number to reason about.
 export const EXTENSION_RATE_PAISE_PER_GB = Math.round(FLAT_RATE_PAISE_PER_GB / 2)
 
-export const MAX_FILE_SIZE_GB = 10
+// Real technical ceiling, not an arbitrary product limit: uploads are
+// chunked at MULTIPART_CHUNK_SIZE_BYTES (50MB) below, and S3/R2's
+// multipart protocol caps every upload at 10,000 parts — 10,000 * 50MB ≈
+// 488GB per file. 400GB leaves real margin under that hard limit while
+// comfortably covering everything the product actually needs to support.
+export const MAX_FILE_SIZE_GB = 400
+
+// Google Drive import has a *different* real ceiling than direct upload:
+// it runs inside lambda/vayu-drive-import, which streams every file
+// straight through in one Lambda invocation, sequentially, capped at
+// AWS's hard 900-second Lambda execution limit (not something we chose —
+// it's the platform maximum, can't be raised). Direct browser upload has
+// no such timeout (just a series of independent presigned-URL PUTs), so
+// it can reach the far larger MAX_FILE_SIZE_GB above; Drive import can't.
+// 5GB is a conservative estimate leaving real margin under 900s even on
+// an unremarkable connection — not yet validated against a real large
+// batch, tighten or loosen once it has been (see project memory).
+export const MAX_DRIVE_IMPORT_SIZE_GB = 5
 
 export const RATE_LIMIT_UPLOADS_PER_HOUR = 10
 

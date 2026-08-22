@@ -18,7 +18,7 @@ function statusBadge(status: ReceiveRequest['status'], isExpired: boolean) {
   }
 }
 
-export default function ReceiveRequestsPanel({ refreshKey }: { refreshKey: number }) {
+export default function ReceiveRequestsPanel() {
   const [requests, setRequests] = useState<ReceiveRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState<string | null>(null)
@@ -33,7 +33,7 @@ export default function ReceiveRequestsPanel({ refreshKey }: { refreshKey: numbe
     }
   }, [])
 
-  useEffect(() => { load() }, [load, refreshKey])
+  useEffect(() => { load() }, [load])
 
   // Poll only while something is still in flight — no point hammering the
   // API once every request has settled into a terminal state.
@@ -69,7 +69,9 @@ export default function ReceiveRequestsPanel({ refreshKey }: { refreshKey: numbe
                   <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
                   <span className="text-xs text-muted">{new Date(r.createdAt).toLocaleDateString('en-IN')}</span>
                 </div>
-                {r.message && <div className="text-sm text-text-primary truncate mt-1">{r.message}</div>}
+                {(r.requestTitle || r.message) && (
+                  <div className="text-sm text-text-primary truncate mt-1 font-medium">{r.requestTitle || r.message}</div>
+                )}
               </div>
               <div className="flex-shrink-0 flex items-center gap-2">
                 {r.status === 'fulfilled' && r.resultFileId && (

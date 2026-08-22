@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
+import { verifyAdminJWT } from '@/lib/adminAuth'
 
 // Known non-studio subdomains that should NOT be treated as studio sites
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
@@ -90,6 +91,17 @@ export async function middleware(request: NextRequest) {
   if (path.startsWith('/studio/api/admin/')) {
     const auth = await verifyStudioJWT(request)
     if (!auth || !['ADMIN', 'OWNER'].includes(auth.role)) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+  }
+
+  // ── VayuTransfer platform-admin API auth guard ───────────────────────────
+  // Own JWT/cookie, fully separate from the studio guards above — see
+  // lib/adminAuth.ts. /api/admin/auth/* (login/logout/me) stays open since
+  // login itself can't require the cookie it's about to issue.
+  if (path.startsWith('/api/admin/') && !path.startsWith('/api/admin/auth/')) {
+    const auth = await verifyAdminJWT(request)
+    if (!auth) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
   }

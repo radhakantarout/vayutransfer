@@ -21,11 +21,14 @@ export async function POST(req: NextRequest) {
       fileName?: string
       fileSizeBytes?: number
       recipientEmails?: string[]
+      message?: string
+      senderNotifyEmail?: string
+      displayName?: string
       contentType?: string
       expiryDays?: number
     }
 
-    const { walletId, fileName, fileSizeBytes, recipientEmails, contentType } = body
+    const { walletId, fileName, fileSizeBytes, recipientEmails, message, senderNotifyEmail, displayName, contentType } = body
     const expiryDays = EXPIRY_DAY_OPTIONS.includes(body.expiryDays as typeof EXPIRY_DAY_OPTIONS[number])
       ? body.expiryDays!
       : DEFAULT_EXPIRY_DAYS
@@ -120,6 +123,9 @@ export async function POST(req: NextRequest) {
       billableGB: pricing.billableGB,
       downloadsUsed: 0,
       recipientEmails,
+      message,
+      senderNotifyEmail,
+      displayName,
       amountDeducted: pricing.totalPaise,
       status: 'pending',
       storageBackend: NEW_UPLOAD_BACKEND,

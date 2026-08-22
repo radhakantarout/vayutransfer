@@ -25,10 +25,20 @@ export async function GET(
 
   return NextResponse.json<ApiResponse<{
     status: ReceiveRequest['status']
+    requestTitle?: string
     message?: string
+    maxSizeBytes?: number
+    accessMode?: 'anyone' | 'invited'
     expiryTime: string
   }>>({
     success: true,
-    data: { status, message: receiveRequest.message, expiryTime: receiveRequest.expiryTime },
+    data: {
+      status,
+      requestTitle: receiveRequest.requestTitle,
+      message: receiveRequest.message,
+      maxSizeBytes: receiveRequest.maxSizeBytes,
+      accessMode: receiveRequest.accessMode,
+      expiryTime: receiveRequest.expiryTime,
+    },
   })
 }

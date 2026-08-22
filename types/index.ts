@@ -31,6 +31,15 @@ export type AuditEventType =
   | 'RECEIVE_INSUFFICIENT_BALANCE'
   | 'ZIP_DOWNLOAD_STARTED'
   | 'ZIP_DOWNLOAD_FAILED'
+  | 'DRIVE_CONNECTED'
+  | 'DRIVE_DISCONNECTED'
+  | 'DRIVE_IMPORT_STARTED'
+  | 'DRIVE_IMPORT_FAILED'
+  | 'TRANSFER_SETTINGS_UPDATED'
+  | 'TRANSFER_DELETED'
+  | 'USER_BLOCKED'
+  | 'USER_UNBLOCKED'
+  | 'USER_WARNED'
 
 // ─── DynamoDB Table Interfaces ─────────────────────────────────────────────
 
@@ -73,8 +82,25 @@ export interface Transfer {
   // for the silent abuse ceiling enforced separately.
   downloadsUsed: number
   recipientEmails?: string[]
+  // Optional note from the sender, shown in the recipient notification
+  // email — plain text, 200-char UI-enforced max (not re-validated
+  // server-side beyond a generous length cap; it's a courtesy message, not
+  // security-sensitive input).
+  message?: string
+  // Sender's own notification address — distinct from recipientEmails.
+  // When set, sendDownloadNotificationEmail fires once per download visit
+  // (not once per file in a batch). See app/api/download/[fileId]/route.ts.
+  senderNotifyEmail?: string
+  // Editable display name, independent of fileName (which stays whatever
+  // the first uploaded file/batch was called). Falls back to fileName
+  // everywhere it's shown when unset.
+  displayName?: string
+  passwordHash?: string
+  passwordEnabled?: boolean
   amountDeducted: number        // paise
-  status: 'pending' | 'active' | 'expired' | 'failed'
+  // 'deleted' — sender explicitly deleted the transfer (no refund; the
+  // underlying R2/S3 objects are removed too, see DELETE /api/transfers/[fileId]).
+  status: 'pending' | 'active' | 'expired' | 'failed' | 'deleted'
   // S3->R2 migration: every record has exactly one of these two populated,
   // matching storageBackend. Existing pre-migration records only ever have
   // s3Key; new uploads only ever get r2Key. See lib/aws/storage.ts.
@@ -84,6 +110,11 @@ export interface Transfer {
   r2Key?: string
   // Present only on batch transfers — see the type-level comment above.
   fileCount?: number
+  // Additive marker, informational only — never read/branched-on by any
+  // existing upload/download/expiry logic. Absent (undefined) means a
+  // normal local upload, same as always. Only 'drive-import' batches ever
+  // set this. See lib/transferBatch.ts#createDriveImportBatch.
+  source?: 'upload' | 'drive-import'
   // Set once a server-side "Download All" zip build (ZipJob) has been
   // started for this batch — cached so repeat clicks reuse the same
   // finished zip instead of re-building it on every visit. Only used for
@@ -114,7 +145,12 @@ export interface TransferFile {
   s3Key?: string
   r2Key?: string
   uploadId?: string             // set once the multipart upload for this file has started
-  status: 'pending' | 'uploaded' | 'failed'
+  // 'skipped' — the sender chose to proceed without this file after it
+  // failed and they declined to keep retrying; its share of the batch price
+  // gets refunded (see /api/upload/batch/[id]/finalize-partial) and the
+  // rest of the batch activates without it, same as if it were 'uploaded'
+  // for the purposes of "is this batch done".
+  status: 'pending' | 'uploaded' | 'failed' | 'skipped'
   createdAt: string             // ISO string
 }
 
@@ -130,7 +166,20 @@ export interface ReceiveRequest {
   requestId: string
   walletId: string
   requesterEmail: string
+  requestTitle?: string
   message?: string
+  // Optional cap tighter than the platform-wide MAX_FILE_SIZE_GB, chosen by
+  // the requester at creation time — enforced in
+  // /api/receive/[requestId]/initiate alongside the existing global cap.
+  maxSizeBytes?: number
+  // 'invited' just controls who the link gets emailed to at creation time
+  // (sendReceiveRequestInviteEmail) — the upload link itself still has no
+  // identity check, same as 'anyone'. Not an access-control gate.
+  accessMode?: 'anyone' | 'invited'
+  invitedEmails?: string[]
+  // Whether sendFileReceivedEmail fires on fulfillment. Defaults to true
+  // when absent (pre-existing requests, created before this field existed).
+  notifyOnUpload?: boolean
   status: 'pending' | 'uploading' | 'fulfilled' | 'expired' | 'cancelled'
   // Set once an upload has actually started — points at the batch Transfer
   // (its fileId doubles as the batchId) created for this request.
@@ -180,6 +229,44 @@ export interface ZipJob {
   ttl: number               // unix seconds — DynamoDB TTL, 24h from creation
 }
 
+// One row per NextAuth-signed-in user who has authorized VayuTransfer's
+// Drive-import feature. PK userId (NextAuth's `session.user.id`, same id
+// resolveOwnWalletId()/getUserById use elsewhere). Holds only a refresh
+// token (encrypted at rest by DynamoDB's default table encryption, same as
+// every other table in this app — no bespoke crypto layer) — short-lived
+// access tokens are minted from this on demand server-side and never
+// stored. This is a separate consent step from NextAuth login itself
+// (drive.file scope only, requested only when the user clicks "Import from
+// Google Drive"), so ordinary sign-in never touches Drive permissions.
+export interface DriveToken {
+  userId: string
+  refreshToken: string
+  scope: string
+  connectedAt: string      // ISO string
+}
+
+// One row per server-side Drive import job for a batch Transfer
+// (source: 'drive-import'). PK jobId, lives in its own vayu-drive-jobs
+// table. Built by a dedicated Lambda (lambda/vayu-drive-import) that
+// streams each Drive file directly into R2 — mirrors ZipJob/
+// lambda/vayu-transfer-zip's proven job+poll shape, kept as its own
+// separate code/table since the transport (Drive API source vs R2 source)
+// is genuinely different work.
+export type DriveJobStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+export interface DriveJob {
+  jobId: string
+  batchId: string           // the owning Transfer's fileId
+  status: DriveJobStatus
+  processed: number
+  total: number
+  currentFileName?: string  // for the "Importing… fileName" progress label
+  errorMessage?: string
+  createdAt: string         // ISO string
+  completedAt?: string      // ISO string
+  ttl: number                // unix seconds — DynamoDB TTL, 24h from creation
+}
+
 export interface Download {
   downloadId: string
   fileId: string
@@ -201,7 +288,7 @@ export interface AuditEvent {
   fileId?: string
   txnId?: string
   downloadId?: string
-  actor: 'user' | 'system' | 'razorpay' | 'scheduler'
+  actor: 'user' | 'system' | 'razorpay' | 'scheduler' | 'admin'
   outcome: 'success' | 'failure' | 'warning'
   amountPaise?: number
   metadata?: Record<string, unknown>
@@ -216,6 +303,23 @@ export interface AuditEvent {
 export interface FileEntry {
   file: File
   path: string   // relative path used as zip entry name (e.g. "photos/img1.jpg")
+}
+
+// A Google Drive-picked file, resolved server-side (real name/size/mimeType
+// — never the client-supplied Picker values). Deliberately declared here
+// rather than imported from lib/googleDrive/resolveSelection.ts, which
+// pulls in the server-only `googleapis` package — this file is plain data
+// and safe to use in both server routes and client components (e.g. the
+// upload page's file list, which renders these next to local FileEntry
+// items in the same list/pricing screen).
+export interface DriveFileEntry {
+  driveFileId: string
+  name: string
+  relativePath: string
+  sizeBytes: number
+  mimeType: string
+  isWorkspaceExport: boolean
+  exportMimeType?: string
 }
 
 // ─── Business Logic Types ──────────────────────────────────────────────────
