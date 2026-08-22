@@ -5,7 +5,7 @@ export default function PricingPage() {
     <main className="max-w-4xl mx-auto px-4 py-16">
       <div className="text-center mb-12">
         <h1 className="text-4xl font-extrabold text-text-primary">Simple, Honest Pricing</h1>
-        <p className="text-muted mt-3 text-lg">One flat rate, calculated to the exact size of what you send. No tiers, no monthly limits.</p>
+        <p className="text-text-primary/80 mt-3 text-lg">One flat rate, calculated to the exact size of what you send. No tiers, no monthly limits.</p>
       </div>
 
       {/* Flat rate */}
@@ -55,15 +55,15 @@ export default function PricingPage() {
         <h3 className="font-bold text-text-primary mb-4">Example</h3>
         <div className="space-y-3 text-sm">
           <div className="flex justify-between">
-            <span className="text-muted">100 MB design files</span>
+            <span className="text-text-primary">100 MB design files</span>
             <span className="font-semibold text-text-primary">₹0.50</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted">2 GB wedding video</span>
+            <span className="text-text-primary">2 GB wedding video</span>
             <span className="font-semibold text-text-primary">₹9.98</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted">5 GB project files</span>
+            <span className="text-text-primary">5 GB project files</span>
             <span className="font-semibold text-text-primary">₹24.95</span>
           </div>
         </div>

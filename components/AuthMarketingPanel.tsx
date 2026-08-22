@@ -18,7 +18,7 @@ export default function AuthMarketingPanel({ title, subtitle }: { title: string;
       <div className="relative z-10">
         <Image src="/logo.png" alt="VayuTransfer" width={40} height={40} className="rounded-xl shadow-sm mb-6" />
         <h1 className="font-display font-extrabold text-3xl leading-tight text-text-primary text-balance">{title}</h1>
-        <p className="mt-3 text-[15px] text-muted leading-relaxed max-w-sm">{subtitle}</p>
+        <p className="mt-3 text-[15px] text-text-primary/80 leading-relaxed max-w-sm">{subtitle}</p>
       </div>
 
       <div className="relative z-10 space-y-3 mt-8">

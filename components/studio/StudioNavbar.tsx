@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { useRouter, usePathname } from 'next/navigation'
 import type { StudioRole } from '@/lib/studio/auth'
 import { ROLE_LABEL } from '@/lib/studio/roleLabels'
+import { useTheme } from '@/lib/theme-context'
 import ProfileMenu from './ProfileMenu'
 import SettingsModal, { type SettingsTab } from './settings/SettingsModal'
 
@@ -37,6 +38,8 @@ function HamburgerIcon() { return <svg className="w-5 h-5" fill="none" viewBox="
 function CloseIcon()     { return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg> }
 function ChevronDown()   { return <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M19 9l-7 7-7-7"/></svg> }
 function HomeIcon()      { return <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg> }
+function SunIcon()       { return <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg> }
+function MoonIcon()      { return <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> }
 function SettingsIcon()  { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> }
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
@@ -62,6 +65,7 @@ export default function StudioNavbar() {
   const productsRef = useRef<HTMLDivElement>(null)
   const router      = useRouter()
   const pathname    = usePathname()
+  const { theme, toggle: toggleTheme } = useTheme()
 
   useEffect(() => {
     const match = document.cookie.split('; ').find((c) => c.startsWith('studio_ui='))
@@ -205,6 +209,15 @@ export default function StudioNavbar() {
 
           {/* Desktop right */}
           <div className="hidden md:flex items-center gap-2">
+            {/* Theme toggle — Studio's own light/dark preference, stored and
+                defaulted independently from VayuTransfer's (see lib/theme-context.tsx) */}
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className={`flex items-center justify-center w-8 h-8 rounded-full border transition-colors flex-shrink-0 ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10' : 'border-border text-muted hover:text-accent hover:border-accent'}`}
+            >
+              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            </button>
             {auth === 'loading' ? (
               <div className="w-9 h-9 rounded-full bg-border animate-pulse" />
             ) : isLoggedIn && (auth as Auth).role === 'ADMIN' ? (
@@ -275,10 +288,20 @@ export default function StudioNavbar() {
             )}
           </div>
 
-          {/* Mobile hamburger */}
-          <button onClick={() => setMobileOpen((v) => !v)} className={`md:hidden flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E]' : 'border-border text-text-primary hover:bg-border/40'}`} aria-label="Menu">
-            {mobileOpen ? <CloseIcon /> : <HamburgerIcon />}
-          </button>
+          {/* Mobile: theme toggle + hamburger, grouped so justify-between
+              doesn't strand the toggle in the middle of the bar */}
+          <div className="flex md:hidden items-center gap-2">
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className={`flex items-center justify-center w-8 h-8 rounded-full border transition-colors flex-shrink-0 ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10' : 'border-border text-muted hover:text-accent hover:border-accent'}`}
+            >
+              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            </button>
+            <button onClick={() => setMobileOpen((v) => !v)} className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E]' : 'border-border text-text-primary hover:bg-border/40'}`} aria-label="Menu">
+              {mobileOpen ? <CloseIcon /> : <HamburgerIcon />}
+            </button>
+          </div>
         </div>
       </nav>
 

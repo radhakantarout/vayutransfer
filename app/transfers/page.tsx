@@ -210,7 +210,7 @@ export default function TransfersPage() {
       <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">My Transfers</h1>
-          <p className="text-sm text-muted mt-0.5">All your shared links, uploads and requests in one place.</p>
+          <p className="text-sm text-text-primary/80 mt-0.5">All your shared links, uploads and requests in one place.</p>
         </div>
         <div className="flex items-center gap-2">
           <Link

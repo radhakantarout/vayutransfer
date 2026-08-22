@@ -47,7 +47,7 @@ function LoginPageInner() {
           <div className="text-center">
             <Image src="/logo.png" alt="VayuTransfer" width={40} height={40} className="rounded-xl shadow-sm mx-auto mb-4" />
             <h1 className="text-2xl font-bold text-text-primary">Welcome back</h1>
-            <p className="text-muted text-sm mt-2">Sign in to get back to your wallet and transfers</p>
+            <p className="text-text-primary/80 text-sm mt-2">Sign in to get back to your wallet and transfers</p>
           </div>
 
           <EmailOtpForm mode="login" callbackUrl="/" initialEmail={initialEmail} />

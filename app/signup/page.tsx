@@ -45,7 +45,7 @@ export default function SignupPage() {
         <div className="bg-card border border-border rounded-2xl p-8 flex flex-col justify-center space-y-5">
           <div>
             <h2 className="text-xl font-bold text-text-primary">Create your account</h2>
-            <p className="text-sm text-muted mt-1">Just your email — we'll send you a one-time code.</p>
+            <p className="text-sm text-text-primary/80 mt-1">Just your email — we'll send you a one-time code.</p>
           </div>
 
           <EmailOtpForm mode="signup" callbackUrl="/" />

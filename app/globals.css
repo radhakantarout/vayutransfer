@@ -2,7 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Light mode (default) — stored as R G B so Tailwind opacity modifiers work */
+/* Light mode (default) — stored as R G B so Tailwind opacity modifiers work.
+   --muted was 90 112 144 (~4.5:1 on this bg, borderline for body text);
+   darkened to 70 90 120 (~6.2:1) for the same reason as the dark-mode value
+   below — secondary text (captions, timestamps, hints) needs to actually
+   read clearly, not just technically clear a contrast checker. */
 :root {
   --bg:      237 242 248;
   --card:    255 255 255;
@@ -12,10 +16,14 @@
   --success:   0 168 112;
   --danger:  224  48  80;
   --text:     26  37  53;
-  --muted:    90 112 144;
+  --muted:    70  90 120;
 }
 
-/* Dark mode — navbar keeps same dark tone */
+/* Dark mode — navbar keeps same dark tone. --muted is lifted from the
+   light-mode value (90 112 144, ~3.8:1 against this bg — fails WCAG AA for
+   body text) to 120 138 168 (~5.5:1) so secondary/caption text (timestamps,
+   labels, hints — used constantly by both products) stays legible instead
+   of washing out against the dark background. */
 html.dark {
   --bg:      11  15  26;
   --card:    19  25  41;
@@ -25,7 +33,7 @@ html.dark {
   --success:  0 229 160;
   --danger:  255  83 112;
   --text:    224 234 248;
-  --muted:    90 112 144;
+  --muted:   120 138 168;
 }
 
 body {

@@ -18,6 +18,13 @@ const NAV_ITEMS = [
   { label: 'Activity', href: '/dashboard', icon: ListIcon },
 ]
 
+// One shared selected/normal color language for every rail button (Send,
+// Request, and the nav list below) — previously Send was hardcoded to
+// always look "selected" and Request always looked "unselected" regardless
+// of which page was actually active.
+const RAIL_BUTTON_SELECTED = 'bg-gradient-to-b from-accent to-[#7C3AED] text-white shadow-md shadow-accent/25 hover:shadow-lg hover:shadow-accent/30'
+const RAIL_BUTTON_NORMAL = 'border border-border bg-bg text-muted hover:text-accent hover:border-accent/50 shadow-sm'
+
 export default function Sidebar() {
   // ConditionalSidebar never renders this component until `session` is
   // truthy, so there's no anonymous/loading branch to handle here.
@@ -126,7 +133,7 @@ export default function Sidebar() {
         {/* Send */}
         <button
           onClick={() => go('/transfer/new')}
-          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl bg-gradient-to-b from-accent to-[#7C3AED] text-white shadow-md shadow-accent/25 hover:shadow-lg hover:shadow-accent/30 hover:-translate-y-0.5 transition-all flex-shrink-0"
+          className={`flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl hover:-translate-y-0.5 transition-all flex-shrink-0 ${isActive('/transfer/new') ? RAIL_BUTTON_SELECTED : RAIL_BUTTON_NORMAL}`}
         >
           <SendIcon className="w-4 h-4" />
           <span className="text-[10px] font-bold leading-none">Send</span>
@@ -135,7 +142,7 @@ export default function Sidebar() {
         {/* Request */}
         <button
           onClick={() => go('/transfer/request')}
-          className="flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl border border-border bg-bg text-muted hover:text-accent hover:border-accent/50 hover:-translate-y-0.5 transition-all shadow-sm flex-shrink-0"
+          className={`flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl hover:-translate-y-0.5 transition-all flex-shrink-0 ${isActive('/transfer/request') ? RAIL_BUTTON_SELECTED : RAIL_BUTTON_NORMAL}`}
         >
           <InboxIcon className="w-4 h-4" />
           <span className="text-[10px] font-bold leading-none">Request</span>
@@ -151,10 +158,8 @@ export default function Sidebar() {
             <button
               key={href}
               onClick={() => go(href)}
-              className={`flex flex-col items-center gap-1 w-16 py-2 rounded-xl text-[10px] font-medium transition-all flex-shrink-0 ${
-                isActive(href)
-                  ? 'bg-accent/10 text-accent shadow-inner'
-                  : 'text-muted hover:bg-border/40 hover:text-text-primary'
+              className={`flex flex-col items-center gap-1 w-16 py-2.5 rounded-2xl text-[10px] font-bold hover:-translate-y-0.5 transition-all flex-shrink-0 ${
+                isActive(href) ? RAIL_BUTTON_SELECTED : RAIL_BUTTON_NORMAL
               }`}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />
