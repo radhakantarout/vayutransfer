@@ -6,7 +6,20 @@ import { FileTypeIcon, UploadCloudIcon, FolderIcon, CloseIcon, DriveIcon, CheckC
 import DuplicateFilesModal from '@/components/DuplicateFilesModal'
 import PastTransferDuplicateModal from '@/components/PastTransferDuplicateModal'
 import GoogleDriveImportButton from '@/components/GoogleDriveImportButton'
+import FolderTree from '@/components/FolderTree'
+import { buildFileTree, type TreeNode } from '@/lib/fileTree'
 import type { FileEntry, DriveFileEntry } from '@/types'
+
+// Unifies local + Drive-picked entries into one row type so both sources
+// can share a single folder tree (the two never coexist in practice — see
+// addEntries/handleDriveResolved — but are still rendered as one list).
+type SelectedRow =
+  | { kind: 'local'; entry: FileEntry }
+  | { kind: 'drive'; file: DriveFileEntry }
+
+function countFolders<T>(node: TreeNode<T>): number {
+  return node.folders.length + node.folders.reduce((sum, f) => sum + countFolders(f), 0)
+}
 
 const BLOCK_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 const WARN_BYTES  = 2 * 1024 * 1024 * 1024   // 2 GB
@@ -305,15 +318,72 @@ export default function UploadZone({
 
   // ── Files selected view ──────────────────────────────────────────────────
   if (totalCount > 0) {
-    // Folders aren't separate selectable rows (drag-drop/folder-pick flattens
-    // straight to individual files with a path), so "folder count" here is
-    // the number of distinct top-level folder names among local entries —
-    // derived for the summary line, matching the mockup's "N folders · M
-    // files" format without needing a structural change elsewhere.
-    const folderCount = new Set(
-      entries.filter((e) => e.path.includes('/')).map((e) => e.path.split('/')[0])
-    ).size
+    // One tree across both sources (mutually exclusive in practice — see
+    // addEntries/handleDriveResolved) so folders render nested/collapsible
+    // instead of the old flat "folder/filename" rows.
+    const rows: SelectedRow[] = [
+      ...entries.map((entry): SelectedRow => ({ kind: 'local', entry })),
+      ...driveEntries.map((file): SelectedRow => ({ kind: 'drive', file })),
+    ]
+    const tree = buildFileTree(rows, (r) => (r.kind === 'local' ? r.entry.path : r.file.relativePath))
+    const folderCount = countFolders(tree)
     const fileCount = totalCount - folderCount
+
+    const renderRow = (row: SelectedRow) => {
+      if (row.kind === 'local') {
+        const entry = row.entry
+        const isSelected = selectedPath === entry.path
+        return (
+          <div
+            onClick={() => onSelectPath?.(entry.path)}
+            className={`flex items-center gap-3 pl-4 pr-4 py-2.5 transition-colors ${onSelectPath ? 'cursor-pointer' : ''} ${
+              isSelected ? 'bg-accent/10' : 'hover:bg-bg'
+            }`}
+          >
+            <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg'}`}>
+              <FileTypeIcon fileName={entry.path} className={`w-4 h-4 ${fileTypeColor(entry.path, false)}`} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className={`text-xs truncate ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>{entry.path.split('/').pop()}</div>
+            </div>
+            <CheckCircleIcon className="w-3.5 h-3.5 text-success flex-shrink-0" />
+            <span className="text-xs text-muted flex-shrink-0">{formatBytes(entry.file.size)}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); removeEntry(entry.path) }}
+              className="text-muted hover:text-danger transition-colors flex-shrink-0 p-0.5"
+            >
+              <CloseIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )
+      }
+      const f = row.file
+      const isSelected = selectedPath === f.relativePath
+      return (
+        <div
+          onClick={() => onSelectPath?.(f.relativePath)}
+          className={`flex items-center gap-3 pl-4 pr-4 py-2.5 transition-colors ${onSelectPath ? 'cursor-pointer' : ''} ${
+            isSelected ? 'bg-accent/10' : 'hover:bg-bg'
+          }`}
+        >
+          <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg'}`}>
+            <FileTypeIcon fileName={f.relativePath} className={`w-4 h-4 ${fileTypeColor(f.relativePath)}`} />
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className={`text-xs truncate ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>{f.relativePath.split('/').pop()}</div>
+          </div>
+          <DriveIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          <CheckCircleIcon className="w-3.5 h-3.5 text-success flex-shrink-0" />
+          <span className="text-xs text-muted flex-shrink-0">{formatBytes(f.sizeBytes)}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); removeDriveEntry(f.driveFileId) }}
+            className="text-muted hover:text-danger transition-colors flex-shrink-0 p-0.5"
+          >
+            <CloseIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )
+    }
 
     return (
       <>
@@ -330,62 +400,7 @@ export default function UploadZone({
             picking one clears the other, but rendered as one unified list
             either way so this screen looks identical regardless of source). */}
         <div className="max-h-56 overflow-y-auto divide-y divide-border">
-          {entries.map((entry) => {
-            const isSelected = selectedPath === entry.path
-            const isFolder = entry.path.includes('/')
-            return (
-              <div
-                key={entry.path}
-                onClick={() => onSelectPath?.(entry.path)}
-                className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${onSelectPath ? 'cursor-pointer' : ''} ${
-                  isSelected ? 'bg-accent/10' : 'hover:bg-bg'
-                }`}
-              >
-                <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg'}`}>
-                  <FileTypeIcon fileName={entry.path} isFolder={isFolder} className={`w-4 h-4 ${fileTypeColor(entry.path, isFolder)}`} />
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs truncate ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>{entry.path}</div>
-                </div>
-                <CheckCircleIcon className="w-3.5 h-3.5 text-success flex-shrink-0" />
-                <span className="text-xs text-muted flex-shrink-0">{formatBytes(entry.file.size)}</span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeEntry(entry.path) }}
-                  className="text-muted hover:text-danger transition-colors flex-shrink-0 p-0.5"
-                >
-                  <CloseIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )
-          })}
-          {driveEntries.map((f) => {
-            const isSelected = selectedPath === f.relativePath
-            return (
-              <div
-                key={f.driveFileId}
-                onClick={() => onSelectPath?.(f.relativePath)}
-                className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${onSelectPath ? 'cursor-pointer' : ''} ${
-                  isSelected ? 'bg-accent/10' : 'hover:bg-bg'
-                }`}
-              >
-                <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-accent/10 ring-1 ring-accent/40' : 'bg-bg'}`}>
-                  <FileTypeIcon fileName={f.relativePath} className={`w-4 h-4 ${fileTypeColor(f.relativePath)}`} />
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs truncate ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>{f.relativePath}</div>
-                </div>
-                <DriveIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                <CheckCircleIcon className="w-3.5 h-3.5 text-success flex-shrink-0" />
-                <span className="text-xs text-muted flex-shrink-0">{formatBytes(f.sizeBytes)}</span>
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeDriveEntry(f.driveFileId) }}
-                  className="text-muted hover:text-danger transition-colors flex-shrink-0 p-0.5"
-                >
-                  <CloseIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )
-          })}
+          <FolderTree tree={tree} renderFile={renderRow} />
         </div>
 
         {/* Footer */}

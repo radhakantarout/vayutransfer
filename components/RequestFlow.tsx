@@ -119,7 +119,7 @@ export default function RequestFlow() {
             </div>
             <div>
               <div className="font-bold text-text-primary text-lg">Request files from anyone</div>
-              <p className="text-sm text-muted mt-1.5 leading-relaxed">
+              <p className="text-sm text-text-primary/80 mt-1.5 leading-relaxed">
                 Get files, photos, videos or documents directly to your VayuTransfer — no account needed on their end.
               </p>
             </div>
@@ -148,7 +148,7 @@ export default function RequestFlow() {
             </div>
             <div className="p-4 space-y-4">
               <div>
-                <label className="text-sm text-muted block mb-1.5">Request title</label>
+                <label className="text-sm font-medium text-text-primary block mb-1.5">Request title</label>
                 <input
                   type="text"
                   value={requestTitle}
@@ -160,8 +160,8 @@ export default function RequestFlow() {
               </div>
 
               <div>
-                <label className="text-sm text-muted block mb-1.5">
-                  Allow up to <span className="text-[11px] opacity-70">(max {MAX_FILE_SIZE_GB}GB)</span>
+                <label className="text-sm font-medium text-text-primary block mb-1.5">
+                  Allow up to <span className="text-[11px] font-normal text-muted">(max {MAX_FILE_SIZE_GB}GB)</span>
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -184,7 +184,7 @@ export default function RequestFlow() {
               </div>
 
               <div>
-                <label className="text-sm text-muted block mb-1.5">Request expires in</label>
+                <label className="text-sm font-medium text-text-primary block mb-1.5">Request expires in</label>
                 <div className="flex gap-1.5">
                   {EXPIRY_DAY_OPTIONS.map((days) => (
                     <button
@@ -205,7 +205,7 @@ export default function RequestFlow() {
               </div>
 
               <div>
-                <label className="text-sm text-muted block mb-2">Who can upload?</label>
+                <label className="text-sm font-medium text-text-primary block mb-2">Who can upload?</label>
                 <div className="space-y-2">
                   <button
                     type="button"
@@ -252,7 +252,7 @@ export default function RequestFlow() {
               <p className="text-[11px] text-muted -mt-3">Get notified when files are uploaded.</p>
 
               <div>
-                <label className="text-sm text-muted block mb-1.5">Message to uploader (optional)</label>
+                <label className="text-sm font-medium text-text-primary block mb-1.5">Message to uploader (optional)</label>
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value.slice(0, MAX_MESSAGE_CHARS))}

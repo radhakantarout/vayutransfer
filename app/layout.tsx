@@ -41,7 +41,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('vayu-theme');if(t!=='light')document.documentElement.classList.add('dark')}catch(e){document.documentElement.classList.add('dark')}` }} />
+        {/* Anti-flash: must mirror lib/theme-context.tsx's per-domain
+            key/default exactly, or the first paint will flash the wrong
+            theme before React hydrates. */}
+        <script dangerouslySetInnerHTML={{ __html: `try{var s=${JSON.stringify(isStudioDomain)};var k=s?'vayustudio-theme':'vayu-theme';var v=localStorage.getItem(k);var dark=s?(v==='dark'):(v!=='light');if(dark)document.documentElement.classList.add('dark')}catch(e){${isStudioDomain ? '' : "document.documentElement.classList.add('dark')"}}` }} />
         {!isStudioDomain && (
           <script
             type="application/ld+json"
@@ -61,7 +64,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         )}
       </head>
       <body className={`${inter.variable} ${sora.variable} min-h-screen bg-bg text-text-primary antialiased flex flex-col overflow-x-hidden w-full font-sans`}>
-        <Providers>
+        <Providers isStudioDomain={isStudioDomain}>
           {!isStudioDomain && <ConditionalNavbar />}
           <div className="flex-1 flex">
             {!isStudioDomain && <ConditionalSidebar />}

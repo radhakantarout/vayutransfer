@@ -78,7 +78,7 @@ export default function DashboardPage() {
       <main className="max-w-4xl mx-auto px-4 py-10 space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Recent Activity</h1>
-          <p className="text-sm text-muted mt-0.5">Your storage usage and transfer history</p>
+          <p className="text-sm text-text-primary/80 mt-0.5">Your storage usage and transfer history</p>
         </div>
         {loading ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

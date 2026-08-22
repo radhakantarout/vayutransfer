@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
+import FolderTree from '@/components/FolderTree'
+import { buildFileTree } from '@/lib/fileTree'
 
 // File System Access API — Chromium desktop + Android Chrome only (not in
 // TypeScript's DOM lib yet as a Window member, unlike the handle
@@ -382,32 +384,35 @@ export default function DownloadCard({ fileId }: Props) {
         {isBatch && batchFiles.length > 0 && (
           <div className="border border-border rounded-xl overflow-hidden">
             <div className="max-h-64 overflow-y-auto divide-y divide-border">
-              {batchFiles.map((f) => (
-                <div key={f.fileId} className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="w-8 h-8 rounded-lg bg-bg text-muted flex items-center justify-center flex-shrink-0">
-                    <FileTypeIcon fileName={f.fileName} className="w-4 h-4" />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-text-primary truncate">{f.relativePath || f.fileName}</div>
-                    <div className="text-xs text-muted">{formatBytes(f.fileSizeBytes)}</div>
+              <FolderTree
+                tree={buildFileTree(batchFiles, (f) => f.relativePath || f.fileName)}
+                renderFile={(f) => (
+                  <div className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="w-8 h-8 rounded-lg bg-bg text-muted flex items-center justify-center flex-shrink-0">
+                      <FileTypeIcon fileName={f.fileName} className="w-4 h-4" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-text-primary truncate">{(f.relativePath || f.fileName).split('/').pop()}</div>
+                      <div className="text-xs text-muted">{formatBytes(f.fileSizeBytes)}</div>
+                    </div>
+                    <button
+                      onClick={() => handlePreview(f.fileId)}
+                      disabled={previewLoading === f.fileId}
+                      className="text-muted hover:text-accent transition-colors p-1.5 flex-shrink-0 disabled:opacity-50"
+                      title="Preview"
+                    >
+                      <EyeIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleFileRowDownload(f.fileId)}
+                      disabled={downloading}
+                      className="text-xs font-medium text-accent hover:underline px-2 py-1 flex-shrink-0 disabled:opacity-50"
+                    >
+                      Download
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handlePreview(f.fileId)}
-                    disabled={previewLoading === f.fileId}
-                    className="text-muted hover:text-accent transition-colors p-1.5 flex-shrink-0 disabled:opacity-50"
-                    title="Preview"
-                  >
-                    <EyeIcon className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleFileRowDownload(f.fileId)}
-                    disabled={downloading}
-                    className="text-xs font-medium text-accent hover:underline px-2 py-1 flex-shrink-0 disabled:opacity-50"
-                  >
-                    Download
-                  </button>
-                </div>
-              ))}
+                )}
+              />
             </div>
           </div>
         )}

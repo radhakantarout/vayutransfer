@@ -77,7 +77,7 @@ export default function SupportPage() {
       {/* Hero */}
       <div className="text-center space-y-3">
         <h1 className="text-4xl font-extrabold text-text-primary">How can we help?</h1>
-        <p className="text-muted text-lg">Find answers to common questions or reach us directly.</p>
+        <p className="text-text-primary/80 text-lg">Find answers to common questions or reach us directly.</p>
       </div>
 
       {/* Contact options */}
