@@ -5,6 +5,7 @@ import { useWallet } from '@/lib/wallet-context'
 import TransferFlow from '@/components/TransferFlow'
 import WindAnimation from '@/components/home/WindAnimation'
 import HowItWorksSection from '@/components/home/HowItWorksSection'
+import ProductsOverviewSection from '@/components/home/ProductsOverviewSection'
 import FeaturesSection from '@/components/home/FeaturesSection'
 import PricingHighlightSection from '@/components/home/PricingHighlightSection'
 import StudiosBandSection from '@/components/home/StudiosBandSection'
@@ -148,6 +149,7 @@ export default function HomePage() {
               </div>
 
               <HowItWorksSection />
+              <ProductsOverviewSection />
               <FeaturesSection />
               <PricingHighlightSection
                 balancePaise={session ? balancePaise : undefined}
