@@ -4,8 +4,15 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '@/lib/theme-context'
+import { ChevronDownIcon, SendIcon, InboxIcon, FolderIcon } from '@/components/icons'
+
+const PRODUCTS = [
+  { label: 'Transfer Files', href: '/products/transfer-files', desc: 'Send files up to 400GB, flat ₹4.99/GB', icon: SendIcon },
+  { label: 'Receive Files', href: '/products/receive-files', desc: 'Request files from anyone, no account needed', icon: InboxIcon },
+  { label: 'Manage Transfers', href: '/products/manage-transfers', desc: 'Track, extend, and share every link in one place', icon: FolderIcon },
+] as const
 
 function HamburgerIcon() {
   return (
@@ -28,6 +35,9 @@ export default function Navbar() {
   const { data: session, status } = useSession()
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [productsOpen, setProductsOpen] = useState(false)
+  const [mobileProducts, setMobileProducts] = useState(false)
+  const productsRef = useRef<HTMLDivElement>(null)
   const { theme, toggle } = useTheme()
 
   const isActive = (href: string) => pathname === href
@@ -39,7 +49,14 @@ export default function Navbar() {
     return () => { document.body.style.overflow = '' }
   }, [mobileOpen])
 
-  const closeAll = () => { setMobileOpen(false) }
+  useEffect(() => {
+    if (!productsOpen) return
+    const h = (e: MouseEvent) => { if (productsRef.current && !productsRef.current.contains(e.target as Node)) setProductsOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [productsOpen])
+
+  const closeAll = () => { setMobileOpen(false); setProductsOpen(false); setMobileProducts(false) }
 
   return (
     <>
@@ -62,7 +79,37 @@ export default function Navbar() {
               (always visible for signed-in users) now owns My Transfers/
               Recent Activity/Send/Request. Anonymous users keep the full set. */}
           <div className="hidden md:flex items-center gap-7 text-sm">
-            {!session && <Link href="/" className={desktopLinkClass('/')}>Transfer Files</Link>}
+            {/* Products dropdown */}
+            <div ref={productsRef} className="relative">
+              <button
+                onClick={() => setProductsOpen((v) => !v)}
+                className={`flex items-center gap-1.5 transition-colors ${productsOpen ? 'text-accent font-semibold' : 'text-muted hover:text-text-primary'}`}
+              >
+                Products
+                <span className={`transition-transform duration-200 ${productsOpen ? 'rotate-180' : ''}`}><ChevronDownIcon className="w-3.5 h-3.5" /></span>
+              </button>
+
+              <div className={`absolute top-full left-0 mt-2 w-72 bg-card border border-border rounded-2xl shadow-2xl shadow-black/10 overflow-hidden transition-all duration-200 ${productsOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+                <div className="p-2 space-y-0.5">
+                  {PRODUCTS.map(({ label, href, desc, icon: Icon }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      onClick={closeAll}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-accent/5 border border-transparent hover:border-accent/15 transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent flex-shrink-0 group-hover:bg-accent group-hover:text-white group-hover:border-accent transition-all">
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-semibold text-text-primary group-hover:text-accent transition-colors block">{label}</span>
+                        <p className="text-xs text-muted leading-snug">{desc}</p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </div>
             <Link href="/pricing" className={desktopLinkClass('/pricing')}>Pricing</Link>
             {/* Opens in a new tab — VayuStudios is a separate product, keeping
                 the VayuTransfer tab alive behind it is the better experience
@@ -159,9 +206,30 @@ export default function Navbar() {
       >
         <div className="px-5 pb-6 pt-3">
 
+          {/* Products accordion */}
+          <button
+            onClick={() => setMobileProducts((v) => !v)}
+            className="flex items-center justify-between w-full py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors"
+          >
+            Products
+            <span className={`transition-transform duration-200 ${mobileProducts ? 'rotate-180' : ''}`}><ChevronDownIcon className="w-4 h-4" /></span>
+          </button>
+          {mobileProducts && (
+            <div className="bg-bg/50 rounded-xl border border-border/50 my-1 overflow-hidden">
+              {PRODUCTS.map(({ label, href, desc, icon: Icon }) => (
+                <Link key={href} href={href} onClick={closeAll} className="flex items-center gap-3 px-4 py-3 border-b border-border/30 last:border-0 hover:bg-accent/5 transition-colors">
+                  <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center text-accent flex-shrink-0"><Icon className="w-4 h-4" /></div>
+                  <div>
+                    <span className="text-sm font-semibold text-text-primary block">{label}</span>
+                    <p className="text-xs text-muted">{desc}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
           {/* Nav links */}
           {[
-            { label: 'Transfer Files', href: '/' },
             { label: 'Pricing', href: '/pricing' },
           ].map(({ label, href }) => (
             <Link

@@ -105,9 +105,10 @@ export default function TermsPage() {
 
         <LegalSection id="retention" icon={<Icons.Clock />} title="7. File & Photo Retention">
           <p>
-            VayuTransfer files are available only during the active transfer window (default: 24 hours) and are
-            permanently deleted after expiry — we keep no backups of transferred files. VayuStudios galleries remain
-            available until the studio admin closes the project, and print-portal links expire after 7 days.
+            VayuTransfer files are available only for the retention period chosen at upload (3, 7, or 15 days,
+            extendable up to 19 days total) and are permanently deleted after that window closes — we keep no
+            backups of transferred files. VayuStudios galleries remain available until the studio admin closes the
+            project, and print-portal links expire after 7 days.
           </p>
         </LegalSection>
 

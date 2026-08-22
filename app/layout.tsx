@@ -6,6 +6,7 @@ import Providers from '@/components/Providers'
 import { ConditionalNavbar, ConditionalFooter } from '@/components/ConditionalNavbar'
 import ConditionalSidebar from '@/components/ConditionalSidebar'
 import UploadWidget from '@/components/UploadWidget'
+import ChatWidget from '@/components/ChatWidget'
 
 // Self-hosted via next/font (built at compile time, no CDN/CSP dependency).
 // Inter was previously referenced by name only in globals.css with nothing
@@ -72,6 +73,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </div>
           {!isStudioDomain && <ConditionalFooter />}
           {!isStudioDomain && <UploadWidget />}
+          {!isStudioDomain && <ChatWidget />}
         </Providers>
       </body>
     </html>

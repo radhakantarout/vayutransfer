@@ -132,7 +132,7 @@ export default function PrivacyPage() {
 
         <LegalSection id="retention" icon={<Icons.Clock />} title="9. Data Retention & Deletion">
           <ul>
-            <li>VayuTransfer files are deleted automatically when their transfer link expires (default: 24 hours)</li>
+            <li>VayuTransfer files are kept for the retention period you choose at upload (3, 7, or 15 days — extendable up to 19 days total) and are automatically and permanently deleted once that period ends, regardless of any other setting</li>
             <li>VayuStudios galleries remain accessible until the studio admin closes the project or their account</li>
             <li>If a studio account is suspended or deleted by the platform, the studio admin is notified by email; on deletion, all associated projects, photos, and face-index data are permanently removed</li>
             <li>Wallet transaction records are retained for up to 7 years for financial compliance</li>

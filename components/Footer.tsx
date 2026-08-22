@@ -16,9 +16,10 @@ export default function Footer() {
           <div>
             <h4 className="text-text-primary text-sm font-semibold mb-3">Product</h4>
             <ul className="space-y-2 text-sm text-muted">
-              <li><Link href="/" className="hover:text-text-primary transition-colors">Transfer Files</Link></li>
+              <li><Link href="/products/transfer-files" className="hover:text-text-primary transition-colors">Transfer Files</Link></li>
+              <li><Link href="/products/receive-files" className="hover:text-text-primary transition-colors">Receive Files</Link></li>
+              <li><Link href="/products/manage-transfers" className="hover:text-text-primary transition-colors">Manage Transfers</Link></li>
               <li><Link href="/pricing" className="hover:text-text-primary transition-colors">Pricing</Link></li>
-              <li><Link href="/transfers" className="hover:text-text-primary transition-colors">My Transfers</Link></li>
             </ul>
           </div>
           <div>
