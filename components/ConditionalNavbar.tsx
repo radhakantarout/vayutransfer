@@ -1,7 +1,6 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { useSession } from 'next-auth/react'
 import Navbar from './Navbar'
 import Footer from './Footer'
 
@@ -16,13 +15,11 @@ export function ConditionalNavbar() {
   return <Navbar />
 }
 
-// Footer is marketing chrome — dropped once signed in (the sidebar is the
-// permanent app shell then), kept for anonymous visitors everywhere else.
+// Footer stays visible for signed-in VayuTransfer users too — VayuStudios
+// (/studio) and the platform admin app (/admin) still never show it.
 export function ConditionalFooter() {
   const pathname = usePathname()
-  const { data: session } = useSession()
   if (pathname.startsWith('/studio')) return null
   if (pathname.startsWith('/admin')) return null
-  if (session) return null
   return <Footer />
 }
