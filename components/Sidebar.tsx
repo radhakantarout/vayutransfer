@@ -75,9 +75,13 @@ export default function Sidebar() {
           "stretch" would drag the whole rail (and the wallet button at its
           bottom) down with the page. A real `h-` (not `min-h-`) plus
           `sticky top-14` keeps it pinned to one viewport's worth of height
-          just below the always-present Navbar (h-14 = 56px), on both
-          desktop and mobile. */}
-      <aside className="flex flex-col items-center w-[76px] flex-shrink-0 self-start h-[calc(100vh-56px)] sticky top-14 border-r border-border bg-card py-4 gap-1">
+          just below the always-present Navbar (h-14 = 56px).
+          Desktop-only (`hidden md:flex`) — on mobile, Navbar.tsx's
+          hamburger drawer + profile avatar now own everything this rail
+          does (Send/Request/My Transfers/Activity/Wallet/profile), so a
+          second permanent 76px-wide column would just eat into an already
+          narrow screen. */}
+      <aside className="hidden md:flex flex-col items-center w-[76px] flex-shrink-0 self-start h-[calc(100vh-56px)] sticky top-14 border-r border-border bg-card py-4 gap-1">
         {/* Profile — replaces the old logo slot. The Navbar's own logo
             already handles home navigation, so a second one here was
             redundant. Deliberately NOT inside any overflow-scrolling
