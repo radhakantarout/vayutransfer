@@ -4,6 +4,7 @@ import { useState, useRef } from 'react'
 import UploadZone from '@/components/UploadZone'
 import { CheckCircleIcon, ClockIcon, UploadCloudIcon } from '@/components/icons'
 import { uploadFileInChunks, fetchWithTimeout } from '@/lib/clientUpload'
+import FeedbackWidget from '@/components/FeedbackWidget'
 import { MULTIPART_CHUNK_SIZE_BYTES, MAX_FILE_SIZE_GB } from '@/constants/pricing'
 import type { FileEntry } from '@/types'
 
@@ -158,6 +159,9 @@ export default function ReceiveUploadForm({ requestId }: Props) {
         </div>
         <div className="text-success font-semibold text-lg">Sent!</div>
         <div className="text-muted text-sm">Your file{entries.length > 1 ? 's have' : ' has'} been delivered.</div>
+        <div className="text-left pt-2">
+          <FeedbackWidget subjectType="receiveRequest" subjectId={requestId} role="uploader" />
+        </div>
       </div>
     )
   }

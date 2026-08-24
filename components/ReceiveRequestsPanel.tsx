@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { CopyIcon, CheckCircleIcon } from '@/components/icons'
+import FeedbackWidget from '@/components/FeedbackWidget'
 import type { ReceiveRequest } from '@/types'
 
 const POLL_MS = 4000
@@ -63,35 +64,40 @@ export default function ReceiveRequestsPanel() {
           const isExpired = r.status === 'pending' && new Date() > new Date(r.expiryTime)
           const badge = statusBadge(r.status, isExpired)
           return (
-            <div key={r.requestId} className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between gap-3 hover:border-accent/30 transition-colors">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                  <span className="text-xs text-muted">{new Date(r.createdAt).toLocaleDateString('en-IN')}</span>
+            <div key={r.requestId} className="space-y-2">
+              <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center justify-between gap-3 hover:border-accent/30 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                    <span className="text-xs text-muted">{new Date(r.createdAt).toLocaleDateString('en-IN')}</span>
+                  </div>
+                  {(r.requestTitle || r.message) && (
+                    <div className="text-sm text-text-primary truncate mt-1 font-medium">{r.requestTitle || r.message}</div>
+                  )}
                 </div>
-                {(r.requestTitle || r.message) && (
-                  <div className="text-sm text-text-primary truncate mt-1 font-medium">{r.requestTitle || r.message}</div>
-                )}
+                <div className="flex-shrink-0 flex items-center gap-2">
+                  {r.status === 'fulfilled' && r.resultFileId && (
+                    <Link
+                      href={`/download/${r.resultFileId}`}
+                      className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                    >
+                      View File
+                    </Link>
+                  )}
+                  {(r.status === 'pending' && !isExpired) && (
+                    <button
+                      onClick={() => copyLink(r.requestId)}
+                      className="flex items-center gap-1.5 text-xs border border-border px-3 py-1.5 rounded-lg text-muted hover:text-text-primary transition-colors font-medium"
+                    >
+                      {copied === r.requestId ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
+                      {copied === r.requestId ? 'Copied' : 'Copy Link'}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex-shrink-0 flex items-center gap-2">
-                {r.status === 'fulfilled' && r.resultFileId && (
-                  <Link
-                    href={`/download/${r.resultFileId}`}
-                    className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
-                  >
-                    View File
-                  </Link>
-                )}
-                {(r.status === 'pending' && !isExpired) && (
-                  <button
-                    onClick={() => copyLink(r.requestId)}
-                    className="flex items-center gap-1.5 text-xs border border-border px-3 py-1.5 rounded-lg text-muted hover:text-text-primary transition-colors font-medium"
-                  >
-                    {copied === r.requestId ? <CheckCircleIcon className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
-                    {copied === r.requestId ? 'Copied' : 'Copy Link'}
-                  </button>
-                )}
-              </div>
+              {r.status === 'fulfilled' && r.resultFileId && (
+                <FeedbackWidget subjectType="receiveRequest" subjectId={r.requestId} role="requester" />
+              )}
             </div>
           )
         })}

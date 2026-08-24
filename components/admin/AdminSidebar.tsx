@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ListIcon, UsersIcon } from '@/components/icons'
+import { ListIcon, UsersIcon, StarIcon } from '@/components/icons'
 
 // Only the nav items that are actually real/functional in this phase —
 // see the "not built in this pass" backlog in the admin plan rather than
@@ -11,6 +11,7 @@ import { ListIcon, UsersIcon } from '@/components/icons'
 const NAV_ITEMS = [
   { label: 'Overview', href: '/admin', icon: ListIcon },
   { label: 'Users', href: '/admin/users', icon: UsersIcon },
+  { label: 'Feedback', href: '/admin/feedback', icon: StarIcon },
 ]
 
 export default function AdminSidebar({ adminEmail }: { adminEmail: string }) {

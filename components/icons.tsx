@@ -330,6 +330,14 @@ export function TrashIcon(props: IconProps) {
   )
 }
 
+export function StarIcon({ filled, ...props }: IconProps & { filled?: boolean }) {
+  return (
+    <svg {...base({ ...props, fill: filled ? 'currentColor' : 'none' })}>
+      <path strokeLinejoin="round" d="M12 2.5l2.9 6.2 6.6.7-4.9 4.6 1.3 6.6L12 17.4l-5.9 3.2 1.3-6.6-4.9-4.6 6.6-.7L12 2.5z" />
+    </svg>
+  )
+}
+
 export function ChevronDownIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
