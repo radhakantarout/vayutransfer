@@ -14,6 +14,7 @@ import EmailTagInput from '@/components/EmailTagInput'
 import ShareButtons from '@/components/ShareButtons'
 import FolderTree from '@/components/FolderTree'
 import { buildFileTree } from '@/lib/fileTree'
+import FeedbackWidget from '@/components/FeedbackWidget'
 import {
   ArrowRightIcon, CheckCircleIcon, ClockIcon, RefreshIcon,
   AlertCircleIcon, DownloadIcon, MailIcon, ShareIcon, QrCodeIcon,
@@ -707,6 +708,12 @@ function CompleteStep({ upload, totalCount, onCreateAnother }: { upload: ActiveU
       <Link href={link.replace('/download/', '/transfer/')} className="block text-xs text-accent hover:underline">
         Manage this transfer →
       </Link>
+
+      {upload.transferId && (
+        <div className="text-left">
+          <FeedbackWidget subjectType="transfer" subjectId={upload.transferId} role="sender" />
+        </div>
+      )}
 
       <div className="flex gap-2 pt-2">
         <Link href="/transfers" className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:border-accent/60 transition-colors text-center">

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { FileTypeIcon, PackageIcon, ClockIcon, LockIcon, AlertCircleIcon, EyeIcon, DownloadIcon } from '@/components/icons'
 import FolderTree from '@/components/FolderTree'
 import { buildFileTree } from '@/lib/fileTree'
+import FeedbackWidget from '@/components/FeedbackWidget'
 
 // File System Access API — Chromium desktop + Android Chrome only (not in
 // TypeScript's DOM lib yet as a Window member, unlike the handle
@@ -77,6 +78,10 @@ export default function DownloadCard({ fileId }: Props) {
   const [countdown, setCountdown] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [downloading, setDownloading] = useState(false)
+  // No existing "download finished" state elsewhere in this component
+  // (a click just triggers a browser save) — this exists solely to gate
+  // the feedback prompt so it only shows after a real download happened.
+  const [hasDownloaded, setHasDownloaded] = useState(false)
   const [batchFiles, setBatchFiles] = useState<BatchFileInfo[] | null>(null)
   const [fetchedUrls, setFetchedUrls] = useState<Map<string, string> | null>(null)
   const [previewLoading, setPreviewLoading] = useState<string | null>(null)
@@ -186,7 +191,7 @@ export default function DownloadCard({ fileId }: Props) {
     setDownloading(true)
     try {
       const data = await fetchDownloadUrls()
-      if (data?.downloadUrl) window.open(data.downloadUrl, '_blank')
+      if (data?.downloadUrl) { window.open(data.downloadUrl, '_blank'); setHasDownloaded(true) }
     } catch {
       setErrorMsg('Network error — please try again')
     } finally {
@@ -206,7 +211,7 @@ export default function DownloadCard({ fileId }: Props) {
       }
       const url = urls?.get(only)
       const target = batchFiles?.find((f) => f.fileId === only)
-      if (url && target) triggerDownload(url, target.fileName)
+      if (url && target) { triggerDownload(url, target.fileName); setHasDownloaded(true) }
     } catch {
       setErrorMsg('Network error — please try again')
     } finally {
@@ -258,6 +263,7 @@ export default function DownloadCard({ fileId }: Props) {
 
       if (myGen !== jobGen.current) return
       setFolderJob({ phase: 'done' })
+      setHasDownloaded(true)
     } catch (err) {
       if (myGen !== jobGen.current) return
       // User closed the folder picker without choosing one — not an
@@ -424,6 +430,10 @@ export default function DownloadCard({ fileId }: Props) {
             <div className="font-bold text-sm text-text-primary leading-tight">{countdown}</div>
           </div>
         </div>
+
+        {hasDownloaded && (
+          <FeedbackWidget subjectType="transfer" subjectId={fileId} role="downloader" />
+        )}
 
         {errorMsg && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">

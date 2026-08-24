@@ -205,6 +205,28 @@ export interface Transaction {
   createdAt: string             // ISO string
 }
 
+// One row per post-transfer feedback submission, from any of the 4 people
+// a Send/Receive-request round trip involves. PK feedbackId, lives in its
+// own vayu-feedback table (no GSI — admin-only reads, scan+filter is fine
+// at this scale, same reasoning as vayu-users' admin list). subjectId
+// points at whichever record this feedback is actually about: a Transfer's
+// fileId for sender/downloader roles, or a ReceiveRequest's requestId for
+// requester/uploader roles (the uploader-fulfilling-a-request flow only
+// has requestId cleanly in scope, not a batch fileId, so requestId is the
+// join key for that whole pair). Submitted via a public, unauthenticated
+// API — the downloader and uploader roles never have a VayuTransfer
+// account — so walletId is only ever set for the sender/requester roles.
+export interface Feedback {
+  feedbackId: string
+  subjectType: 'transfer' | 'receiveRequest'
+  subjectId: string
+  role: 'sender' | 'downloader' | 'requester' | 'uploader'
+  rating: number           // 1-5
+  comment?: string
+  walletId?: string
+  createdAt: string        // ISO string
+}
+
 // One row per server-side "Download All" zip build for a batch Transfer
 // (>=1GB total — smaller batches zip entirely client-side and never create
 // one of these). PK jobId, lives in its own vayu-zip-jobs table. Built by
