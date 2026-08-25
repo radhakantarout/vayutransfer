@@ -15,6 +15,7 @@ import {
   ClockIcon, DownloadIcon, PlusCircleIcon, CheckCircleIcon, EditIcon, TrashIcon, SearchIcon,
 } from '@/components/icons'
 import type { Transfer } from '@/types'
+import type { ResumeInfoFile } from '@/app/api/transfers/[fileId]/resume-info/route'
 
 const EXTEND_TARGETS = [...EXPIRY_DAY_OPTIONS, MAX_EXPIRY_DAYS_FROM_UPLOAD] as const
 const PAGE_SIZE = 10
@@ -87,6 +88,12 @@ export default function TransfersPage() {
   const [extending, setExtending] = useState(false)
   const [extendError, setExtendError] = useState<string | null>(null)
 
+  // Per-file upload counts for a 'pending' transfer no browser tab is
+  // actively tracking anymore (refreshed away, different device, etc.) —
+  // fetched lazily per transfer so the "Paused" badge can show accurate
+  // X/Y-uploaded numbers instead of just a static "Uploading…" forever.
+  const [pausedInfo, setPausedInfo] = useState<Record<string, { uploaded: number; total: number } | 'loading'>>({})
+
   useEffect(() => {
     if (status === 'unauthenticated') router.replace('/login')
   }, [status, router])
@@ -102,6 +109,32 @@ export default function TransfersPage() {
       .catch(() => setError('Network error'))
       .finally(() => setLoading(false))
   }, [session])
+
+  useEffect(() => {
+    const orphaned = transfers.filter((t) =>
+      t.status === 'pending' &&
+      t.fileCount &&
+      !pausedInfo[t.fileId] &&
+      !uploads.find((u) => u.transferId === t.fileId && (u.status === 'uploading' || u.status === 'partial'))
+    )
+    if (orphaned.length === 0) return
+    setPausedInfo((prev) => {
+      const next = { ...prev }
+      for (const t of orphaned) next[t.fileId] = 'loading'
+      return next
+    })
+    orphaned.forEach((t) => {
+      fetch(`/api/transfers/${t.fileId}/resume-info`)
+        .then((r) => r.json())
+        .then((res) => {
+          if (!res.success) return
+          const files = res.data.files as ResumeInfoFile[]
+          const uploaded = files.filter((f) => f.status === 'uploaded' || f.status === 'skipped').length
+          setPausedInfo((prev) => ({ ...prev, [t.fileId]: { uploaded, total: files.length } }))
+        })
+        .catch(() => {})
+    })
+  }, [transfers, uploads, pausedInfo])
 
   // Reset to page 1 whenever the active view/filter/sort/tab changes so a
   // stale page number can't land on an empty page.
@@ -368,6 +401,19 @@ export default function TransfersPage() {
                                 className={`text-[11px] font-medium px-2 py-0.5 rounded-full hover:underline cursor-pointer ${badge.cls}`}
                               >
                                 {badge.label} ({liveUpload.percent}%)
+                              </button>
+                            ) : t.status === 'pending' ? (
+                              <button
+                                onClick={() => router.push(`/transfer/resume/${t.fileId}`)}
+                                title="This upload was interrupted — click to resume it"
+                                className="text-[11px] font-medium px-2 py-0.5 rounded-full hover:underline cursor-pointer bg-yellow-500/10 text-yellow-500"
+                              >
+                                Paused
+                                {(() => {
+                                  const info = pausedInfo[t.fileId]
+                                  return info && info !== 'loading' ? ` (${info.uploaded}/${info.total})` : ''
+                                })()}
+                                {' — click to resume'}
                               </button>
                             ) : (
                               <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>

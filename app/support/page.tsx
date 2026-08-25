@@ -17,6 +17,10 @@ const faqs = [
     a: 'If an upload fails or you cancel mid-way, your wallet is automatically refunded. The refund is instant — no waiting, no support ticket needed.',
   },
   {
+    q: 'What if my browser refreshes or crashes while I\'m uploading a big batch?',
+    a: 'Go back to My Transfers — a paused upload shows up there with a "Paused" badge and how many files already made it through. Click it to re-select the same file or folder and pick up exactly where you left off, at no extra charge. You\'re only ever billed for what actually finishes uploading: anything left incomplete is automatically refunded, either when you choose to finish without it or, if you never come back, on its own after a few hours. We also warn you before letting the tab close or refresh while something is actively uploading.',
+  },
+  {
     q: 'How long does my link stay active?',
     a: 'You choose 3, 7, or 15 days when you upload, and can extend it later up to 19 days total. After it expires, the file is automatically deleted and the link stops working.',
   },

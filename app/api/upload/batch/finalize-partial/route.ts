@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getItem } from '@/lib/aws/dynamodb'
-import { abortUpload } from '@/lib/aws/storage'
-import { getTransferFiles, transferFileKey, finalizePartialBatch } from '@/lib/transferBatch'
+import { reconcilePartialBatch } from '@/lib/transferBatch'
 import { formatPaise } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
 import type { ApiResponse, Transfer } from '@/types'
@@ -42,19 +41,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Clean up any lingering incomplete multipart upload on the storage side
-    // for each file being skipped — best-effort, doesn't block the refund.
-    const files = await getTransferFiles(transfer)
-    await Promise.all(
-      files
-        .filter((f) => skipFileIds.includes(f.fileId) && f.uploadId)
-        .map((f) =>
-          abortUpload(f.storageBackend, transferFileKey(f), f.uploadId!)
-            .catch((err) => console.error('[upload/batch/finalize-partial] failed to abort part-upload for', f.fileId, err))
-        )
-    )
-
-    const { batchComplete, refundedPaise } = await finalizePartialBatch({ batchId, walletId, skipFileIds })
+    const { batchComplete, refundedPaise } = await reconcilePartialBatch(transfer, skipFileIds)
 
     void logAudit({
       eventType: 'UPLOAD_COMPLETED',
