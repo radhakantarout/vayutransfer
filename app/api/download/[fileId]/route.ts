@@ -56,7 +56,7 @@ export async function GET(
   // no keys, no URLs) so the download page can render the list up front.
   const files = transfer.fileCount
     ? (await getTransferFiles(transfer))
-        .filter((f) => f.status !== 'failed')
+        .filter((f) => f.status !== 'failed' && f.status !== 'skipped')
         .map((f) => ({ fileId: f.fileId, fileName: f.fileName, relativePath: f.relativePath, fileSizeBytes: f.fileSizeBytes }))
     : undefined
 
@@ -178,7 +178,7 @@ export async function POST(
   const batchFiles = transfer.fileCount
     ? await Promise.all(
         (await getTransferFiles(transfer))
-          .filter((f) => f.status !== 'failed')
+          .filter((f) => f.status !== 'failed' && f.status !== 'skipped')
           .map(async (f) => ({
             fileId: f.fileId,
             fileName: f.fileName,
