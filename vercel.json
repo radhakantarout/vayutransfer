@@ -7,6 +7,10 @@
     {
       "path": "/studio/api/cron/scheduled-deletes",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-uploads",
+      "schedule": "0 5 * * *"
     }
   ]
 }

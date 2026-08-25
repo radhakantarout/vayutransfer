@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getItem, putItem, queryByPK, updateItem } from '@/lib/aws/dynamodb'
-import { initiateUpload, getBatchObjectKey, transferKey, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
+import { initiateUpload, getBatchObjectKey, transferKey, abortUpload, NEW_UPLOAD_BACKEND } from '@/lib/aws/storage'
 import { calculatePrice } from '@/lib/pricing'
 import { deductFromWallet, getWalletBalance, refundWallet } from '@/lib/wallet'
 import { sendTransferLinkEmail } from '@/lib/aws/ses'
@@ -428,4 +428,32 @@ export async function finalizePartialBatch(params: {
   const batchComplete = allTerminal && (await tryActivateBatch(transfer, walletId))
 
   return { batchComplete, refundedPaise: refundPricing.totalPaise }
+}
+
+// Shared by app/api/upload/batch/finalize-partial (user-initiated "Skip
+// failed files") and the reconciliation cron (auto-triggered once a batch
+// has sat 'pending' too long with no activity) — both cases boil down to
+// "give up on these specific files and settle the batch with whatever
+// succeeded," so both call this one implementation instead of hand-copying
+// the abort-then-finalize sequence.
+export async function reconcilePartialBatch(
+  transfer: Transfer,
+  skipFileIds: string[]
+): Promise<{ batchComplete: boolean; refundedPaise: number }> {
+  if (skipFileIds.length === 0) return { batchComplete: false, refundedPaise: 0 }
+
+  // Best-effort cleanup of any lingering incomplete multipart upload on the
+  // storage side for each file being given up on — doesn't block the refund
+  // if it fails (the bucket's own lifecycle rule reaps these eventually too).
+  const files = await getTransferFiles(transfer)
+  await Promise.all(
+    files
+      .filter((f) => skipFileIds.includes(f.fileId) && f.uploadId)
+      .map((f) =>
+        abortUpload(f.storageBackend, transferFileKey(f), f.uploadId!)
+          .catch((err) => console.error('[reconcilePartialBatch] failed to abort part-upload for', f.fileId, err))
+      )
+  )
+
+  return finalizePartialBatch({ batchId: transfer.fileId, walletId: transfer.walletId, skipFileIds })
 }

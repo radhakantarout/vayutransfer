@@ -110,6 +110,12 @@ export default function TermsPage() {
             backups of transferred files. VayuStudios galleries remain available until the studio admin closes the
             project, and print-portal links expire after 7 days.
           </p>
+          <p className="mt-3">
+            If an upload is interrupted (e.g. a browser refresh or lost connection) before it finishes, you are
+            billed only for the portion that actually completed. Anything left incomplete is refunded — either when
+            you choose to finish the transfer without it, or automatically after a grace period if the upload is
+            never resumed.
+          </p>
         </LegalSection>
 
         <LegalSection id="bookings" icon={<Icons.Mail />} title="8. Booking Enquiries (VayuStudios)">

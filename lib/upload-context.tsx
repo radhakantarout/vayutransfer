@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useRef, useCallback } from 'react'
+import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import { MULTIPART_CHUNK_SIZE_BYTES, DEFAULT_EXPIRY_DAYS } from '@/constants/pricing'
 import { uploadFileInChunks, fetchWithTimeout, type PartRecord } from '@/lib/clientUpload'
 import { saveUploadResume, loadUploadResume, clearUploadResume } from '@/lib/uploadResume'
@@ -156,6 +156,23 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const patch = useCallback((id: string, update: Partial<ActiveUpload>) => {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...update } : u))
   }, [])
+
+  // Warns before a refresh/close mid-upload — browsers force their own
+  // generic "Leave site?" dialog here (custom messages have been ignored
+  // by every major browser since ~2016, a security restriction, not a
+  // styling choice we can work around) but that's still far better than
+  // today's silent data/money loss. Only registered while something is
+  // actively uploading — 'partial'/'done'/'failed' uploads don't need it.
+  useEffect(() => {
+    const hasActiveUpload = uploads.some(u => u.status === 'uploading')
+    if (!hasActiveUpload) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [uploads])
 
   const updateBatchFileStatus = useCallback((
     id: string,

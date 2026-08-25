@@ -42,6 +42,15 @@ SENDING FILES (Transfer Files)
 
 ---
 
+INTERRUPTED OR ABANDONED UPLOADS
+
+- If your browser refreshes, crashes, or loses connection while an upload is in progress, it is not lost — go to My Transfers, where the transfer shows a "Paused" badge with how many files already finished
+- Clicking "Paused" lets you re-select the same file or folder and continue exactly where it stopped — the same files that already uploaded are not re-uploaded, and you are not charged again
+- You are only ever billed for the portion that actually finished uploading — anything left incomplete is refunded, either when you choose to "finish without it" on the resume page, or automatically after a few hours if you never come back to finish it
+- The browser will also show a warning if you try to refresh or close the tab while something is actively uploading, to help prevent this in the first place
+
+---
+
 RECEIVING FILES (Receive Files / Requests)
 
 - A signed-in user creates a "request" — sets a title, a maximum size cap (up to 400GB), an expiry, and whether anyone with the link can upload or only specific invited email addresses
@@ -78,6 +87,9 @@ A: A flat ₹4.99/GB of the exact size you send — 100MB costs ₹0.50. No free
 
 Q: What happens if my upload fails or I cancel it?
 A: Your wallet is refunded automatically and instantly — no waiting, no support ticket needed.
+
+Q: My browser refreshed/crashed while uploading a big batch — did I lose my money or my files?
+A: No. Go to My Transfers and click the "Paused" transfer to re-select the same files and continue — you're only charged for what actually finished, and anything incomplete is refunded automatically if you don't come back to finish it.
 
 Q: How long does my link stay active?
 A: You choose 3, 7, or 15 days when uploading, and can extend it later up to 19 days total from the original upload. After it expires, the file is permanently deleted.
