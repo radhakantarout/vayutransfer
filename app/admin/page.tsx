@@ -12,6 +12,7 @@ interface Stats {
   totalWalletBalancePaise: number
   totalRevenuePaise: number
   storage: { totalObjects: number; totalBytes: number; lastSyncedAt: string } | null
+  expectedActiveBytes: number
 }
 
 function formatBytes(bytes: number): string {
@@ -84,23 +85,60 @@ export default function AdminOverviewPage() {
             <StatCard label="Total Revenue" value={formatPaise(stats.totalRevenuePaise)} sub="Successful wallet top-ups" icon={<WalletIcon className="w-4 h-4" />} />
           </div>
 
-          <div className="bg-card border border-border rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <div className="text-sm font-semibold text-text-primary">R2 Bucket Status</div>
-              <div className="text-xs text-muted mt-0.5">
-                {stats.storage
-                  ? `${stats.storage.totalObjects.toLocaleString('en-IN')} objects · ${formatBytes(stats.storage.totalBytes)} · last synced ${timeAgo(stats.storage.lastSyncedAt)}`
-                  : 'Storage stats have never been synced.'}
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">R2 Bucket Status</div>
+                <div className="text-xs text-muted mt-0.5">
+                  {stats.storage
+                    ? `${stats.storage.totalObjects.toLocaleString('en-IN')} objects · ${formatBytes(stats.storage.totalBytes)} · last synced ${timeAgo(stats.storage.lastSyncedAt)}`
+                    : 'Storage stats have never been synced.'}
+                </div>
               </div>
+              <button
+                onClick={syncNow}
+                disabled={syncing}
+                className="flex items-center gap-1.5 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                <RefreshIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Syncing…' : 'Sync Now'}
+              </button>
             </div>
-            <button
-              onClick={syncNow}
-              disabled={syncing}
-              className="flex items-center gap-1.5 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-            >
-              <RefreshIcon className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing…' : 'Sync Now'}
-            </button>
+
+            {/* Real R2 bytes (bucket scan) vs. what DynamoDB says SHOULD be
+                there (active R2-backed transfers) — a gap here means real
+                orphaned storage (e.g. abandoned uploads, failed deletes)
+                that no other number on this page can surface. */}
+            {stats.storage && (() => {
+              const unaccounted = stats.storage.totalBytes - stats.expectedActiveBytes
+              const hasGap = unaccounted > 0.05 * (stats.expectedActiveBytes || 1) && unaccounted > 10 * 1024 * 1024
+              return (
+                <div className={`rounded-xl border p-3.5 ${hasGap ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-bg border-border'}`}>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <div className="text-sm font-bold text-text-primary tabular-nums">{formatBytes(stats.storage.totalBytes)}</div>
+                      <div className="text-[11px] text-muted">Actually in R2</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-text-primary tabular-nums">{formatBytes(stats.expectedActiveBytes)}</div>
+                      <div className="text-[11px] text-muted">Expected (active transfers)</div>
+                    </div>
+                    <div>
+                      <div className={`text-sm font-bold tabular-nums ${hasGap ? 'text-yellow-500' : 'text-text-primary'}`}>
+                        {unaccounted >= 0 ? formatBytes(unaccounted) : `-${formatBytes(-unaccounted)}`}
+                      </div>
+                      <div className="text-[11px] text-muted">Unaccounted</div>
+                    </div>
+                  </div>
+                  {hasGap && (
+                    <p className="text-[11px] text-yellow-500 mt-2.5 text-center">
+                      More is sitting in R2 than active transfers account for — likely abandoned/orphaned uploads.{' '}
+                      <Link href="/admin/storage-orphans" className="underline font-semibold">See who it belongs to →</Link>
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           <div className="bg-card border border-border rounded-2xl p-5">

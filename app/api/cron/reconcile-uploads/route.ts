@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { scanAll, updateItem } from '@/lib/aws/dynamodb'
 import { getTransferFiles, reconcilePartialBatch } from '@/lib/transferBatch'
+import { abortUpload, transferKey } from '@/lib/aws/storage'
 import { refundWallet } from '@/lib/wallet'
 import { logAudit } from '@/lib/audit'
 import type { ApiResponse, Transfer } from '@/types'
@@ -60,6 +61,18 @@ export async function GET(req: NextRequest) {
           batchesReconciled++
           totalRefundedPaise += refundedPaise
         } else {
+          // Abort the incomplete multipart upload on the storage side —
+          // without this, the already-uploaded parts of an abandoned
+          // upload sit in R2/S3 as real, billed storage that no dashboard
+          // stat can ever see (ListObjectsV2 doesn't surface incomplete
+          // multipart uploads) and nothing else ever cleans up. Best-effort:
+          // records created before `uploadId` was persisted here won't have
+          // one, and the storage-side cleanup shouldn't block the refund.
+          if (transfer.uploadId) {
+            await abortUpload(transfer.storageBackend, transferKey(transfer), transfer.uploadId)
+              .catch((err) => console.error('[cron/reconcile-uploads] failed to abort multipart upload for', transfer.fileId, err))
+          }
+
           await updateItem(
             TRANSFERS_TABLE,
             { fileId: transfer.fileId },

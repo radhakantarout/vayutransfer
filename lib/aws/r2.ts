@@ -171,3 +171,30 @@ export async function listR2BucketStats(): Promise<{ totalObjects: number; total
 
   return { totalObjects, totalBytes }
 }
+
+// Same full-bucket listing as listR2BucketStats, but keeps every key+size
+// instead of only the running totals — used for orphan detection (see
+// lib/r2Orphans.ts), which needs to know exactly which objects exist, not
+// just how many/how big.
+export async function listR2BucketObjects(): Promise<{ key: string; size: number }[]> {
+  const objects: { key: string; size: number }[] = []
+  let continuationToken: string | undefined
+  let pages = 0
+
+  do {
+    const res = await r2Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      })
+    )
+    for (const obj of res.Contents ?? []) {
+      if (obj.Key) objects.push({ key: obj.Key, size: obj.Size ?? 0 })
+    }
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined
+    pages += 1
+  } while (continuationToken && pages < MAX_LIST_PAGES)
+
+  return objects
+}
