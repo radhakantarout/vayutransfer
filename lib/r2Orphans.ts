@@ -38,6 +38,12 @@ export interface R2Reconciliation {
   totalObjects: number
   totalBytes: number
   groups: OrphanUserGroup[]
+  // Every real R2 byte attributed to whichever wallet owns it, regardless
+  // of orphan status — lets /admin/users show genuine R2 usage per user
+  // (not just the DynamoDB-derived "active transfers" estimate) without a
+  // second bucket scan. Bytes that can't be traced to any wallet at all
+  // are omitted here (they only show up in the orphan groups' "null" bucket).
+  realUsageByWallet: Record<string, number>
 }
 
 // One full bucket listing produces both the aggregate totals (what used to
@@ -72,9 +78,15 @@ export async function classifyR2Orphans(): Promise<R2Reconciliation> {
     else groups.set(walletId, [obj])
   }
 
+  const realUsageByWallet: Record<string, number> = {}
+  const addRealUsage = (walletId: string, size: number) => {
+    realUsageByWallet[walletId] = (realUsageByWallet[walletId] ?? 0) + size
+  }
+
   for (const { key, size } of objects) {
     const singleFileMatch = transfersByKey.get(key)
     if (singleFileMatch) {
+      addRealUsage(singleFileMatch.walletId, size)
       if (singleFileMatch.status === 'failed' || singleFileMatch.status === 'deleted') {
         addOrphan(singleFileMatch.walletId, { key, size, fileName: singleFileMatch.fileName, formerStatus: singleFileMatch.status })
       }
@@ -85,6 +97,7 @@ export async function classifyR2Orphans(): Promise<R2Reconciliation> {
     if (batchFileMatch) {
       const parent = transfersById.get(batchFileMatch.batchId)
       if (!parent) continue // can't prove it's safe — leave it alone
+      addRealUsage(parent.walletId, size)
       if (parent.status === 'failed' || parent.status === 'deleted') {
         addOrphan(parent.walletId, { key, size, fileName: batchFileMatch.fileName, formerStatus: parent.status })
       } else if (batchFileMatch.status === 'failed') {
@@ -93,7 +106,8 @@ export async function classifyR2Orphans(): Promise<R2Reconciliation> {
       continue
     }
 
-    // No matching record at all — fully untraceable.
+    // No matching record at all — fully untraceable, not attributable to
+    // any wallet for the realUsageByWallet map either.
     addOrphan(null, { key, size, fileName: key.split('/').pop() || key, formerStatus: 'untraceable' })
   }
 
@@ -114,5 +128,6 @@ export async function classifyR2Orphans(): Promise<R2Reconciliation> {
     totalObjects: objects.length,
     totalBytes: objects.reduce((s, o) => s + o.size, 0),
     groups: result,
+    realUsageByWallet,
   }
 }

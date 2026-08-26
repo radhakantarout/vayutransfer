@@ -41,15 +41,37 @@ export default function AdminStorageOrphansPage() {
 
   const groupKey = (g: OrphanUserGroup) => g.walletId ?? '__unknown__'
 
+  // The server only processes a bounded batch per call (Vercel's ~10s
+  // serverless limit made a single request handling hundreds of deletes
+  // unreliable in production — it got killed mid-flight with nothing
+  // persisted). Keep calling with the same target until `remaining` is 0,
+  // showing running progress instead of one long silent wait.
   const doDelete = async (body: { target: 'user'; walletId: string } | { target: 'unknown' } | { target: 'all' }) => {
     setBusy(true)
+    let totalDeleted = 0
+    let totalSkipped = 0
+    let totalBytesFreed = 0
     try {
-      const res = await fetch('/api/admin/storage-orphans/delete', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      }).then((r) => r.json())
-      setActionMsg(res.success
-        ? `Deleted ${res.data.deleted} file${res.data.deleted !== 1 ? 's' : ''} (${formatBytes(res.data.bytesFreed)}), skipped ${res.data.skipped}.`
-        : res.message ?? 'Failed')
+      while (true) {
+        const res = await fetch('/api/admin/storage-orphans/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        }).then((r) => r.json())
+
+        if (!res.success) {
+          setActionMsg(res.message ?? 'Failed')
+          break
+        }
+
+        totalDeleted += res.data.deleted
+        totalSkipped += res.data.skipped
+        totalBytesFreed += res.data.bytesFreed
+        setActionMsg(`Deleting… ${totalDeleted} file${totalDeleted !== 1 ? 's' : ''} removed so far (${formatBytes(totalBytesFreed)})${res.data.remaining > 0 ? `, ${res.data.remaining} left` : ''}`)
+
+        if (res.data.remaining === 0) {
+          setActionMsg(`Deleted ${totalDeleted} file${totalDeleted !== 1 ? 's' : ''} (${formatBytes(totalBytesFreed)}), skipped ${totalSkipped}.`)
+          break
+        }
+      }
       load()
     } finally {
       setBusy(false)
