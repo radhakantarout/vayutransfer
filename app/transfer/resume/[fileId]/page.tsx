@@ -5,20 +5,23 @@ import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
-import { useUpload } from '@/lib/upload-context'
+import { useUpload, type BatchFileProgress } from '@/lib/upload-context'
 import { fetchWithTimeout, uploadFileInChunks } from '@/lib/clientUpload'
 import { calculatePrice } from '@/lib/pricing'
 import { MULTIPART_CHUNK_SIZE_BYTES, DEFAULT_EXPIRY_DAYS } from '@/constants/pricing'
-import { FileTypeIcon, PackageIcon, CheckCircleIcon, AlertCircleIcon, UploadCloudIcon } from '@/components/icons'
+import { PackageIcon, CheckCircleIcon, AlertCircleIcon, UploadCloudIcon } from '@/components/icons'
+import UploadProgressPanel from '@/components/UploadProgressPanel'
 import type { ResumeInfoFile } from '@/app/api/transfers/[fileId]/resume-info/route'
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+function toBatchFileProgress(f: ResumeInfoFile): BatchFileProgress {
+  return {
+    fileId: f.fileId,
+    path: f.relativePath || f.fileName,
+    sizeBytes: f.fileSizeBytes,
+    status: f.status === 'uploaded' ? 'done' : f.status,
+    retryCount: 0,
+  }
 }
-
-type RowState = 'missing' | 'matched' | 'uploading' | 'done' | 'error'
 
 export default function ResumeTransferPage({ params }: { params: { fileId: string } }) {
   const { fileId } = params
@@ -32,12 +35,24 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
   const [transferStatus, setTransferStatus] = useState<string | null>(null)
   const [fileCount, setFileCount] = useState<number | undefined>(undefined)
   const [files, setFiles] = useState<ResumeInfoFile[]>([])
-  const [rowState, setRowState] = useState<Record<string, RowState>>({})
+  const [batchFiles, setBatchFiles] = useState<BatchFileProgress[]>([])
   const [matchedFiles, setMatchedFiles] = useState<Map<string, File>>(new Map())
   const [uploading, setUploading] = useState(false)
   const [skipping, setSkipping] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [singleFileResuming, setSingleFileResuming] = useState(false)
+
+  // Same "elapsed-so-far average speed" bookkeeping runBatchUpload/runUpload
+  // use in lib/upload-context.tsx — kept local since this resume flow is
+  // deliberately self-contained (see note below), not routed through that
+  // shared context. Scoped to just the matched files being uploaded this
+  // session (not the whole batch's lifetime), same as a fresh upload's own
+  // stats only ever cover that one upload attempt.
+  const [uploadedBytesThisSession, setUploadedBytesThisSession] = useState(0)
+  const [speedBytesPerSec, setSpeedBytesPerSec] = useState(0)
+  const [secondsRemaining, setSecondsRemaining] = useState(Infinity)
+  const startTimeRef = useRef(0)
+  const sessionBytesRef = useRef(0)
   const abortedRef = useRef(false)
 
   useEffect(() => {
@@ -54,14 +69,7 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
         setTransferStatus(res.data.status)
         setFileCount(res.data.fileCount)
         setFiles(res.data.files)
-        setRowState((prev) => {
-          const next = { ...prev }
-          for (const f of res.data.files as ResumeInfoFile[]) {
-            if (f.status !== 'pending') next[f.fileId] = 'done'
-            else if (!next[f.fileId] || next[f.fileId] === 'done') next[f.fileId] = 'missing'
-          }
-          return next
-        })
+        setBatchFiles((res.data.files as ResumeInfoFile[]).map(toBatchFileProgress))
       })
       .catch(() => setLoadError('Network error'))
       .finally(() => setLoading(false))
@@ -72,6 +80,13 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
   const isBatch = !!fileCount
   const missing = files.filter((f) => f.status === 'pending')
   const uploadedCount = files.filter((f) => f.status !== 'pending').length
+  const totalBytes = files.reduce((s, f) => s + f.fileSizeBytes, 0)
+  const uploadedBytes = batchFiles.reduce((s, f) => s + (f.status === 'done' || f.status === 'skipped' ? f.sizeBytes : 0), 0) + uploadedBytesThisSession
+  const percent = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0
+
+  const patchBatchFile = (targetFileId: string, update: Partial<BatchFileProgress>) => {
+    setBatchFiles((prev) => prev.map((f) => (f.fileId === targetFileId ? { ...f, ...update } : f)))
+  }
 
   // ── Batch resume ──────────────────────────────────────────────────────
   // Deliberately self-contained here rather than routed through the global
@@ -79,20 +94,17 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
   // exact missing files from the server (resume-info), so there's no need
   // to touch runBatchUpload's localStorage-matching machinery, which is
   // built around "maybe this file matches some past attempt," not "resume
-  // this specific known batch."
-  const onFolderSelected = (fileList: FileList) => {
+  // this specific known batch." The progress UI itself is still the exact
+  // same UploadProgressPanel the normal Send flow uses, per explicit
+  // instruction not to make resuming look like a different feature.
+  const onFilesSelected = (fileList: FileList) => {
     const next = new Map(matchedFiles)
-    const nextRowState = { ...rowState }
     Array.from(fileList).forEach((file) => {
       const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
       const hit = missing.find((f) => (f.relativePath || f.fileName) === path && f.fileSizeBytes === file.size)
-      if (hit) {
-        next.set(hit.fileId, file)
-        nextRowState[hit.fileId] = 'matched'
-      }
+      if (hit) next.set(hit.fileId, file)
     })
     setMatchedFiles(next)
-    setRowState(nextRowState)
   }
 
   const resumeMatchedFiles = async () => {
@@ -100,11 +112,22 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
     setUploading(true)
     setActionError(null)
     abortedRef.current = false
+    startTimeRef.current = Date.now()
+    sessionBytesRef.current = 0
+    setUploadedBytesThisSession(0)
+    setSpeedBytesPerSec(0)
+    setSecondsRemaining(Infinity)
+
+    // ETA/speed are scoped to just the matched files being uploaded this
+    // session (not the whole batch) — same as a fresh upload's stats only
+    // ever cover that one attempt, not the transfer's lifetime.
+    const matchedBytesTotal = Array.from(matchedFiles.values()).reduce((s, f) => s + f.size, 0)
 
     for (const [targetFileId, file] of Array.from(matchedFiles.entries())) {
       const target = files.find((f) => f.fileId === targetFileId)
       if (!target?.uploadId) continue
-      setRowState((prev) => ({ ...prev, [targetFileId]: 'uploading' }))
+      patchBatchFile(targetFileId, { status: 'uploading' })
+      let bytesForThisFile = 0
       try {
         const totalChunks = Math.ceil(file.size / MULTIPART_CHUNK_SIZE_BYTES)
         const statusRes = await fetchWithTimeout(
@@ -114,7 +137,16 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
 
         const parts = await uploadFileInChunks(
           file, MULTIPART_CHUNK_SIZE_BYTES, statusRes.data.presignedUrls, statusRes.data.completedParts,
-          () => abortedRef.current
+          () => abortedRef.current,
+          (uploadedForFile) => {
+            sessionBytesRef.current += uploadedForFile - bytesForThisFile
+            bytesForThisFile = uploadedForFile
+            setUploadedBytesThisSession(sessionBytesRef.current)
+            const elapsed = (Date.now() - startTimeRef.current) / 1000
+            const speed = elapsed > 0.5 ? sessionBytesRef.current / elapsed : 0
+            setSpeedBytesPerSec(speed)
+            setSecondsRemaining(speed > 0 ? (matchedBytesTotal - sessionBytesRef.current) / speed : Infinity)
+          }
         )
 
         const completeRes = await fetchWithTimeout('/api/upload/batch/complete', {
@@ -124,9 +156,9 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
         }).then((r) => r.json())
         if (!completeRes.success) throw new Error(completeRes.message ?? 'Failed to finish this file')
 
-        setRowState((prev) => ({ ...prev, [targetFileId]: 'done' }))
+        patchBatchFile(targetFileId, { status: 'done' })
       } catch (err) {
-        setRowState((prev) => ({ ...prev, [targetFileId]: 'error' }))
+        patchBatchFile(targetFileId, { status: 'failed' })
         setActionError(err instanceof Error ? err.message : 'Some files failed to resume')
       }
     }
@@ -205,13 +237,32 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
     )
   }
 
+  // While actively uploading matched files, show the exact same progress
+  // UI as a fresh Send — no bespoke "resume" look, per explicit instruction.
+  if (isBatch && uploading) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-10">
+        <div className="bg-card border border-border rounded-2xl p-6">
+          <UploadProgressPanel
+            percent={percent}
+            uploadedBytes={uploadedBytes}
+            totalBytes={totalBytes}
+            speedBytesPerSec={speedBytesPerSec}
+            secondsRemaining={secondsRemaining}
+            batchFiles={batchFiles}
+          />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-text-primary">Resume this transfer</h1>
         <p className="text-sm text-muted mt-1">
           {isBatch
-            ? `${uploadedCount} of ${files.length} files uploaded. Re-select the same folder to continue with what's missing.`
+            ? `${uploadedCount} of ${files.length} files uploaded. Re-select the same files or folder to continue with what's missing.`
             : "This upload was interrupted. Re-select the same file to continue exactly where it left off — you won't be charged again."}
         </p>
       </div>
@@ -232,51 +283,52 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
 
       {isBatch && (
         <>
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="max-h-72 overflow-y-auto divide-y divide-border">
-              {files.map((f) => {
-                const state = rowState[f.fileId] ?? (f.status === 'pending' ? 'missing' : 'done')
-                return (
-                  <div key={f.fileId} className="flex items-center gap-3 px-4 py-2.5">
-                    <span className="w-8 h-8 rounded-lg bg-bg flex items-center justify-center flex-shrink-0">
-                      <FileTypeIcon fileName={f.fileName} className="w-4 h-4" />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-text-primary truncate">{f.relativePath || f.fileName}</div>
-                      <div className="text-xs text-muted">{formatBytes(f.fileSizeBytes)}</div>
-                    </div>
-                    {state === 'done' && <CheckCircleIcon className="w-4 h-4 text-success flex-shrink-0" />}
-                    {state === 'missing' && <span className="text-[11px] text-yellow-500 flex-shrink-0">Missing</span>}
-                    {state === 'matched' && <span className="text-[11px] text-accent flex-shrink-0">Ready</span>}
-                    {state === 'uploading' && <span className="w-3.5 h-3.5 border-2 border-accent/40 border-t-accent rounded-full animate-spin flex-shrink-0" />}
-                    {state === 'error' && <AlertCircleIcon className="w-4 h-4 text-danger flex-shrink-0" />}
-                  </div>
-                )
-              })}
-            </div>
+          <div className="bg-card border border-border rounded-2xl p-6">
+            <UploadProgressPanel
+              title="Batch status"
+              percent={percent}
+              uploadedBytes={uploadedBytes}
+              totalBytes={totalBytes}
+              speedBytesPerSec={0}
+              secondsRemaining={Infinity}
+              batchFiles={batchFiles}
+            />
           </div>
 
           {missing.length > 0 && (
             <div className="bg-card border border-border rounded-2xl p-6 text-center space-y-3">
               <PackageIcon className="w-8 h-8 text-accent mx-auto" />
-              <label className="inline-block border border-border text-text-primary font-semibold px-6 py-3 rounded-xl hover:border-accent/60 transition-colors cursor-pointer">
-                Choose the same folder
-                <input
-                  type="file"
-                  // @ts-expect-error -- non-standard but universally supported directory-select attribute
-                  webkitdirectory=""
-                  multiple
-                  className="hidden"
-                  onChange={(e) => { if (e.target.files) onFolderSelected(e.target.files) }}
-                />
-              </label>
+              <div className="flex items-center justify-center gap-3 flex-wrap">
+                <label className="inline-block border border-border text-text-primary font-semibold px-6 py-3 rounded-xl hover:border-accent/60 transition-colors cursor-pointer">
+                  Choose files
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => { if (e.target.files) onFilesSelected(e.target.files) }}
+                  />
+                </label>
+                <label className="inline-block border border-border text-text-primary font-semibold px-6 py-3 rounded-xl hover:border-accent/60 transition-colors cursor-pointer">
+                  Choose the same folder
+                  <input
+                    type="file"
+                    // @ts-expect-error -- non-standard but universally supported directory-select attribute
+                    webkitdirectory=""
+                    multiple
+                    className="hidden"
+                    onChange={(e) => { if (e.target.files) onFilesSelected(e.target.files) }}
+                  />
+                </label>
+              </div>
+              <p className="text-xs text-muted">
+                Use "Choose files" if you selected individual files last time, or "Choose the same folder" if you selected a whole folder.
+              </p>
               {matchedFiles.size > 0 && (
                 <button
                   onClick={resumeMatchedFiles}
-                  disabled={uploading}
-                  className="block mx-auto bg-accent text-bg font-bold px-6 py-3 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="block mx-auto bg-accent text-bg font-bold px-6 py-3 rounded-xl hover:bg-accent/90 transition-colors"
                 >
-                  {uploading ? 'Uploading…' : `Upload ${matchedFiles.size} matched file${matchedFiles.size > 1 ? 's' : ''}`}
+                  Upload {matchedFiles.size} matched file{matchedFiles.size > 1 ? 's' : ''}
                 </button>
               )}
             </div>
@@ -289,7 +341,7 @@ export default function ResumeTransferPage({ params }: { params: { fileId: strin
           {missing.length > 0 && (
             <button
               onClick={skipRemaining}
-              disabled={skipping || uploading}
+              disabled={skipping}
               className="w-full text-center text-sm text-muted hover:text-danger transition-colors py-2 disabled:opacity-50"
             >
               {skipping ? 'Finishing…' : `Give up on the ${missing.length} missing file${missing.length > 1 ? 's' : ''} & finish now (refunds their share)`}
