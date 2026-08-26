@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyAdminJWT } from '@/lib/adminAuth'
 import { scanCount, scanAll } from '@/lib/aws/dynamodb'
 import { getCachedR2Stats } from '@/lib/platformStats'
-import type { ApiResponse, Transaction, Wallet } from '@/types'
+import type { ApiResponse, Transaction, Wallet, Transfer } from '@/types'
 
 const USERS_TABLE = process.env.DYNAMO_USERS_TABLE ?? 'vayu-users'
 const TRANSFERS_TABLE = process.env.DYNAMO_TRANSFERS_TABLE ?? 'vayu-transfers'
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [totalUsers, totalTransferred, totalReceived, wallets, topups, r2Stats] = await Promise.all([
+    const [totalUsers, totalTransferred, totalReceived, wallets, topups, r2Stats, activeR2Transfers] = await Promise.all([
       scanCount(USERS_TABLE),
       scanCount(TRANSFERS_TABLE),
       scanCount(DOWNLOADS_TABLE, 'outcome = :s', { ':s': 'success' }),
@@ -33,10 +33,21 @@ export async function GET(req: NextRequest) {
         { '#t': 'type', '#s': 'status' }
       ),
       getCachedR2Stats(),
+      // Live "expected" total — what R2 SHOULD contain if every active
+      // R2-backed transfer's real object exists and nothing orphaned is
+      // sitting there. Shown next to the cached bucket-scan total so a gap
+      // between the two is immediately visible instead of silently trusted.
+      scanAll<Transfer>(
+        TRANSFERS_TABLE,
+        '#s = :active AND storageBackend = :r2',
+        { ':active': 'active', ':r2': 'R2' },
+        { '#s': 'status' }
+      ),
     ])
 
     const totalWalletBalancePaise = wallets.reduce((sum, w) => sum + (w.balance ?? 0), 0)
     const totalRevenuePaise = topups.reduce((sum, t) => sum + (t.amount ?? 0), 0)
+    const expectedActiveBytes = activeR2Transfers.reduce((sum, t) => sum + (t.fileSizeBytes ?? 0), 0)
 
     return NextResponse.json<ApiResponse<{
       totalUsers: number
@@ -45,6 +56,7 @@ export async function GET(req: NextRequest) {
       totalWalletBalancePaise: number
       totalRevenuePaise: number
       storage: { totalObjects: number; totalBytes: number; lastSyncedAt: string } | null
+      expectedActiveBytes: number
     }>>({
       success: true,
       data: {
@@ -54,6 +66,7 @@ export async function GET(req: NextRequest) {
         totalWalletBalancePaise,
         totalRevenuePaise,
         storage: r2Stats ? { totalObjects: r2Stats.totalObjects, totalBytes: r2Stats.totalBytes, lastSyncedAt: r2Stats.lastSyncedAt } : null,
+        expectedActiveBytes,
       },
     })
   } catch (err) {

@@ -109,6 +109,12 @@ export interface Transfer {
   storageBackend: 'S3' | 'R2'
   s3Key?: string
   r2Key?: string
+  // Single-file transfers only (batches track this per-file on TransferFile
+  // instead) — the multipart uploadId from initiate, persisted so the
+  // reconcile-uploads cron can actually abort an abandoned upload's
+  // incomplete parts on the storage side, not just refund+mark failed.
+  // Absent on records created before this field existed.
+  uploadId?: string
   // Present only on batch transfers — see the type-level comment above.
   fileCount?: number
   // Additive marker, informational only — never read/branched-on by any

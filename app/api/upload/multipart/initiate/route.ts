@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
       status: 'pending',
       storageBackend: NEW_UPLOAD_BACKEND,
       ...(NEW_UPLOAD_BACKEND === 'R2' ? { r2Key: objectKey } : { s3Key: objectKey }),
+      uploadId,
       expiryDays,
       expiryTime: new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
