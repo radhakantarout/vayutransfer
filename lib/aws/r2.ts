@@ -1,4 +1,4 @@
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, DeleteObjectCommand, ListPartsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, DeleteObjectCommand, ListPartsCommand, ListObjectsV2Command, ListMultipartUploadsCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import type { CompletedPart } from './s3'
@@ -170,6 +170,60 @@ export async function listR2BucketStats(): Promise<{ totalObjects: number; total
   } while (continuationToken && pages < MAX_LIST_PAGES)
 
   return { totalObjects, totalBytes }
+}
+
+// Incomplete multipart uploads are invisible to ListObjectsV2 (and so to
+// listR2BucketStats/listR2BucketObjects, and everything built on them —
+// the platform dashboard's "Actually in R2" stat, lib/r2Orphans.ts) even
+// though the parts already uploaded ARE real, billed bytes that Cloudflare's
+// own bucket-size UI counts. This is a separate listing API entirely — see
+// lib/r2IncompleteUploads.ts for the classification/cleanup built on it.
+export async function listR2IncompleteMultipartUploads(): Promise<{ key: string; uploadId: string; initiated: string }[]> {
+  const uploads: { key: string; uploadId: string; initiated: string }[] = []
+  let keyMarker: string | undefined
+  let uploadIdMarker: string | undefined
+  let pages = 0
+
+  do {
+    const res = await r2Client.send(
+      new ListMultipartUploadsCommand({
+        Bucket: BUCKET,
+        KeyMarker: keyMarker,
+        UploadIdMarker: uploadIdMarker,
+        MaxUploads: 1000,
+      })
+    )
+    for (const u of res.Uploads ?? []) {
+      if (u.Key && u.UploadId && u.Initiated) {
+        uploads.push({ key: u.Key, uploadId: u.UploadId, initiated: u.Initiated.toISOString() })
+      }
+    }
+    keyMarker = res.IsTruncated ? res.NextKeyMarker : undefined
+    uploadIdMarker = res.IsTruncated ? res.NextUploadIdMarker : undefined
+    pages += 1
+  } while (keyMarker && pages < MAX_LIST_PAGES)
+
+  return uploads
+}
+
+// Sums the bytes already uploaded for one incomplete multipart upload —
+// only called lazily/on-demand (batched, see the sizes route), never as
+// part of the main listing above, since doing this for every incomplete
+// upload up front (potentially hundreds) would be one ListParts call each.
+export async function sumR2IncompletePartBytes(key: string, uploadId: string): Promise<number> {
+  let total = 0
+  let partNumberMarker: string | undefined
+  do {
+    const res = await r2Client.send(new ListPartsCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      PartNumberMarker: partNumberMarker,
+    }))
+    for (const p of res.Parts ?? []) total += p.Size ?? 0
+    partNumberMarker = res.IsTruncated ? res.NextPartNumberMarker : undefined
+  } while (partNumberMarker)
+  return total
 }
 
 // Same full-bucket listing as listR2BucketStats, but keeps every key+size
