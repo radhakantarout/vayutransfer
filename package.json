@@ -10,7 +10,8 @@
     "backfill:billable-storage": "node --env-file=.env.local scripts/backfill-billable-storage.mjs",
     "backfill:storage-backend": "node --env-file=.env.local scripts/backfill-storage-backend.mjs",
     "backfill:transfer-storage-backend": "node --env-file=.env.local scripts/backfill-transfer-storage-backend.mjs",
-    "migrate:s3-to-r2": "node --env-file=.env.local scripts/migrate-s3-to-r2.mjs"
+    "migrate:s3-to-r2": "node --env-file=.env.local scripts/migrate-s3-to-r2.mjs",
+    "list:incomplete-multipart-uploads": "node --env-file=.env.local scripts/list-incomplete-multipart-uploads.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
