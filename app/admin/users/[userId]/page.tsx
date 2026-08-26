@@ -118,13 +118,21 @@ export default function AdminUserDetailPage() {
             <div className="text-xs text-yellow-500 mt-1">{user.warningCount}/3 warnings issued</div>
           )}
         </div>
-        {wallet && (
-          <div className="text-right">
-            <div className="text-xs text-muted">Wallet Balance</div>
-            <div className="text-xl font-bold text-text-primary">{formatPaise(wallet.balance)}</div>
-            <div className="text-[11px] text-muted mt-0.5">Lifetime loaded {formatPaise(wallet.totalLoaded)} · spent {formatPaise(wallet.totalSpent)}</div>
-          </div>
-        )}
+        <div className="text-right space-y-2">
+          {wallet && (
+            <div>
+              <div className="text-xs text-muted">Wallet Balance</div>
+              <div className="text-xl font-bold text-text-primary">{formatPaise(wallet.balance)}</div>
+              <div className="text-[11px] text-muted mt-0.5">Lifetime loaded {formatPaise(wallet.totalLoaded)} · spent {formatPaise(wallet.totalSpent)}</div>
+            </div>
+          )}
+          <Link
+            href={`/admin/users/${userId}/storage`}
+            className="inline-block text-xs font-semibold text-accent border border-accent/30 bg-accent/10 px-3 py-1.5 rounded-lg hover:bg-accent/20 transition-colors"
+          >
+            Manage Storage
+          </Link>
+        </div>
       </div>
 
       {/* Moderation actions */}

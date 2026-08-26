@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAdminJWT } from '@/lib/adminAuth'
-import { getItem, updateItem } from '@/lib/aws/dynamodb'
-import { deleteStorageObject, deleteStorageObjectByKey } from '@/lib/aws/storage'
-import { getTransferFiles, transferFileKey } from '@/lib/transferBatch'
+import { getItem } from '@/lib/aws/dynamodb'
+import { deleteTransferAndStorage } from '@/lib/adminDelete'
+import { getUserById } from '@/lib/users'
 import { logAudit } from '@/lib/audit'
 import type { ApiResponse, Transfer } from '@/types'
 
@@ -22,37 +22,24 @@ export async function POST(
   }
 
   try {
-    const { fileId } = params
+    const { userId, fileId } = params
     const transfer = await getItem<Transfer>(TRANSFERS_TABLE, { fileId })
     if (!transfer) {
       return NextResponse.json<ApiResponse<never>>({ success: false, error: 'NOT_FOUND', message: 'Transfer not found' }, { status: 404 })
+    }
+    // The URL's userId is more than cosmetic — verify this transfer
+    // actually belongs to the user this admin session is looking at, so a
+    // crafted/mismatched URL can't be used to delete an unrelated user's
+    // transfer via a page that only ever shows same-user pairs.
+    const targetUser = await getUserById(userId)
+    if (!targetUser || transfer.walletId !== targetUser.walletId) {
+      return NextResponse.json<ApiResponse<never>>({ success: false, error: 'NOT_FOUND', message: 'Transfer does not belong to this user' }, { status: 404 })
     }
     if (transfer.status === 'deleted') {
       return NextResponse.json<ApiResponse<never>>({ success: false, error: 'ALREADY_DELETED', message: 'This transfer was already deleted' }, { status: 409 })
     }
 
-    if (transfer.fileCount) {
-      const files = await getTransferFiles(transfer)
-      await Promise.all(
-        files
-          .filter((f) => f.status === 'uploaded')
-          .map((f) =>
-            deleteStorageObjectByKey(f.storageBackend, transferFileKey(f))
-              .catch((err) => console.error('[admin/transfers/delete] failed to delete object for', f.fileId, err))
-          )
-      )
-    } else if (transfer.status === 'active') {
-      await deleteStorageObject(transfer).catch((err) => console.error('[admin/transfers/delete] failed to delete object for', fileId, err))
-    }
-
-    await updateItem(
-      TRANSFERS_TABLE,
-      { fileId },
-      'SET #s = :deleted',
-      { ':deleted': 'deleted' },
-      undefined,
-      { '#s': 'status' }
-    )
+    await deleteTransferAndStorage(transfer)
 
     void logAudit({
       eventType: 'TRANSFER_DELETED',
