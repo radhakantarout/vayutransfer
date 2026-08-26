@@ -33,14 +33,24 @@ export async function GET(req: NextRequest) {
         { '#t': 'type', '#s': 'status' }
       ),
       getCachedR2Stats(),
-      // Live "expected" total — what R2 SHOULD contain if every active
+      // Live "expected" total — what R2 SHOULD contain if every still-live
       // R2-backed transfer's real object exists and nothing orphaned is
       // sitting there. Shown next to the cached bucket-scan total so a gap
       // between the two is immediately visible instead of silently trusted.
+      //
+      // Filters to expiryTime > now, not just status === 'active' — a
+      // Transfer's status is set to 'active' once and never updated again
+      // (there's no code path anywhere that ever writes 'expired'; real
+      // access control checks expiryTime directly at download time, see
+      // app/api/download/[fileId]/route.ts). Without this filter, every
+      // transfer past its retention window — whose real R2 object was
+      // already correctly removed by the bucket's own 20-day lifecycle
+      // rule — still counted as "expected," making this number too high
+      // and producing an impossible negative "Unaccounted" gap.
       scanAll<Transfer>(
         TRANSFERS_TABLE,
-        '#s = :active AND storageBackend = :r2',
-        { ':active': 'active', ':r2': 'R2' },
+        '#s = :active AND storageBackend = :r2 AND expiryTime > :now',
+        { ':active': 'active', ':r2': 'R2', ':now': new Date().toISOString() },
         { '#s': 'status' }
       ),
     ])
