@@ -21,6 +21,13 @@ function r2Client() {
 const PREVIEW_BASE = process.env.NEXT_PUBLIC_STUDIO_PREVIEW_URL ?? 'https://previews.vayustudios.com'
 const BUCKET       = process.env.STUDIO_R2_BUCKET ?? 'vayustudio-previews'
 
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime']
+const MAX_IMAGE_BYTES         = 10  * 1024 * 1024
+const MAX_GALLERY_VIDEO_BYTES = 150 * 1024 * 1024
+// Smaller cap for hero backgrounds — these autoplay immediately on page load,
+// so a large file directly hurts first-paint time.
+const MAX_HERO_VIDEO_BYTES    = 60  * 1024 * 1024
+
 // Returns a presigned PUT URL so the browser uploads the file directly to R2 —
 // proxying the file bytes through this route hit serverless request-body limits
 // well before the client's own 10MB cap, which silently broke uploads.
@@ -43,11 +50,24 @@ export async function POST(req: NextRequest) {
   if (!body?.filename || !body?.contentType) {
     return NextResponse.json({ error: 'filename and contentType are required' }, { status: 400 })
   }
-  if (!body.contentType.startsWith('image/')) {
-    return NextResponse.json({ error: 'Image file required' }, { status: 400 })
+  const isImage = body.contentType.startsWith('image/')
+  const isVideo = ALLOWED_VIDEO_TYPES.includes(body.contentType)
+  if (!isImage && !isVideo) {
+    return NextResponse.json({ error: 'Image or video file required (jpg, png, gif, mp4, webm, mov)' }, { status: 400 })
   }
   if (!body.sizeBytes || body.sizeBytes <= 0) {
     return NextResponse.json({ error: 'sizeBytes is required' }, { status: 400 })
+  }
+  // Defense in depth — WebsiteManager.tsx already enforces these client-side,
+  // but nothing previously capped size server-side at all.
+  if (isImage && body.sizeBytes > MAX_IMAGE_BYTES) {
+    return NextResponse.json({ error: 'Image exceeds the 10MB limit' }, { status: 400 })
+  }
+  if (isVideo) {
+    const cap = body.kind === 'hero' ? MAX_HERO_VIDEO_BYTES : MAX_GALLERY_VIDEO_BYTES
+    if (body.sizeBytes > cap) {
+      return NextResponse.json({ error: `Video exceeds the ${Math.round(cap / (1024 * 1024))}MB limit` }, { status: 400 })
+    }
   }
 
   let studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })

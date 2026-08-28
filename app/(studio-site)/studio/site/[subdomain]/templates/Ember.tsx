@@ -3,11 +3,15 @@ import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
+import HeroBackground from './HeroMedia'
+import Reveal from './Reveal'
 
 export default function Ember({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#C4622D'
   const fontColor = site.fontColor   ?? '#2C1810'
-  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroImg    = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroType   = site.heroImageUrl ? site.heroMediaType : site.galleryPhotos[0]?.type
+  const heroPoster = site.heroImageUrl ? site.heroPosterUrl : site.galleryPhotos[0]?.thumbnailUrl
 
   return (
     <div className="min-h-screen" style={{ background: '#FAF6F1', color: fontColor, fontFamily: '"Palatino Linotype", Palatino, serif' }}>
@@ -30,7 +34,8 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       <section className="relative overflow-hidden" style={{ minHeight: '80vh' }}>
         {heroImg ? (
           <>
-            <img src={heroImg} alt="" className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: 0.85 }} />
+            <HeroBackground url={heroImg} type={heroType} poster={heroPoster}
+              className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: 0.85 }} />
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to right, rgba(250,246,241,0.9) 40%, transparent 100%)' }} />
           </>
         ) : (
@@ -49,18 +54,18 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
             {/* Gallery */}
       <section id="gallery" className="py-20 px-6">
-        <div className="max-w-5xl mx-auto">
+        <Reveal className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-light text-center mb-12">Our Work</h2>
           <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
-        </div>
+        </Reveal>
       </section>
 
       {/* About */}
       <section id="about" className="py-20 px-6" style={{ background: '#F0E8DF' }}>
-        <div className="max-w-4xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+        <Reveal className="max-w-4xl mx-auto grid md:grid-cols-2 gap-12 items-center">
           {site.galleryPhotos[1] && (
-            <div className="rounded-3xl overflow-hidden" style={{ aspectRatio: '3/4' }}>
-              <img src={site.galleryPhotos[1].url} alt="" className="w-full h-full object-cover" />
+            <div className="rounded-3xl overflow-hidden shadow-xl transition-transform duration-500 hover:scale-[1.02]" style={{ aspectRatio: '3/4' }}>
+              <HeroBackground url={site.galleryPhotos[1].url} type={site.galleryPhotos[1].type} poster={site.galleryPhotos[1].thumbnailUrl} />
             </div>
           )}
           <div>
@@ -70,30 +75,30 @@ export default function Ember({ site }: { site: StudioWebsite }) {
             {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
             <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" />
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* Services */}
       {site.services.length > 0 && (
         <section id="services" className="py-20 px-6">
-          <div className="max-w-4xl mx-auto">
+          <Reveal className="max-w-4xl mx-auto">
             <h2 className="text-3xl font-light text-center mb-14">What We Offer</h2>
             <div className="grid sm:grid-cols-3 gap-6">
               {site.services.map((s, i) => (
-                <div key={s.id} className="rounded-2xl p-6" style={{ background: i % 2 === 0 ? '#F0E8DF' : '#FAF6F1', border: '1px solid #E8DDD5' }}>
+                <div key={s.id} className="rounded-2xl p-6 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl" style={{ background: i % 2 === 0 ? '#F0E8DF' : '#FAF6F1', border: '1px solid #E8DDD5' }}>
                   <h3 className="font-semibold mb-2 text-sm">{s.name}</h3>
                   <p className="text-xs leading-relaxed opacity-60">{s.description}</p>
                   {s.price && <p className="mt-3 text-xs font-semibold" style={{ color: accent }}>{s.price}</p>}
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </section>
       )}
 
       {/* Book */}
       <section id="book" className="py-20 px-6" style={{ background: '#F0E8DF' }}>
-        <div className="max-w-xl mx-auto text-center">
+        <Reveal className="max-w-xl mx-auto text-center">
           <p className="text-xs uppercase tracking-widest mb-3" style={{ color: accent }}>
             {site.bookingEnabled ? 'Book a Session' : 'Get in Touch'}
           </p>
@@ -108,7 +113,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
               </div>
             )
           }
-        </div>
+        </Reveal>
       </section>
 
       <footer className="py-8 px-6 text-center text-xs opacity-40" style={{ borderTop: '1px solid #E8DDD5' }}>

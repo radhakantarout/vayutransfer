@@ -3,11 +3,15 @@ import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
+import HeroBackground from './HeroMedia'
+import Reveal from './Reveal'
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#1A1A1A'
   const fontColor = site.fontColor   ?? '#1A1A1A'
-  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroImg    = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroType   = site.heroImageUrl ? site.heroMediaType : site.galleryPhotos[0]?.type
+  const heroPoster = site.heroImageUrl ? site.heroPosterUrl : site.galleryPhotos[0]?.thumbnailUrl
 
   return (
     <div className="min-h-screen bg-white" style={{ color: fontColor, fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
@@ -29,7 +33,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       <section className="pt-20">
         {heroImg ? (
           <div className="relative h-[90vh]">
-            <img src={heroImg} alt="" className="w-full h-full object-cover" />
+            <HeroBackground url={heroImg} type={heroType} poster={heroPoster} />
             <div className="absolute inset-0 bg-black/20" />
             <div className="absolute bottom-12 left-12">
               <h1 className="text-5xl sm:text-7xl font-light text-white leading-none">{site.heroTitle}</h1>
@@ -46,29 +50,29 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
 
       {/* Gallery */}
       <section id="work" className="py-16 px-6">
-        <div className="max-w-6xl mx-auto">
+        <Reveal className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">Selected Work</p>
           <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
-        </div>
+        </Reveal>
       </section>
 
       {/* About */}
       <section id="about" className="py-24 px-6 bg-gray-50">
-        <div className="max-w-3xl mx-auto">
+        <Reveal className="max-w-3xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-6">About</p>
           <p className="text-2xl font-light leading-relaxed text-gray-700">{site.about}</p>
           {site.city && <p className="mt-8 text-sm text-gray-400 uppercase tracking-widest">{site.city}</p>}
-        </div>
+        </Reveal>
       </section>
 
       {/* Services */}
       {site.services.length > 0 && (
         <section id="services" className="py-24 px-6">
-          <div className="max-w-4xl mx-auto">
+          <Reveal className="max-w-4xl mx-auto">
             <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">Services</p>
             <div className="divide-y divide-gray-100">
               {site.services.map(s => (
-                <div key={s.id} className="py-8 grid sm:grid-cols-3 gap-4">
+                <div key={s.id} className="py-8 grid sm:grid-cols-3 gap-4 transition-all duration-300 hover:bg-gray-50 rounded-xl px-3 -mx-3">
                   <h3 className="font-semibold text-sm uppercase tracking-wider">{s.name}</h3>
                   <p className="text-gray-600 text-sm sm:col-span-2 leading-relaxed">{s.description}
                     {s.price && <span className="block mt-1 text-gray-400 text-xs">{s.price}</span>}
@@ -76,13 +80,13 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </section>
       )}
 
       {/* Booking */}
       <section id="book" className="py-24 px-6 bg-gray-50">
-        <div className="max-w-2xl mx-auto">
+        <Reveal className="max-w-2xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">
             {site.bookingEnabled ? 'Book a Session' : 'Contact'}
           </p>
@@ -101,7 +105,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
               </div>
             )
           }
-        </div>
+        </Reveal>
       </section>
 
       <footer className="py-8 px-6 border-t border-gray-100 text-center">
