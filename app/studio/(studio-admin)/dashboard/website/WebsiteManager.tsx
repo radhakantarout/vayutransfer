@@ -461,18 +461,24 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3 bg-card border border-border rounded-2xl px-5 py-4">
+      <div className="inline-flex items-center flex-wrap gap-4 bg-card border border-border rounded-2xl px-4 py-2 max-w-full">
         <div>
-          <h2 className="text-xl font-bold text-text-primary">My Website</h2>
+          <h2 className="text-sm font-bold text-text-primary">My Website</h2>
           {publishUrl && (
-            <a href={publishUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline mt-0.5 block">{publishUrl}</a>
+            <a href={publishUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-accent hover:underline block">{publishUrl}</a>
           )}
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
+          {publishUrl && (
+            <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"
+              className="px-3 py-1.5 text-[11px] font-semibold text-accent border border-accent/30 rounded-full hover:bg-accent/10 transition-colors whitespace-nowrap">
+              ↗ Preview
+            </a>
+          )}
           {site.status === 'LIVE' ? (
             <button
               onClick={() => save({ status: 'DRAFT' })}
-              className="px-4 py-2 rounded-full text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors shadow-sm">
+              className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors whitespace-nowrap">
               ● Live — click to unpublish
             </button>
           ) : (
@@ -480,12 +486,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               onClick={() => save({ status: 'LIVE' })}
               disabled={!site.subdomain}
               title={!site.subdomain ? 'Set a subdomain first in the Domain tab' : ''}
-              className="px-4 py-2 rounded-full text-xs font-bold bg-accent text-bg hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm">
+              className="px-3 py-1.5 rounded-full text-[11px] font-bold bg-accent text-bg hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
               ↑ Publish
             </button>
           )}
           <button onClick={() => save()} disabled={saving}
-            className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-full disabled:opacity-60 hover:shadow-lg transition-all shadow-sm">
+            className="px-4 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-full disabled:opacity-60 transition-all whitespace-nowrap">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
           </button>
         </div>
@@ -594,12 +600,6 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             </div>
             <p className="text-[9px] text-muted mt-1.5">Leave unset to use each template&apos;s default text colour.</p>
           </div>
-          {publishUrl && (
-            <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-xs text-accent border border-accent/30 px-4 py-2 rounded-xl hover:bg-accent/10 transition-colors">
-              ↗ Preview your site
-            </a>
-          )}
         </div>
       )}
 
