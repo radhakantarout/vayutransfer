@@ -342,6 +342,11 @@ export interface AuditLog {
 export type WebsiteTemplateId = 'lumina' | 'clarity' | 'ember' | 'bold' | 'bloom'
 export type WebsiteStatus = 'DRAFT' | 'LIVE'
 
+// Undefined always means 'photo' everywhere this is read — every gallery item and
+// hero record created before this field existed has no value here, and must keep
+// rendering exactly as it did before video support shipped.
+export type WebsiteMediaType = 'photo' | 'video'
+
 export interface WebsiteService {
   id: string
   name: string
@@ -352,6 +357,16 @@ export interface WebsiteService {
 export interface WebsiteGalleryPhoto {
   id: string
   url: string
+  type?: WebsiteMediaType
+  // Poster frame for a video item, generated client-side at upload time (see
+  // WebsiteManager.tsx) — ignored for photos. A video item from before this
+  // field existed (or a poster-generation failure) has none; the gallery falls
+  // back to the video file itself with preload="metadata".
+  thumbnailUrl?: string
+  // Poster is a separately-billed R2 object of its own — kept so removing a
+  // video item can decrement the studio's quota by the poster's real size too,
+  // not just the video's.
+  thumbnailSizeBytes?: number
   caption?: string
   category?: string
   // Billed against the studio's storage quota — see
@@ -373,6 +388,9 @@ export interface StudioWebsite {
   services: WebsiteService[]
   galleryPhotos: WebsiteGalleryPhoto[]
   heroImageUrl?: string
+  heroMediaType?: WebsiteMediaType
+  heroPosterUrl?: string
+  heroPosterSizeBytes?: number
   heroImageSizeBytes?: number
   contactEmail?: string
   contactPhone?: string

@@ -1,14 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { StudioWebsite, WebsiteTemplateId, WebsiteService, WebsiteGalleryPhoto } from '@/types/studio'
+import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto } from '@/types/studio'
+import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
+import LivePreviewPanel from './LivePreviewPanel'
 
-const TEMPLATES: { id: WebsiteTemplateId; name: string; desc: string; preview: string }[] = [
-  { id: 'lumina',  name: 'Lumina',  desc: 'Dark & elegant, full-bleed',     preview: 'bg-gradient-to-br from-zinc-900 to-amber-950' },
-  { id: 'clarity', name: 'Clarity', desc: 'Minimal white, editorial',         preview: 'bg-gradient-to-br from-white to-gray-100' },
-  { id: 'ember',   name: 'Ember',   desc: 'Warm earth tones, soft',           preview: 'bg-gradient-to-br from-orange-50 to-amber-100' },
-  { id: 'bold',    name: 'Bold',    desc: 'High contrast, large typography',  preview: 'bg-gradient-to-br from-zinc-950 to-red-950' },
-  { id: 'bloom',   name: 'Bloom',   desc: 'Pastel, feminine, romantic',       preview: 'bg-gradient-to-br from-pink-50 to-rose-100' },
-]
+// Which templates read as dark-background — used to pick a phone-bezel color
+// that contrasts with whatever the preview is actually showing (see
+// LivePreviewPanel's isDarkTemplate prop).
+const DARK_TEMPLATE_IDS = new Set(['lumina', 'bold'])
 
 const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Gold',      color: '#C9A84C' },
@@ -51,6 +50,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const accentColorRef = useRef<HTMLInputElement>(null)
   const fontColorRef   = useRef<HTMLInputElement>(null)
 
+  // Tracks the content of the last known-saved state (server-managed fields
+  // like updatedAt stripped out) so the auto-save effect below can tell "the
+  // user changed something" apart from "site was just re-set by a save's own
+  // response" — without this, saving would re-trigger the effect, which would
+  // schedule another save, forever.
+  const lastAutoSavedSnapshot = useRef<string>('')
+  const snapshotForCompare = (s: StudioWebsite) => JSON.stringify({ ...s, updatedAt: undefined })
+
   // Load existing config
   useEffect(() => {
     fetch('/studio/api/admin/website')
@@ -59,9 +66,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         if (res.data) {
           setSite(res.data)
           setSubdomainInput(res.data.subdomain ?? '')
+          lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
         } else {
           // No website yet — show defaults
-          setSite({
+          const defaults: StudioWebsite = {
             studioId,
             subdomain: '',
             templateId: 'lumina',
@@ -74,7 +82,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             bookingEnabled: true,
             createdAt: '',
             updatedAt: '',
-          })
+          }
+          setSite(defaults)
+          lastAutoSavedSnapshot.current = snapshotForCompare(defaults)
         }
       })
       .finally(() => setLoading(false))
@@ -92,8 +102,28 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       body: JSON.stringify(body),
     }).then(r => r.json())
     setSaving(false)
-    if (res.success) { setSite(res.data); setSaved(true); setTimeout(() => setSaved(false), 2500) }
+    if (res.success) {
+      setSite(res.data)
+      lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
+      setSaved(true); setTimeout(() => setSaved(false), 2500)
+    }
   }
+
+  // Debounced auto-save for the live preview panel — deliberately DRAFT-only.
+  // This data model has no draft/published content fork (status only gates
+  // whether the public page 404s; the content shown once LIVE is whatever's
+  // currently saved), so auto-saving every keystroke on an already-public site
+  // could flash half-typed edits to real visitors. Once LIVE, the preview only
+  // refreshes on an explicit "Save Changes"/publish click, same as today.
+  const previewSaveDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => {
+    if (!site || site.status !== 'DRAFT') return
+    if (snapshotForCompare(site) === lastAutoSavedSnapshot.current) return
+    clearTimeout(previewSaveDebounceRef.current)
+    previewSaveDebounceRef.current = setTimeout(() => { save() }, 800)
+    return () => clearTimeout(previewSaveDebounceRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site])
 
   const checkSubdomain = useCallback(async (slug: string) => {
     if (slug.length < 3) { setSubdomainCheck(null); return }
@@ -133,13 +163,51 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const heroFileInputRef = useRef<HTMLInputElement>(null)
 
   const CATEGORIES = ['Wedding', 'Pre-Wedding', 'Portrait', 'Corporate', 'Fashion', 'School', 'General']
-  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 // 10 MB
+  const MAX_IMAGE_BYTES         = 100 * 1024 * 1024 // 100 MB
+  const MAX_GALLERY_VIDEO_BYTES = 150 * 1024 * 1024 // 150 MB
+  const MAX_HERO_VIDEO_BYTES    = 60  * 1024 * 1024 // 60 MB — must load fast, it autoplays immediately
+
+  // Draws the frame at ~0.5s of a video file to a canvas and exports it as a
+  // JPEG — used so the gallery grid and admin thumbnails don't have to decode
+  // a video file just to show a preview. Best-effort: callers fall back to
+  // rendering the video itself (preload="metadata") if this fails.
+  const generateVideoPoster = (file: File): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.muted = true
+      video.playsInline = true
+      const objectUrl = URL.createObjectURL(file)
+      video.src = objectUrl
+      const cleanup = () => URL.revokeObjectURL(objectUrl)
+      video.onloadeddata = () => { video.currentTime = Math.min(0.5, (video.duration || 1) / 2) }
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth || 640
+        canvas.height = video.videoHeight || 360
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { cleanup(); reject(new Error('Canvas unavailable')); return }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(blob => {
+          cleanup()
+          if (blob) resolve(blob); else reject(new Error('Could not generate thumbnail'))
+        }, 'image/jpeg', 0.82)
+      }
+      video.onerror = () => { cleanup(); reject(new Error('Could not read video file')) }
+    })
+  }
 
   // Gets a presigned R2 URL and PUTs the file directly to storage — the file bytes
   // never pass through our server, so it isn't limited by serverless body-size caps.
-  const uploadImageToR2 = async (file: File, kind: 'portfolio' | 'hero', category?: string) => {
-    if (!file.type.startsWith('image/')) throw new Error(`${file.name}: only image files are allowed`)
-    if (file.size > MAX_UPLOAD_BYTES) throw new Error(`${file.name}: max file size is 10 MB`)
+  const uploadFileToR2 = async (file: File, kind: 'portfolio' | 'hero', category?: string) => {
+    const isVideo = file.type.startsWith('video/')
+    const isImage = file.type.startsWith('image/')
+    if (!isImage && !isVideo) throw new Error(`${file.name}: only image or video files are allowed`)
+    if (isImage && file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name}: max image size is 100 MB`)
+    if (isVideo) {
+      const cap = kind === 'hero' ? MAX_HERO_VIDEO_BYTES : MAX_GALLERY_VIDEO_BYTES
+      if (file.size > cap) throw new Error(`${file.name}: max video size is ${Math.round(cap / (1024 * 1024))} MB`)
+    }
 
     const initRes = await fetch('/studio/api/admin/website/portfolio-upload', {
       method: 'POST',
@@ -155,7 +223,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     })
     if (!putRes.ok) throw new Error('Upload to storage failed — please try again')
 
-    return { id: initRes.id as string, url: initRes.publicUrl as string, category: initRes.category as string, sizeBytes: file.size }
+    return { id: initRes.id as string, url: initRes.publicUrl as string, category: initRes.category as string, sizeBytes: file.size, isVideo }
   }
 
   const handlePhotoUpload = async (files: FileList | null) => {
@@ -165,8 +233,26 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     try {
       const newPhotos: WebsiteGalleryPhoto[] = []
       for (const file of Array.from(files)) {
-        const { id, url, category, sizeBytes } = await uploadImageToR2(file, 'portfolio', uploadCategory)
-        newPhotos.push({ id, url, caption: '', category, sizeBytes })
+        const { id, url, category, sizeBytes, isVideo } = await uploadFileToR2(file, 'portfolio', uploadCategory)
+        if (!isVideo) {
+          newPhotos.push({ id, url, type: 'photo', caption: '', category, sizeBytes })
+          continue
+        }
+        // Video — also generate + upload a poster frame for the grid thumbnail.
+        // Best-effort: a failure here still keeps the video itself, the gallery
+        // just falls back to rendering the video file with preload="metadata".
+        let thumbnailUrl: string | undefined
+        let thumbnailSizeBytes: number | undefined
+        try {
+          const posterBlob = await generateVideoPoster(file)
+          const posterFile = new File([posterBlob], `${id}-poster.jpg`, { type: 'image/jpeg' })
+          const poster = await uploadFileToR2(posterFile, 'portfolio', category)
+          thumbnailUrl = poster.url
+          thumbnailSizeBytes = poster.sizeBytes
+        } catch (posterErr) {
+          console.error('Video poster generation failed', posterErr)
+        }
+        newPhotos.push({ id, url, type: 'video', thumbnailUrl, thumbnailSizeBytes, caption: '', category, sizeBytes })
       }
       if (newPhotos.length > 0) {
         const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
@@ -176,7 +262,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
         }).then(r => r.json())
-        if (!saveRes.success) throw new Error('Photo uploaded but could not be saved — please try again')
+        if (!saveRes.success) throw new Error('Upload succeeded but could not be saved — please try again')
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed — please try again')
@@ -192,16 +278,36 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     setUploadingHero(true)
     setUploadError(null)
     try {
-      const { url, sizeBytes } = await uploadImageToR2(file, 'hero')
-      setSite(prev => prev ? { ...prev, heroImageUrl: url, heroImageSizeBytes: sizeBytes } : prev)
+      const { url, sizeBytes, isVideo } = await uploadFileToR2(file, 'hero')
+      let heroPosterUrl = ''
+      let heroPosterSizeBytes = 0
+      if (isVideo) {
+        try {
+          const posterBlob = await generateVideoPoster(file)
+          const posterFile = new File([posterBlob], `hero-poster-${Date.now()}.jpg`, { type: 'image/jpeg' })
+          const poster = await uploadFileToR2(posterFile, 'hero')
+          heroPosterUrl = poster.url
+          heroPosterSizeBytes = poster.sizeBytes
+        } catch (posterErr) {
+          console.error('Hero video poster generation failed', posterErr)
+        }
+      }
+      const patch = {
+        heroImageUrl: url,
+        heroImageSizeBytes: sizeBytes,
+        heroMediaType: (isVideo ? 'video' : 'photo') as 'video' | 'photo',
+        heroPosterUrl,
+        heroPosterSizeBytes,
+      }
+      setSite(prev => prev ? { ...prev, ...patch } : prev)
       const saveRes = await fetch('/studio/api/admin/website', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...site, heroImageUrl: url, heroImageSizeBytes: sizeBytes }),
+        body: JSON.stringify({ ...site, ...patch }),
       }).then(r => r.json())
-      if (!saveRes.success) throw new Error('Cover image uploaded but could not be saved — please try again')
+      if (!saveRes.success) throw new Error('Cover uploaded but could not be saved — please try again')
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Cover image upload failed — please try again')
+      setUploadError(err instanceof Error ? err.message : 'Cover upload failed — please try again')
     } finally {
       if (heroFileInputRef.current) heroFileInputRef.current.value = ''
       setUploadingHero(false)
@@ -217,14 +323,22 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         body: JSON.stringify({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes }),
       }).catch(() => {})
     }
+    if (site.heroPosterUrl) {
+      fetch('/studio/api/admin/website/portfolio-upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: site.heroPosterUrl, sizeBytes: site.heroPosterSizeBytes }),
+      }).catch(() => {})
+    }
     // Empty string (not undefined) so it survives JSON — the API merges by spreading
     // the request body over the existing record, and `undefined` keys are dropped by
     // JSON.stringify before the request is even sent, so the old value would stick.
-    update({ heroImageUrl: '', heroImageSizeBytes: 0 })
+    const patch = { heroImageUrl: '', heroImageSizeBytes: 0, heroMediaType: 'photo' as const, heroPosterUrl: '', heroPosterSizeBytes: 0 }
+    update(patch)
     fetch('/studio/api/admin/website', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, heroImageUrl: '', heroImageSizeBytes: 0 }),
+      body: JSON.stringify({ ...site, ...patch }),
     }).catch(() => {})
   }
 
@@ -237,6 +351,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: photo.url, sizeBytes: photo.sizeBytes }),
       }).catch(() => {})
+      if (photo.thumbnailUrl) {
+        fetch('/studio/api/admin/website/portfolio-upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: photo.thumbnailUrl, sizeBytes: photo.thumbnailSizeBytes }),
+        }).catch(() => {})
+      }
     }
     const updatedPhotos = site.galleryPhotos.filter(p => p.id !== id)
     update({ galleryPhotos: updatedPhotos })
@@ -263,13 +384,73 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     }).catch(() => {})
   }
 
+  // ── AI content drafts (About / Tagline / Hero subtitle / Service description) ──
+  // Never writes directly into a field — always shown in AiDraftBox for the
+  // studio owner to accept, regenerate, or dismiss.
+  const [aiDraft, setAiDraft]     = useState<{ key: string; text: string } | null>(null)
+  const [aiLoading, setAiLoading] = useState<string | null>(null)
+  const [aiError, setAiError]     = useState<{ key: string; message: string } | null>(null)
+
+  const askAiForContent = async (
+    field: 'about' | 'tagline' | 'heroSubtitle' | 'serviceDescription',
+    opts?: { serviceId?: string; serviceName?: string }
+  ) => {
+    const key = opts?.serviceId ? `service:${opts.serviceId}` : field
+    setAiLoading(key)
+    setAiError(null)
+    setAiDraft(null)
+    try {
+      const res = await fetch('/studio/api/ai/website-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, studioName: site?.heroTitle, city: site?.city, serviceName: opts?.serviceName }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error ?? 'Could not generate a draft')
+      setAiDraft({ key, text: res.text })
+    } catch (err) {
+      setAiError({ key, message: err instanceof Error ? err.message : 'Could not generate a draft' })
+    } finally {
+      setAiLoading(null)
+    }
+  }
+
+  // ── AI template recommendation (advisory only — never selects on its own) ──
+  const [templateHint, setTemplateHint]           = useState('')
+  const [templateSuggesting, setTemplateSuggesting] = useState(false)
+  const [templateSuggestion, setTemplateSuggestion] = useState<{ templateId: string; reason: string } | null>(null)
+  const [templateSuggestError, setTemplateSuggestError] = useState<string | null>(null)
+
+  const askAiForTemplate = async () => {
+    if (!templateHint.trim()) return
+    setTemplateSuggesting(true)
+    setTemplateSuggestError(null)
+    try {
+      const res = await fetch('/studio/api/ai/website-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: templateHint.trim() }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error ?? 'Could not get a recommendation')
+      setTemplateSuggestion({ templateId: res.templateId, reason: res.reason })
+    } catch (err) {
+      setTemplateSuggestError(err instanceof Error ? err.message : 'Could not get a recommendation')
+    } finally {
+      setTemplateSuggesting(false)
+    }
+  }
+
   const studioUrl  = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com'
   const studioBase = studioUrl.replace(/^https?:\/\//, '')
-  const isTest     = studioBase.startsWith('test.')
-  // In test env, use a direct path URL (*.test.vayustudios.com needs paid SSL).
-  // In production, use the real subdomain URL.
+  // Real wildcard subdomains (<slug>.vayustudios.com) only resolve where DNS/SSL
+  // is actually set up for them — test.vayustudios.com's own subdomains, and
+  // localhost (no *.localhost wildcard exists at all). Everywhere else that
+  // isn't production, fall back to the path-based route the app already serves
+  // subdomains through directly.
+  const isTest       = studioBase.startsWith('test.')
+  const isLocalhost  = studioBase.startsWith('localhost')
+  const isPathBased  = isTest || isLocalhost
   const publishUrl = site?.subdomain
-    ? isTest
+    ? isPathBased
       ? `${studioUrl}/studio/site/${site.subdomain}`
       : `https://${site.subdomain}.${studioBase}`
     : null
@@ -280,18 +461,18 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3 bg-card border border-border rounded-2xl px-5 py-4">
         <div>
           <h2 className="text-xl font-bold text-text-primary">My Website</h2>
           {publishUrl && (
             <a href={publishUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline mt-0.5 block">{publishUrl}</a>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {site.status === 'LIVE' ? (
             <button
               onClick={() => save({ status: 'DRAFT' })}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors">
+              className="px-4 py-2 rounded-full text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors shadow-sm">
               ● Live — click to unpublish
             </button>
           ) : (
@@ -299,16 +480,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               onClick={() => save({ status: 'LIVE' })}
               disabled={!site.subdomain}
               title={!site.subdomain ? 'Set a subdomain first in the Domain tab' : ''}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
-              ↑ Publish Website
+              className="px-4 py-2 rounded-full text-xs font-bold bg-accent text-bg hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm">
+              ↑ Publish
             </button>
           )}
           <button onClick={() => save()} disabled={saving}
-            className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-60 transition-opacity">
+            className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-full disabled:opacity-60 hover:shadow-lg transition-all shadow-sm">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
           </button>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,640px)_1fr] gap-6 items-start">
+      <div className="space-y-6 min-w-0">
 
       {/* Tabs */}
       <div className="flex gap-1 bg-card border border-border rounded-2xl p-1 overflow-x-auto">
@@ -332,27 +516,54 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {tab === 'template' && (
         <div className="space-y-4">
           <p className="text-xs text-muted">Choose a design. You can switch anytime — your content stays.</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-            {TEMPLATES.map(t => (
-              <button key={t.id} onClick={() => update({ templateId: t.id })}
-                className={`rounded-2xl overflow-hidden border-2 transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02]' : 'border-border hover:border-accent/50'}`}>
-                <div className={`h-24 ${t.preview} flex items-center justify-center`}>
-                  <span className="text-xs font-bold text-white drop-shadow">{t.name}</span>
-                </div>
-                <div className="p-2 bg-card">
-                  <p className="text-xs font-semibold text-text-primary">{t.name}</p>
-                  <p className="text-[10px] text-muted leading-tight">{t.desc}</p>
-                </div>
+
+          <div className="bg-card border border-border rounded-xl px-3 py-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-semibold text-muted uppercase tracking-wider whitespace-nowrap">Not sure which fits?</label>
+              <input value={templateHint} onChange={e => setTemplateHint(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') askAiForTemplate() }}
+                placeholder="e.g. soft, romantic pre-wedding shoots in pastel tones"
+                className="flex-1 bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+              <button onClick={askAiForTemplate} disabled={templateSuggesting || !templateHint.trim()}
+                className="px-3 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-lg disabled:opacity-50 hover:opacity-90 transition-opacity whitespace-nowrap">
+                {templateSuggesting ? '✨ Thinking…' : '✨ Recommend'}
               </button>
-            ))}
+            </div>
+            {templateSuggestError && <p className="text-[10px] text-danger">{templateSuggestError}</p>}
+            {templateSuggestion && (
+              <p className="text-[10px] text-muted">
+                ✨ Recommended: <span className="font-semibold text-accent">{TEMPLATES.find(t => t.id === templateSuggestion.templateId)?.name}</span> — {templateSuggestion.reason}
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+            {TEMPLATES.map(t => {
+              const isRecommended = templateSuggestion?.templateId === t.id
+              return (
+                <button key={t.id} onClick={() => update({ templateId: t.id })}
+                  className={`relative rounded-lg overflow-hidden border transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02] shadow-md' : isRecommended ? 'border-accent/60 ring-1 ring-accent/30' : 'border-border hover:border-accent/50'}`}>
+                  {isRecommended && (
+                    <span className="absolute top-1 right-1 z-10 bg-accent text-bg text-[8px] font-bold px-1 py-px rounded-full">✨ AI</span>
+                  )}
+                  <div className={`h-12 ${t.preview} flex items-center justify-center`}>
+                    <span className="text-[10px] font-bold text-white drop-shadow">{t.name}</span>
+                  </div>
+                  <div className="px-1.5 py-1 bg-card">
+                    <p className="text-[10px] font-semibold text-text-primary leading-tight">{t.name}</p>
+                    <p className="text-[8px] text-muted leading-tight">{t.desc}</p>
+                  </div>
+                </button>
+              )
+            })}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
-            <div className="flex items-center gap-2 flex-wrap">
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
+            <div className="flex items-center gap-1.5 flex-wrap">
               {ACCENT_PRESETS.map(p => (
                 <button key={p.label} onClick={() => p.color ? update({ themeAccent: p.color }) : accentColorRef.current?.click()}
                   title={p.label}
-                  className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.themeAccent === p.color ? 'border-white scale-110' : 'border-transparent'}`}
+                  className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${site.themeAccent === p.color ? 'border-white scale-110' : 'border-transparent'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
@@ -361,19 +572,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
-            <div className="flex items-center gap-2 flex-wrap">
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
+            <div className="flex items-center gap-1.5 flex-wrap">
               {FONT_COLOR_PRESETS.map(p => (
                 <button key={p.label} onClick={() => p.color ? update({ fontColor: p.color }) : fontColorRef.current?.click()}
                   title={p.label}
-                  className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
+                  className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
               <input ref={fontColorRef} type="color" value={site.fontColor ?? '#F5F0E8'} onChange={e => update({ fontColor: e.target.value })}
                 className="sr-only" title="Custom font colour" />
             </div>
-            <p className="text-[10px] text-muted mt-2">Leave unset to use each template&apos;s default text colour.</p>
+            <p className="text-[9px] text-muted mt-1.5">Leave unset to use each template&apos;s default text colour.</p>
           </div>
           {publishUrl && (
             <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"
@@ -388,14 +599,47 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {tab === 'content' && (
         <div className="space-y-4 max-w-2xl">
           <Field label="Studio / Hero title" value={site.heroTitle} onChange={v => update({ heroTitle: v })} placeholder="Ram Photography" />
-          <Field label="Hero subtitle" value={site.heroSubtitle} onChange={v => update({ heroSubtitle: v })} placeholder="Capturing your most precious moments" />
-          <Field label="Tagline (short)" value={site.tagline ?? ''} onChange={v => update({ tagline: v })} placeholder="Professional photography for every occasion" />
+
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">About your studio</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Hero subtitle</label>
+              <AskAiButton loading={aiLoading === 'heroSubtitle'} onClick={() => askAiForContent('heroSubtitle')} />
+            </div>
+            <input value={site.heroSubtitle} onChange={e => update({ heroSubtitle: e.target.value })} placeholder="Capturing your most precious moments"
+              className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+            <AiDraftBox draftKey="heroSubtitle" aiDraft={aiDraft} aiError={aiError}
+              onUse={text => { update({ heroSubtitle: text }); setAiDraft(null) }}
+              onRegenerate={() => askAiForContent('heroSubtitle')}
+              onDismiss={() => setAiDraft(null)} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Tagline (short)</label>
+              <AskAiButton loading={aiLoading === 'tagline'} onClick={() => askAiForContent('tagline')} />
+            </div>
+            <input value={site.tagline ?? ''} onChange={e => update({ tagline: e.target.value })} placeholder="Professional photography for every occasion"
+              className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+            <AiDraftBox draftKey="tagline" aiDraft={aiDraft} aiError={aiError}
+              onUse={text => { update({ tagline: text }); setAiDraft(null) }}
+              onRegenerate={() => askAiForContent('tagline')}
+              onDismiss={() => setAiDraft(null)} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-muted uppercase tracking-wider">About your studio</label>
+              <AskAiButton loading={aiLoading === 'about'} onClick={() => askAiForContent('about')} />
+            </div>
             <textarea value={site.about} onChange={e => update({ about: e.target.value })} rows={5}
               className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none"
               placeholder="Tell your story…" />
+            <AiDraftBox draftKey="about" aiDraft={aiDraft} aiError={aiError}
+              onUse={text => { update({ about: text }); setAiDraft(null) }}
+              onRegenerate={() => askAiForContent('about')}
+              onDismiss={() => setAiDraft(null)} />
           </div>
+
           <Field label="City / Location" value={site.city ?? ''} onChange={v => update({ city: v })} placeholder="Bhubaneswar, Odisha" />
 
           <div>
@@ -404,7 +648,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             </label>
             {site.heroImageUrl ? (
               <div className="relative rounded-xl overflow-hidden border border-border" style={{ aspectRatio: '16/7' }}>
-                <img src={site.heroImageUrl} alt="" className="w-full h-full object-cover" />
+                {site.heroMediaType === 'video' ? (
+                  <video src={site.heroImageUrl} poster={site.heroPosterUrl || undefined} muted loop autoPlay playsInline
+                    className="w-full h-full object-cover" />
+                ) : (
+                  <img src={site.heroImageUrl} alt="" className="w-full h-full object-cover" />
+                )}
                 <button onClick={removeHeroImage}
                   className="absolute top-2 right-2 bg-black/70 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-red-500/80 transition-colors">
                   Remove
@@ -413,15 +662,15 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             ) : (
               <button onClick={() => heroFileInputRef.current?.click()} disabled={uploadingHero}
                 className="w-full border-2 border-dashed border-border rounded-2xl py-8 text-center text-sm text-muted hover:border-accent hover:text-accent transition-colors disabled:opacity-50">
-                {uploadingHero ? 'Uploading…' : '+ Upload a cover image'}
+                {uploadingHero ? 'Uploading…' : '+ Upload a cover image or video'}
               </button>
             )}
-            <input ref={heroFileInputRef} type="file" accept="image/*" className="hidden"
+            <input ref={heroFileInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden"
               onChange={e => handleHeroImageUpload(e.target.files)} />
             {uploadError && (
               <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-xs text-danger mt-2">{uploadError}</div>
             )}
-            <p className="text-[10px] text-muted mt-2">Shown behind your hero title. If left unset, your first portfolio photo is used instead.</p>
+            <p className="text-[10px] text-muted mt-2">Shown behind your hero title — photo or a short looping video (max 60MB). If left unset, your first portfolio item is used instead.</p>
           </div>
         </div>
       )}
@@ -429,7 +678,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Gallery ── */}
       {tab === 'gallery' && (
         <div className="space-y-5">
-          <p className="text-xs text-muted">Upload your best portfolio photos. Visitors see a clean gallery with a 3D album viewer — no watermarks.</p>
+          <p className="text-xs text-muted">Upload your best portfolio photos and videos. Visitors see a clean gallery with a 3D album viewer for photos and a fullscreen player for videos — no watermarks.</p>
 
           {/* Upload area */}
           <div className="space-y-3">
@@ -440,11 +689,11 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               </select>
               <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
                 className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-50 hover:opacity-90 transition-opacity">
-                {uploading ? 'Uploading…' : '+ Upload Photos'}
+                {uploading ? 'Uploading…' : '+ Upload Photos / Videos'}
               </button>
               <span className="text-xs text-muted">Select category first, then upload</span>
             </div>
-            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+            <input ref={fileInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple className="hidden"
               onChange={e => handlePhotoUpload(e.target.files)} />
 
             {uploadError && (
@@ -457,7 +706,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               onDrop={e => { e.preventDefault(); handlePhotoUpload(e.dataTransfer.files) }}
               className="border-2 border-dashed border-border rounded-2xl p-8 text-center text-muted text-sm hover:border-accent/50 transition-colors cursor-pointer"
               onClick={() => fileInputRef.current?.click()}>
-              Drag & drop photos here or click to select
+              Drag & drop photos or videos here or click to select
             </div>
           </div>
 
@@ -465,12 +714,23 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           {site.galleryPhotos.length > 0 && (
             <div>
               <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">
-                Portfolio photos ({site.galleryPhotos.length})
+                Portfolio items ({site.galleryPhotos.length})
               </p>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
                 {site.galleryPhotos.map((photo, idx) => (
                   <div key={photo.id} className="relative group rounded-xl overflow-hidden" style={{ aspectRatio: '1' }}>
-                    <img src={photo.url} alt="" className="w-full h-full object-cover" />
+                    {photo.type === 'video' ? (
+                      photo.thumbnailUrl
+                        ? <img src={photo.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                        : <video src={photo.url} preload="metadata" muted className="w-full h-full object-cover" />
+                    ) : (
+                      <img src={photo.url} alt="" className="w-full h-full object-cover" />
+                    )}
+                    {photo.type === 'video' && (
+                      <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span className="w-6 h-6 rounded-full bg-black/50 backdrop-blur flex items-center justify-center text-white text-[10px]">▶</span>
+                      </span>
+                    )}
                     {photo.category && (
                       <span className="absolute top-1 left-1 bg-black/70 text-white text-[8px] font-bold px-1 py-0.5 rounded truncate max-w-[70%]">
                         {photo.category}
@@ -499,7 +759,18 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
                 <button onClick={() => removeService(s.id)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
               </div>
               <Field label="Name" value={s.name} onChange={v => patchService(s.id, { name: v })} placeholder="Wedding Photography" />
-              <Field label="Description" value={s.description} onChange={v => patchService(s.id, { description: v })} placeholder="Full-day coverage with edited gallery" />
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Description</label>
+                  <AskAiButton loading={aiLoading === `service:${s.id}`} onClick={() => askAiForContent('serviceDescription', { serviceId: s.id, serviceName: s.name })} />
+                </div>
+                <input value={s.description} onChange={e => patchService(s.id, { description: e.target.value })} placeholder="Full-day coverage with edited gallery"
+                  className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+                <AiDraftBox draftKey={`service:${s.id}`} aiDraft={aiDraft} aiError={aiError}
+                  onUse={text => { patchService(s.id, { description: text }); setAiDraft(null) }}
+                  onRegenerate={() => askAiForContent('serviceDescription', { serviceId: s.id, serviceName: s.name })}
+                  onDismiss={() => setAiDraft(null)} />
+              </div>
               <Field label="Price (optional)" value={s.price ?? ''} onChange={v => patchService(s.id, { price: v })} placeholder="₹50,000 onwards" />
             </div>
           ))}
@@ -561,7 +832,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
                 className="flex-1 bg-card px-4 py-3 text-sm text-text-primary outline-none"
                 placeholder="ramstudio" />
               <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">
-                {isTest ? ` → ${studioBase}/studio/site/` : `.${studioBase}`}
+                {isPathBased ? ` → ${studioBase}/studio/site/` : `.${studioBase}`}
               </span>
             </div>
             {checkingSlug && <p className="text-xs text-muted mt-1.5">Checking…</p>}
@@ -593,6 +864,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </div>
         </div>
       )}
+      </div>
+
+      <LivePreviewPanel publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)} />
+      </div>
     </div>
   )
 }
@@ -607,6 +882,43 @@ function Field({
       <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">{label}</label>
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+    </div>
+  )
+}
+
+function AskAiButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} disabled={loading}
+      className="text-[11px] font-semibold text-accent hover:underline disabled:opacity-50 disabled:no-underline">
+      {loading ? '✨ Thinking…' : '✨ Ask AI to write this'}
+    </button>
+  )
+}
+
+// Shows a generated draft for the studio owner to review — never applied to the
+// real field until they explicitly click "Use this".
+function AiDraftBox({
+  draftKey, aiDraft, aiError, onUse, onRegenerate, onDismiss,
+}: {
+  draftKey: string
+  aiDraft: { key: string; text: string } | null
+  aiError: { key: string; message: string } | null
+  onUse: (text: string) => void
+  onRegenerate: () => void
+  onDismiss: () => void
+}) {
+  if (aiError?.key === draftKey) {
+    return <p className="text-[11px] text-danger mt-1.5">{aiError.message}</p>
+  }
+  if (aiDraft?.key !== draftKey) return null
+  return (
+    <div className="mt-2 bg-accent/5 border border-accent/20 rounded-xl p-3 space-y-2">
+      <p className="text-xs text-text-primary leading-relaxed">{aiDraft.text}</p>
+      <div className="flex items-center gap-4">
+        <button onClick={() => onUse(aiDraft.text)} className="text-[11px] font-bold text-accent hover:underline">Use this</button>
+        <button onClick={onRegenerate} className="text-[11px] font-semibold text-muted hover:text-text-primary">Regenerate</button>
+        <button onClick={onDismiss} className="text-[11px] text-muted hover:text-text-primary">Dismiss</button>
+      </div>
     </div>
   )
 }

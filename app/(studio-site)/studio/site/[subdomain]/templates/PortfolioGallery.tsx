@@ -2,10 +2,12 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 
-interface Photo { id: string; url: string; caption?: string; category?: string }
+// `type` undefined means 'photo' — every gallery record created before video
+// support existed has no value here and must keep rendering exactly as before.
+interface GalleryItem { id: string; url: string; type?: 'photo' | 'video'; thumbnailUrl?: string; caption?: string; category?: string }
 
 // Demo photos from /public — shown when the studio hasn't uploaded portfolio photos yet.
-const DEMO_PHOTOS: Photo[] = [
+const DEMO_PHOTOS: GalleryItem[] = [
   { id: 'd1',  url: '/images/gallery/wedding/wedding_1.jpeg',                    category: 'Wedding' },
   { id: 'd2',  url: '/images/gallery/wedding/wedding_bengali.png',               category: 'Wedding' },
   { id: 'd3',  url: '/images/gallery/wedding/Wedding_punjabi.png',               category: 'Wedding' },
@@ -23,7 +25,7 @@ const DEMO_PHOTOS: Photo[] = [
   { id: 'd15', url: '/images/gallery/school-college/2.png',                      category: 'School' },
 ]
 
-// ── AlbumBook (3D page-flip viewer) ─────────────────────────────────────────
+// ── AlbumBook (3D page-flip viewer) — photos only, unchanged behavior ───────
 
 type PageContent =
   | { type: 'cover';  title: string; accent: string }
@@ -32,7 +34,7 @@ type PageContent =
 
 interface Spread { left: PageContent; right: PageContent }
 
-function buildSpreads(photos: Photo[], title: string, accent: string): Spread[] {
+function buildSpreads(photos: GalleryItem[], title: string, accent: string): Spread[] {
   const spreads: Spread[] = []
   spreads.push({ left: { type: 'blank' }, right: { type: 'cover', title, accent } })
   for (let i = 0; i < photos.length; i += 2) {
@@ -65,7 +67,7 @@ function PageSlot({ content, accent }: { content: PageContent; accent: string })
 }
 
 function AlbumViewer({ photos, title, accent, onClose }: {
-  photos: Photo[]; title: string; accent: string; onClose: () => void
+  photos: GalleryItem[]; title: string; accent: string; onClose: () => void
 }) {
   const spreads = buildSpreads(photos, title, accent)
   const [current,    setCurrent]    = useState(0)
@@ -164,19 +166,94 @@ function AlbumViewer({ photos, title, accent, onClose }: {
   )
 }
 
+// ── VideoLightbox — new, handles videos (and photos reached while arrowing
+// through a mixed set); kept fully separate from AlbumViewer so the existing
+// 3D flip-book stays untouched for photo-only galleries ────────────────────
+
+function VideoLightbox({ items, startIndex, onClose }: {
+  items: GalleryItem[]; startIndex: number; onClose: () => void
+}) {
+  const [index, setIndex] = useState(startIndex)
+  const touchX = useRef(0)
+
+  const next = useCallback(() => setIndex(i => Math.min(i + 1, items.length - 1)), [items.length])
+  const prev = useCallback(() => setIndex(i => Math.max(i - 1, 0)), [])
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') next()
+      if (e.key === 'ArrowLeft')  prev()
+      if (e.key === 'Escape')     onClose()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [next, prev, onClose])
+
+  const item = items[index]
+  if (!item) return null
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      onTouchStart={e => { touchX.current = e.touches[0].clientX }}
+      onTouchEnd={e => {
+        const d = e.changedTouches[0].clientX - touchX.current
+        if (d < -50) next(); else if (d > 50) prev()
+      }}>
+      <button onClick={onClose}
+        className="absolute top-4 right-4 text-white/60 hover:text-white text-2xl font-light leading-none z-10">✕</button>
+
+      <div className="relative w-full max-w-4xl flex items-center justify-center" style={{ maxHeight: '78vh' }}>
+        {item.type === 'video' ? (
+          <video key={item.id} src={item.url} controls autoPlay playsInline
+            className="max-w-full rounded-2xl shadow-2xl" style={{ maxHeight: '78vh' }} />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img key={item.id} src={item.url} alt={item.caption ?? ''}
+            className="max-w-full object-contain rounded-2xl shadow-2xl" style={{ maxHeight: '78vh' }} />
+        )}
+      </div>
+
+      <div className="flex items-center gap-6 mt-6">
+        <button onClick={prev} disabled={index === 0}
+          className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
+          ← Prev
+        </button>
+        <span className="text-white/40 text-xs">{index + 1} / {items.length}</span>
+        <button onClick={next} disabled={index >= items.length - 1}
+          className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
+          Next →
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main PortfolioGallery ────────────────────────────────────────────────────
 
 export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C', fontColor = '#ffffff' }: {
-  photos: Photo[]; studioName: string; accent?: string; fontColor?: string
+  photos: GalleryItem[]; studioName: string; accent?: string; fontColor?: string
 }) {
   const isDemo = photos.length === 0
   const displayPhotos = isDemo ? DEMO_PHOTOS : photos
 
   const [activeCategory, setActiveCategory] = useState('All')
-  const [album, setAlbum] = useState<{ photos: Photo[]; title: string } | null>(null)
+  const [album, setAlbum] = useState<{ photos: GalleryItem[]; title: string } | null>(null)
+  const [lightbox, setLightbox] = useState<{ items: GalleryItem[]; index: number } | null>(null)
 
   const categories = ['All', ...Array.from(new Set(displayPhotos.map(p => p.category ?? 'General').filter(Boolean)))]
   const filtered   = activeCategory === 'All' ? displayPhotos : displayPhotos.filter(p => (p.category ?? 'General') === activeCategory)
+
+  // Photo tiles keep opening the existing 3D flip-book (scoped to photo items
+  // only, exactly like before video items existed). Video tiles open a
+  // fullscreen lightbox that can arrow through the whole active filtered set.
+  const openItem = (item: GalleryItem, indexInFiltered: number) => {
+    if (item.type === 'video') {
+      setLightbox({ items: filtered, index: indexInFiltered })
+    } else {
+      setAlbum({ photos: filtered.filter(p => p.type !== 'video'), title: activeCategory === 'All' ? studioName : activeCategory })
+    }
+  }
 
   return (
     <>
@@ -203,29 +280,55 @@ export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C
         </div>
       )}
 
-      {/* Photo grid */}
+      {/* Media grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
-        {filtered.map((photo, i) => (
-          <button key={photo.id}
-            onClick={() => setAlbum({ photos: filtered, title: activeCategory === 'All' ? studioName : activeCategory })}
-            className="relative overflow-hidden rounded-xl group cursor-pointer"
+        {filtered.map((item, i) => (
+          <button key={item.id}
+            onClick={() => openItem(item, i)}
+            className="relative overflow-hidden rounded-xl group cursor-pointer transition-all duration-300 ease-out hover:-translate-y-1.5 hover:shadow-2xl"
             style={{ aspectRatio: '3/4' }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={photo.url} alt={photo.caption ?? `Photo ${i + 1}`} loading="lazy"
-              className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-semibold">
-                View Album
+            {item.type === 'video' ? (
+              item.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={item.thumbnailUrl} alt={item.caption ?? `Video ${i + 1}`} loading="lazy"
+                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+              ) : (
+                <video src={item.url} preload="metadata" muted playsInline
+                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+              )
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.url} alt={item.caption ?? `Photo ${i + 1}`} loading="lazy"
+                className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+            )}
+            {item.type === 'video' && (
+              <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="w-11 h-11 rounded-full flex items-center justify-center text-white text-sm transition-transform duration-300 group-hover:scale-110"
+                  style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)', border: '1px solid rgba(255,255,255,0.35)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+                  ▶
+                </span>
               </span>
+            )}
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+              {item.type !== 'video' && (
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-semibold">
+                  View Album
+                </span>
+              )}
             </div>
           </button>
         ))}
       </div>
 
-      {/* 3D album viewer */}
+      {/* 3D album viewer — photos only */}
       {album && (
         <AlbumViewer photos={album.photos} title={album.title} accent={accent}
           onClose={() => setAlbum(null)} />
+      )}
+
+      {/* Video lightbox */}
+      {lightbox && (
+        <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} />
       )}
     </>
   )

@@ -3,11 +3,15 @@ import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
+import HeroBackground from './HeroMedia'
+import Reveal from './Reveal'
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#D4849A'
   const fontColor = site.fontColor   ?? '#3D2B2B'
-  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroImg    = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroType   = site.heroImageUrl ? site.heroMediaType : site.galleryPhotos[0]?.type
+  const heroPoster = site.heroImageUrl ? site.heroPosterUrl : site.galleryPhotos[0]?.thumbnailUrl
 
   return (
     <div className="min-h-screen" style={{ background: '#FDF8F6', color: fontColor, fontFamily: '"Cormorant Garamond", "Times New Roman", serif' }}>
@@ -48,7 +52,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
           {heroImg && (
             <div className="flex-1 max-w-sm">
               <div className="rounded-[3rem] overflow-hidden shadow-2xl shadow-pink-100" style={{ aspectRatio: '3/4' }}>
-                <img src={heroImg} alt="" className="w-full h-full object-cover" />
+                <HeroBackground url={heroImg} type={heroType} poster={heroPoster} />
               </div>
             </div>
           )}
@@ -57,37 +61,37 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
 
             {/* Gallery */}
       <section id="gallery" className="py-20 px-6">
-        <div className="max-w-5xl mx-auto">
+        <Reveal className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>Portfolio</p>
             <h2 className="text-4xl font-light">Our Beautiful Work</h2>
           </div>
           <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
-        </div>
+        </Reveal>
       </section>
 
       {/* About */}
       <section id="about" className="py-20 px-6" style={{ background: 'linear-gradient(135deg, #FDF0EE 0%, #FDF8F6 100%)' }}>
-        <div className="max-w-3xl mx-auto text-center">
+        <Reveal className="max-w-3xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>Our Story</p>
           <h2 className="text-4xl font-light mb-8">About Us</h2>
           <p className="text-lg font-light leading-relaxed opacity-70">{site.about}</p>
           {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
           <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mt-6" />
-        </div>
+        </Reveal>
       </section>
 
       {/* Services */}
       {site.services.length > 0 && (
         <section id="services" className="py-20 px-6">
-          <div className="max-w-4xl mx-auto">
+          <Reveal className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
               <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>Services</p>
               <h2 className="text-4xl font-light">What We Create</h2>
             </div>
             <div className="grid sm:grid-cols-3 gap-6">
               {site.services.map(s => (
-                <div key={s.id} className="p-6 rounded-3xl text-center" style={{ background: '#FDF0EE', border: '1px solid #F0DDD8' }}>
+                <div key={s.id} className="p-6 rounded-3xl text-center transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl hover:shadow-pink-100" style={{ background: '#FDF0EE', border: '1px solid #F0DDD8' }}>
                   <div className="w-10 h-10 rounded-full mx-auto mb-4" style={{ background: `${accent}20` }}>
                     <div className="w-full h-full flex items-center justify-center text-lg" style={{ color: accent }}>✦</div>
                   </div>
@@ -97,13 +101,13 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </section>
       )}
 
       {/* Book */}
       <section id="book" className="py-20 px-6" style={{ background: 'linear-gradient(135deg, #FDF0EE 0%, #FDF8F6 100%)' }}>
-        <div className="max-w-xl mx-auto text-center">
+        <Reveal className="max-w-xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>
             {site.bookingEnabled ? 'Book a Session' : 'Say Hello'}
           </p>
@@ -118,7 +122,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
               </div>
             )
           }
-        </div>
+        </Reveal>
       </section>
 
       <footer className="py-8 text-center text-xs opacity-30" style={{ borderTop: '1px solid #F0DDD8' }}>

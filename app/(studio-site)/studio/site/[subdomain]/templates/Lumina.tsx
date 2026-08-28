@@ -3,11 +3,15 @@ import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
 import PortfolioGallery from './PortfolioGallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
+import HeroBackground from './HeroMedia'
+import Reveal from './Reveal'
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
   const accent    = site.themeAccent ?? '#C9A84C'
   const fontColor = site.fontColor   ?? '#F5F0E8'
-  const heroImg   = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroImg    = site.heroImageUrl || site.galleryPhotos[0]?.url
+  const heroType   = site.heroImageUrl ? site.heroMediaType : site.galleryPhotos[0]?.type
+  const heroPoster = site.heroImageUrl ? site.heroPosterUrl : site.galleryPhotos[0]?.thumbnailUrl
 
   return (
     <div className="min-h-screen" style={{ background: '#0A0A0A', color: fontColor, fontFamily: 'Georgia, serif' }}>
@@ -17,7 +21,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
         style={{ background: 'linear-gradient(160deg, #0A0A0A 0%, #1A1208 100%)' }}>
         {heroImg && (
           <div className="absolute inset-0 opacity-20">
-            <img src={heroImg} alt="" className="w-full h-full object-cover" />
+            <HeroBackground url={heroImg} type={heroType} poster={heroPoster} />
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, #0A0A0A 0%, transparent 40%, #0A0A0A 100%)' }} />
           </div>
         )}
@@ -40,42 +44,42 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 
       {/* Gallery */}
       <section className="py-24 px-6">
-        <div className="max-w-6xl mx-auto">
+        <Reveal className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">Portfolio</p>
           <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
-        </div>
+        </Reveal>
       </section>
 
       {/* About */}
       <section className="py-24 px-6" style={{ background: '#111' }}>
-        <div className="max-w-3xl mx-auto text-center">
+        <Reveal className="max-w-3xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-8 opacity-40">About</p>
           <p className="text-xl sm:text-2xl font-light leading-relaxed opacity-80">{site.about}</p>
           {site.city && <p className="mt-6 text-sm opacity-40 uppercase tracking-widest">{site.city}</p>}
-        </div>
+        </Reveal>
       </section>
 
       {/* Services */}
       {site.services.length > 0 && (
         <section className="py-24 px-6">
-          <div className="max-w-4xl mx-auto">
+          <Reveal className="max-w-4xl mx-auto">
             <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">Services</p>
             <div className="grid sm:grid-cols-3 gap-8">
               {site.services.map(s => (
-                <div key={s.id} className="border-t pt-6" style={{ borderColor: 'rgba(201,168,76,0.2)' }}>
+                <div key={s.id} className="border-t pt-6 px-1 rounded-b-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white/[0.03]" style={{ borderColor: 'rgba(201,168,76,0.2)' }}>
                   <h3 className="font-semibold mb-3 text-base" style={{ color: accent }}>{s.name}</h3>
                   <p className="text-sm opacity-60 leading-relaxed mb-3">{s.description}</p>
                   {s.price && <p className="text-xs opacity-40 uppercase tracking-wider">{s.price}</p>}
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </section>
       )}
 
       {/* Contact + Booking */}
       <section id="book" className="py-24 px-6" style={{ background: '#111' }}>
-        <div className="max-w-2xl mx-auto text-center">
+        <Reveal className="max-w-2xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4 opacity-40">
             {site.bookingEnabled ? 'Book a Session' : 'Contact'}
           </p>
@@ -90,7 +94,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
               </div>
             )
           }
-        </div>
+        </Reveal>
       </section>
 
       <SocialFooter site={site} accent={accent} />
