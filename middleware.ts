@@ -8,6 +8,22 @@ const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 // Shared pages that live outside /studio but must still be reachable on the studio app domain
 const SHARED_PAGES = new Set(['/privacy', '/terms', '/robots.txt', '/sitemap.xml'])
 
+// Lets the VayuStudios dashboard's own live-preview panel (WebsiteManager.tsx /
+// LivePreviewPanel.tsx) embed a studio's public site in an iframe. CSP's
+// frame-ancestors takes precedence over X-Frame-Options in every modern
+// browser when both are present, so this overrides next.config.js's blanket
+// X-Frame-Options: DENY for exactly these rewritten responses.
+//
+// next.config.js also has a headers() rule for this same purpose scoped to
+// /studio/site/:path* — that only ever matches *direct* path access (e.g.
+// test.vayustudios.com/studio/site/rkr, or localhost), because next.config's
+// header source matching runs against the pre-rewrite request path. A real
+// production subdomain request (rkr.vayustudios.com/) arrives with path `/`
+// and only becomes /studio/site/rkr via the rewrite() calls below, so it
+// needs the header set here, at the point of the actual rewrite.
+const STUDIO_SITE_FRAME_CSP =
+  "frame-ancestors 'self' https://vayustudios.com https://*.vayustudios.com https://test.vayustudios.com https://*.test.vayustudios.com"
+
 export async function middleware(request: NextRequest) {
   // x-studio-subdomain is set by the Cloudflare Worker that proxies *.vayustudios.com
   // (x-forwarded-host is avoided because Vercel overwrites it with its own value)
@@ -55,7 +71,9 @@ export async function middleware(request: NextRequest) {
     const rewritePath = path === '/'
       ? `/studio/site/${studioSubdomainMatch}`
       : `/studio/site/${studioSubdomainMatch}${path}`
-    return NextResponse.rewrite(new URL(rewritePath, request.url))
+    const res = NextResponse.rewrite(new URL(rewritePath, request.url))
+    res.headers.set('Content-Security-Policy', STUDIO_SITE_FRAME_CSP)
+    return res
   }
 
   // ── Custom domain routing ─────────────────────────────────────────────────
@@ -66,6 +84,7 @@ export async function middleware(request: NextRequest) {
       : `/studio/site/__custom${path}`
     const res = NextResponse.rewrite(new URL(rewritePath, request.url))
     res.headers.set('x-studio-custom-domain', host)
+    res.headers.set('Content-Security-Policy', STUDIO_SITE_FRAME_CSP)
     return res
   }
 
