@@ -102,9 +102,14 @@ export default function LivePreviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey])
 
+  // "sticky" only makes sense once the grid is actually two columns (see the
+  // matching min-[1680px]: breakpoint in WebsiteManager.tsx) — below that,
+  // this panel sits in normal stacked document flow under the editor, where
+  // sticking it to the viewport top would just make it overlap the tabs
+  // above it while scrolling.
   if (!publishUrl) {
     return (
-      <div className="bg-card border border-border rounded-2xl p-8 text-center lg:sticky lg:top-6">
+      <div className="bg-card border border-border rounded-2xl p-8 text-center min-[1680px]:sticky min-[1680px]:top-6">
         <p className="text-sm text-muted">Set a subdomain in the <span className="font-semibold text-text-primary">Domain</span> tab to see a live preview here.</p>
       </div>
     )
@@ -113,12 +118,16 @@ export default function LivePreviewPanel({
   const src = token ? `${publishUrl}?previewToken=${encodeURIComponent(token)}&v=${encodeURIComponent(refreshKey)}` : undefined
 
   return (
-    <div className="space-y-3 lg:sticky lg:top-6">
+    <div className="space-y-3 min-[1680px]:sticky min-[1680px]:top-6">
       <p className="text-xs font-semibold text-muted uppercase tracking-wider">Live Preview</p>
 
-      <div className="flex items-start gap-4">
+      {/* flex-wrap is the safety net: if the container ever gets narrower
+          than the mobile mockup's fixed width plus a usable minimum for the
+          desktop frame, the phone wraps onto its own line below instead of
+          forcing a horizontal overflow that spills over other elements. */}
+      <div className="flex flex-wrap items-start gap-4">
         {/* Desktop — grows to fill whatever width is available */}
-        <div className="flex-1 min-w-0 bg-card border border-border rounded-2xl p-3">
+        <div className="flex-1 min-w-[240px] bg-card border border-border rounded-2xl p-3">
           <div className="flex items-center gap-1.5 mb-2 px-1">
             <span className="w-2.5 h-2.5 rounded-full bg-red-400/50" />
             <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/50" />
