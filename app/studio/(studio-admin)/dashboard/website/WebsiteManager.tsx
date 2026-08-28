@@ -491,7 +491,15 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,640px)_1fr] gap-6 items-start">
+      {/* Side-by-side editor+preview only kicks in on genuinely wide desktop
+          monitors — lg (1024px) sounds like "not a phone" but plenty of real
+          laptops sit in the 1280-1440px range, which is wide enough to
+          trigger a two-column attempt but not wide enough to fit both
+          columns without squeezing the preview into an overflowing mess.
+          Below this threshold, the editor and the live preview each get the
+          full page width, stacked — the preview's own desktop+mobile row
+          then has plenty of room to lay out cleanly on its own. */}
+      <div className="grid grid-cols-1 min-[1680px]:grid-cols-[minmax(0,680px)_1fr] gap-6 items-start">
       <div className="space-y-6 min-w-0">
 
       {/* Tabs */}
