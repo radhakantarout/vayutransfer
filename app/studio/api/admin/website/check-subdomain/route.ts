@@ -25,13 +25,17 @@ export async function GET(req: NextRequest) {
 
   const studioBase = (process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com')
     .replace(/^https?:\/\//, '')
-  const siteUrl = `https://${slug}.${studioBase}`
+  // Matches WebsiteManager.tsx's own isPathBased logic — real wildcard
+  // subdomains don't resolve on localhost or on test.vayustudios.com.
+  const isPathBased = studioBase.startsWith('test.') || studioBase.startsWith('localhost')
+  const label = isPathBased ? `${studioBase}/studio/site/${slug}` : `${slug}.${studioBase}`
+  const siteUrl = isPathBased ? `${process.env.NEXT_PUBLIC_STUDIO_URL}/studio/site/${slug}` : `https://${label}`
 
   return NextResponse.json({
     success: true,
     available,
     slug,
     url: siteUrl,
-    message: available ? `${slug}.${studioBase} is available!` : `${slug}.${studioBase} is already taken`,
+    message: available ? `${label} is available!` : `${label} is already taken`,
   })
 }

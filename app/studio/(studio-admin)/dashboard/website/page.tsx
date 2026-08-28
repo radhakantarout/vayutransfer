@@ -25,7 +25,7 @@ export default async function WebsitePage() {
   if (!studio) redirect('/studio/login')
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <WebsiteManager studioId={studioId} studioName={studio.name} />
     </div>
   )

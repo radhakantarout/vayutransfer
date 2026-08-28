@@ -2,6 +2,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
+import LivePreviewPanel from './LivePreviewPanel'
+
+// Which templates read as dark-background — used to pick a phone-bezel color
+// that contrasts with whatever the preview is actually showing (see
+// LivePreviewPanel's isDarkTemplate prop).
+const DARK_TEMPLATE_IDS = new Set(['lumina', 'bold'])
 
 const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Gold',      color: '#C9A84C' },
@@ -44,6 +50,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const accentColorRef = useRef<HTMLInputElement>(null)
   const fontColorRef   = useRef<HTMLInputElement>(null)
 
+  // Tracks the content of the last known-saved state (server-managed fields
+  // like updatedAt stripped out) so the auto-save effect below can tell "the
+  // user changed something" apart from "site was just re-set by a save's own
+  // response" — without this, saving would re-trigger the effect, which would
+  // schedule another save, forever.
+  const lastAutoSavedSnapshot = useRef<string>('')
+  const snapshotForCompare = (s: StudioWebsite) => JSON.stringify({ ...s, updatedAt: undefined })
+
   // Load existing config
   useEffect(() => {
     fetch('/studio/api/admin/website')
@@ -52,9 +66,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         if (res.data) {
           setSite(res.data)
           setSubdomainInput(res.data.subdomain ?? '')
+          lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
         } else {
           // No website yet — show defaults
-          setSite({
+          const defaults: StudioWebsite = {
             studioId,
             subdomain: '',
             templateId: 'lumina',
@@ -67,7 +82,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             bookingEnabled: true,
             createdAt: '',
             updatedAt: '',
-          })
+          }
+          setSite(defaults)
+          lastAutoSavedSnapshot.current = snapshotForCompare(defaults)
         }
       })
       .finally(() => setLoading(false))
@@ -85,8 +102,28 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       body: JSON.stringify(body),
     }).then(r => r.json())
     setSaving(false)
-    if (res.success) { setSite(res.data); setSaved(true); setTimeout(() => setSaved(false), 2500) }
+    if (res.success) {
+      setSite(res.data)
+      lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
+      setSaved(true); setTimeout(() => setSaved(false), 2500)
+    }
   }
+
+  // Debounced auto-save for the live preview panel — deliberately DRAFT-only.
+  // This data model has no draft/published content fork (status only gates
+  // whether the public page 404s; the content shown once LIVE is whatever's
+  // currently saved), so auto-saving every keystroke on an already-public site
+  // could flash half-typed edits to real visitors. Once LIVE, the preview only
+  // refreshes on an explicit "Save Changes"/publish click, same as today.
+  const previewSaveDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => {
+    if (!site || site.status !== 'DRAFT') return
+    if (snapshotForCompare(site) === lastAutoSavedSnapshot.current) return
+    clearTimeout(previewSaveDebounceRef.current)
+    previewSaveDebounceRef.current = setTimeout(() => { save() }, 800)
+    return () => clearTimeout(previewSaveDebounceRef.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site])
 
   const checkSubdomain = useCallback(async (slug: string) => {
     if (slug.length < 3) { setSubdomainCheck(null); return }
@@ -404,11 +441,16 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const studioUrl  = process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://vayustudios.com'
   const studioBase = studioUrl.replace(/^https?:\/\//, '')
-  const isTest     = studioBase.startsWith('test.')
-  // In test env, use a direct path URL (*.test.vayustudios.com needs paid SSL).
-  // In production, use the real subdomain URL.
+  // Real wildcard subdomains (<slug>.vayustudios.com) only resolve where DNS/SSL
+  // is actually set up for them — test.vayustudios.com's own subdomains, and
+  // localhost (no *.localhost wildcard exists at all). Everywhere else that
+  // isn't production, fall back to the path-based route the app already serves
+  // subdomains through directly.
+  const isTest       = studioBase.startsWith('test.')
+  const isLocalhost  = studioBase.startsWith('localhost')
+  const isPathBased  = isTest || isLocalhost
   const publishUrl = site?.subdomain
-    ? isTest
+    ? isPathBased
       ? `${studioUrl}/studio/site/${site.subdomain}`
       : `https://${site.subdomain}.${studioBase}`
     : null
@@ -419,18 +461,18 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3 bg-card border border-border rounded-2xl px-5 py-4">
         <div>
           <h2 className="text-xl font-bold text-text-primary">My Website</h2>
           {publishUrl && (
             <a href={publishUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline mt-0.5 block">{publishUrl}</a>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {site.status === 'LIVE' ? (
             <button
               onClick={() => save({ status: 'DRAFT' })}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors">
+              className="px-4 py-2 rounded-full text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 transition-colors shadow-sm">
               ● Live — click to unpublish
             </button>
           ) : (
@@ -438,16 +480,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               onClick={() => save({ status: 'LIVE' })}
               disabled={!site.subdomain}
               title={!site.subdomain ? 'Set a subdomain first in the Domain tab' : ''}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-bg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
-              ↑ Publish Website
+              className="px-4 py-2 rounded-full text-xs font-bold bg-accent text-bg hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm">
+              ↑ Publish
             </button>
           )}
           <button onClick={() => save()} disabled={saving}
-            className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-60 transition-opacity">
+            className="px-5 py-2 bg-accent text-bg text-xs font-bold rounded-full disabled:opacity-60 hover:shadow-lg transition-all shadow-sm">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
           </button>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,640px)_1fr] gap-6 items-start">
+      <div className="space-y-6 min-w-0">
 
       {/* Tabs */}
       <div className="flex gap-1 bg-card border border-border rounded-2xl p-1 overflow-x-auto">
@@ -472,53 +517,53 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         <div className="space-y-4">
           <p className="text-xs text-muted">Choose a design. You can switch anytime — your content stays.</p>
 
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Not sure which fits? Describe your style</label>
+          <div className="bg-card border border-border rounded-xl px-3 py-2 space-y-1.5">
             <div className="flex items-center gap-2">
+              <label className="text-[10px] font-semibold text-muted uppercase tracking-wider whitespace-nowrap">Not sure which fits?</label>
               <input value={templateHint} onChange={e => setTemplateHint(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') askAiForTemplate() }}
                 placeholder="e.g. soft, romantic pre-wedding shoots in pastel tones"
-                className="flex-1 bg-bg border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
+                className="flex-1 bg-bg border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary outline-none focus:border-accent placeholder-muted/50" />
               <button onClick={askAiForTemplate} disabled={templateSuggesting || !templateHint.trim()}
-                className="px-4 py-2.5 bg-accent text-bg text-xs font-bold rounded-xl disabled:opacity-50 hover:opacity-90 transition-opacity whitespace-nowrap">
+                className="px-3 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-lg disabled:opacity-50 hover:opacity-90 transition-opacity whitespace-nowrap">
                 {templateSuggesting ? '✨ Thinking…' : '✨ Recommend'}
               </button>
             </div>
-            {templateSuggestError && <p className="text-[11px] text-danger">{templateSuggestError}</p>}
+            {templateSuggestError && <p className="text-[10px] text-danger">{templateSuggestError}</p>}
             {templateSuggestion && (
-              <p className="text-[11px] text-muted">
+              <p className="text-[10px] text-muted">
                 ✨ Recommended: <span className="font-semibold text-accent">{TEMPLATES.find(t => t.id === templateSuggestion.templateId)?.name}</span> — {templateSuggestion.reason}
               </p>
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
             {TEMPLATES.map(t => {
               const isRecommended = templateSuggestion?.templateId === t.id
               return (
                 <button key={t.id} onClick={() => update({ templateId: t.id })}
-                  className={`relative rounded-2xl overflow-hidden border-2 transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02]' : isRecommended ? 'border-accent/60 ring-2 ring-accent/30' : 'border-border hover:border-accent/50'}`}>
+                  className={`relative rounded-lg overflow-hidden border transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02] shadow-md' : isRecommended ? 'border-accent/60 ring-1 ring-accent/30' : 'border-border hover:border-accent/50'}`}>
                   {isRecommended && (
-                    <span className="absolute top-1.5 right-1.5 z-10 bg-accent text-bg text-[9px] font-bold px-1.5 py-0.5 rounded-full">✨ AI pick</span>
+                    <span className="absolute top-1 right-1 z-10 bg-accent text-bg text-[8px] font-bold px-1 py-px rounded-full">✨ AI</span>
                   )}
-                  <div className={`h-24 ${t.preview} flex items-center justify-center`}>
-                    <span className="text-xs font-bold text-white drop-shadow">{t.name}</span>
+                  <div className={`h-12 ${t.preview} flex items-center justify-center`}>
+                    <span className="text-[10px] font-bold text-white drop-shadow">{t.name}</span>
                   </div>
-                  <div className="p-2 bg-card">
-                    <p className="text-xs font-semibold text-text-primary">{t.name}</p>
-                    <p className="text-[10px] text-muted leading-tight">{t.desc}</p>
+                  <div className="px-1.5 py-1 bg-card">
+                    <p className="text-[10px] font-semibold text-text-primary leading-tight">{t.name}</p>
+                    <p className="text-[8px] text-muted leading-tight">{t.desc}</p>
                   </div>
                 </button>
               )
             })}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
-            <div className="flex items-center gap-2 flex-wrap">
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
+            <div className="flex items-center gap-1.5 flex-wrap">
               {ACCENT_PRESETS.map(p => (
                 <button key={p.label} onClick={() => p.color ? update({ themeAccent: p.color }) : accentColorRef.current?.click()}
                   title={p.label}
-                  className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.themeAccent === p.color ? 'border-white scale-110' : 'border-transparent'}`}
+                  className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${site.themeAccent === p.color ? 'border-white scale-110' : 'border-transparent'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
@@ -527,19 +572,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
-            <div className="flex items-center gap-2 flex-wrap">
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Font colour <span className="font-normal normal-case">(headings & body text)</span></label>
+            <div className="flex items-center gap-1.5 flex-wrap">
               {FONT_COLOR_PRESETS.map(p => (
                 <button key={p.label} onClick={() => p.color ? update({ fontColor: p.color }) : fontColorRef.current?.click()}
                   title={p.label}
-                  className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
+                  className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${site.fontColor === p.color ? 'border-accent scale-110' : 'border-border'}`}
                   style={{ background: p.color || 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }}
                 />
               ))}
               <input ref={fontColorRef} type="color" value={site.fontColor ?? '#F5F0E8'} onChange={e => update({ fontColor: e.target.value })}
                 className="sr-only" title="Custom font colour" />
             </div>
-            <p className="text-[10px] text-muted mt-2">Leave unset to use each template&apos;s default text colour.</p>
+            <p className="text-[9px] text-muted mt-1.5">Leave unset to use each template&apos;s default text colour.</p>
           </div>
           {publishUrl && (
             <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"
@@ -787,7 +832,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
                 className="flex-1 bg-card px-4 py-3 text-sm text-text-primary outline-none"
                 placeholder="ramstudio" />
               <span className="bg-card/50 px-3 py-3 text-xs text-muted border-l border-border whitespace-nowrap">
-                {isTest ? ` → ${studioBase}/studio/site/` : `.${studioBase}`}
+                {isPathBased ? ` → ${studioBase}/studio/site/` : `.${studioBase}`}
               </span>
             </div>
             {checkingSlug && <p className="text-xs text-muted mt-1.5">Checking…</p>}
@@ -819,6 +864,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </div>
         </div>
       )}
+      </div>
+
+      <LivePreviewPanel publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)} />
+      </div>
     </div>
   )
 }

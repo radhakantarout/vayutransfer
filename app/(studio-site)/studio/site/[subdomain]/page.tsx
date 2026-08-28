@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { getWebsiteBySubdomain, getWebsiteByCustomDomain } from '@/lib/studio/website'
+import { verifyPreviewToken } from '@/lib/studio/previewToken'
 import type { StudioWebsite } from '@/types/studio'
 
 import Lumina from './templates/Lumina'
@@ -36,11 +37,26 @@ export async function generateMetadata({ params }: { params: Promise<{ subdomain
   }
 }
 
-export default async function StudioSitePage({ params }: { params: Promise<{ subdomain: string }> }) {
+export default async function StudioSitePage({
+  params, searchParams,
+}: {
+  params: Promise<{ subdomain: string }>
+  searchParams: Promise<{ previewToken?: string }>
+}) {
   const { subdomain } = await params
   const site = await getSite(subdomain)
 
-  if (!site || site.status === 'DRAFT') notFound()
+  if (!site) notFound()
+
+  if (site.status === 'DRAFT') {
+    // Draft sites 404 to the public — the one exception is the dashboard's own
+    // live-preview panel / manual preview link, which appends a short-lived
+    // signed token (see lib/studio/previewToken.ts) scoped to exactly this
+    // subdomain. A guessable/shared URL with no valid token still 404s.
+    const { previewToken } = await searchParams
+    const isValidPreview = !!previewToken && await verifyPreviewToken(previewToken, subdomain)
+    if (!isValidPreview) notFound()
+  }
 
   const template = (() => {
     switch (site.templateId) {
