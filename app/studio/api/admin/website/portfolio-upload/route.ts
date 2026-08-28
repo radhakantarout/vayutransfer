@@ -22,7 +22,7 @@ const PREVIEW_BASE = process.env.NEXT_PUBLIC_STUDIO_PREVIEW_URL ?? 'https://prev
 const BUCKET       = process.env.STUDIO_R2_BUCKET ?? 'vayustudio-previews'
 
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime']
-const MAX_IMAGE_BYTES         = 10  * 1024 * 1024
+const MAX_IMAGE_BYTES         = 100 * 1024 * 1024
 const MAX_GALLERY_VIDEO_BYTES = 150 * 1024 * 1024
 // Smaller cap for hero backgrounds — these autoplay immediately on page load,
 // so a large file directly hurts first-paint time.
@@ -30,7 +30,7 @@ const MAX_HERO_VIDEO_BYTES    = 60  * 1024 * 1024
 
 // Returns a presigned PUT URL so the browser uploads the file directly to R2 —
 // proxying the file bytes through this route hit serverless request-body limits
-// well before the client's own 10MB cap, which silently broke uploads.
+// well before the client's own image-size cap, which silently broke uploads.
 //
 // sizeBytes is billed against the studio's storage quota the moment the
 // upload URL is issued (same client-supplied trust level as the gallery's
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   // Defense in depth — WebsiteManager.tsx already enforces these client-side,
   // but nothing previously capped size server-side at all.
   if (isImage && body.sizeBytes > MAX_IMAGE_BYTES) {
-    return NextResponse.json({ error: 'Image exceeds the 10MB limit' }, { status: 400 })
+    return NextResponse.json({ error: 'Image exceeds the 100MB limit' }, { status: 400 })
   }
   if (isVideo) {
     const cap = body.kind === 'hero' ? MAX_HERO_VIDEO_BYTES : MAX_GALLERY_VIDEO_BYTES

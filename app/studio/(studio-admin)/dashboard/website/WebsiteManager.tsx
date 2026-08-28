@@ -126,7 +126,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const heroFileInputRef = useRef<HTMLInputElement>(null)
 
   const CATEGORIES = ['Wedding', 'Pre-Wedding', 'Portrait', 'Corporate', 'Fashion', 'School', 'General']
-  const MAX_IMAGE_BYTES         = 10  * 1024 * 1024 // 10 MB
+  const MAX_IMAGE_BYTES         = 100 * 1024 * 1024 // 100 MB
   const MAX_GALLERY_VIDEO_BYTES = 150 * 1024 * 1024 // 150 MB
   const MAX_HERO_VIDEO_BYTES    = 60  * 1024 * 1024 // 60 MB — must load fast, it autoplays immediately
 
@@ -166,7 +166,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     const isVideo = file.type.startsWith('video/')
     const isImage = file.type.startsWith('image/')
     if (!isImage && !isVideo) throw new Error(`${file.name}: only image or video files are allowed`)
-    if (isImage && file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name}: max image size is 10 MB`)
+    if (isImage && file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name}: max image size is 100 MB`)
     if (isVideo) {
       const cap = kind === 'hero' ? MAX_HERO_VIDEO_BYTES : MAX_GALLERY_VIDEO_BYTES
       if (file.size > cap) throw new Error(`${file.name}: max video size is ${Math.round(cap / (1024 * 1024))} MB`)
