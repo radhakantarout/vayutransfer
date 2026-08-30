@@ -1,3 +1,6 @@
+import { translator } from '@/lib/studio/i18n'
+import type { WebsiteLanguage } from '@/types/studio'
+
 interface SocialIconsProps {
   instagram?: string
   facebook?: string
@@ -41,8 +44,9 @@ function IconWhatsApp() {
 
 // A proper contact button (icon + label) rather than a plain text link — used in
 // each template's Contact section wherever site.whatsapp is set.
-export function WhatsAppButton({ number, className = '' }: { number?: string; className?: string }) {
+export function WhatsAppButton({ number, className = '', language }: { number?: string; className?: string; language?: WebsiteLanguage }) {
   if (!number) return null
+  const t = translator(language)
   const digits = number.replace(/\D/g, '')
   return (
     <a
@@ -52,7 +56,7 @@ export function WhatsAppButton({ number, className = '' }: { number?: string; cl
       className={`inline-flex items-center gap-2 bg-[#25D366]/10 border border-[#25D366]/30 text-[#25D366] font-semibold px-4 py-2 rounded-xl hover:bg-[#25D366]/20 transition-colors text-sm ${className}`}
     >
       <IconWhatsApp />
-      Chat on WhatsApp
+      {t('whatsappChat', 'Chat on WhatsApp')}
     </a>
   )
 }

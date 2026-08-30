@@ -1,29 +1,50 @@
 // Template: Bold — Large typography, high contrast, modern
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
-import PortfolioGallery from './PortfolioGallery'
+import Gallery from './Gallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
 import HeroBackground from './HeroMedia'
 import Reveal from './Reveal'
+import SiteNav from './SiteNav'
+import Testimonials from './Testimonials'
+import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+
+const BACKGROUND_PRESETS: Record<string, { bg: string; headerBg: string; overlay: string }> = {
+  default: { bg: '#000000', headerBg: 'rgba(0,0,0,0.95)',    overlay: 'rgba(0,0,0,0.6)' },
+  wine:    { bg: '#1A0505', headerBg: 'rgba(26,5,5,0.95)',   overlay: 'rgba(26,5,5,0.6)' },
+  ink:     { bg: '#00040D', headerBg: 'rgba(0,4,13,0.95)',   overlay: 'rgba(0,4,13,0.6)' },
+}
 
 export default function Bold({ site }: { site: StudioWebsite }) {
+  const t = translator(site.language)
   const accent    = site.themeAccent ?? '#FF3B30'
   const fontColor = site.fontColor   ?? '#FFFFFF'
+  const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
   // Bold never fell back to the first gallery photo the way the other
   // templates do — only an explicitly-set cover shows a background here, so
   // an existing Bold site that never set one keeps its pure-black hero
   // exactly as it looks today.
   const heroBg = site.heroImageUrl
+  const navLinks = [
+    { label: t('navGallery', 'Work'), href: '#work' },
+    { label: t('navAbout', 'About'), href: '#about' },
+    ...(site.services.length > 0 ? [{ label: t('navServices', 'Services'), href: '#services' }] : []),
+    ...(site.testimonials?.length ? [{ label: t('navReviews', 'Reviews'), href: '#reviews' }] : []),
+  ]
 
   return (
-    <div className="min-h-screen bg-black" style={{ color: fontColor, fontFamily: '"Inter", "Helvetica Neue", sans-serif' }}>
+    <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Inter", "Helvetica Neue", sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="sticky top-0 z-50 bg-black/95 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-50 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between gap-4" style={{ background: bg.headerBg }}>
         <span className="font-black text-sm uppercase tracking-widest">{site.heroTitle}</span>
-        <a href="#book" style={{ backgroundColor: accent }} className="px-5 py-2 text-xs font-bold uppercase tracking-wider rounded-lg text-white transition-opacity hover:opacity-80">
-          {site.bookingEnabled ? 'Book Now' : 'Contact'}
-        </a>
+        <div className="flex items-center gap-6">
+          <SiteNav links={navLinks} accent={accent} fontColor="#FFFFFF" panelBg={bg.bg}
+            desktopClassName="hidden md:flex items-center gap-6" linkClassName="text-xs font-bold uppercase tracking-wider" />
+          <a href="#book" style={{ backgroundColor: accent }} className="px-5 py-2 text-xs font-bold uppercase tracking-wider rounded-lg text-white transition-opacity hover:opacity-80 whitespace-nowrap">
+            {site.bookingEnabled ? t('navBook', 'Book Now') : t('navContact', 'Contact')}
+          </a>
+        </div>
       </header>
 
       {/* Hero */}
@@ -33,7 +54,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
             <div className="absolute inset-0 opacity-40">
               <HeroBackground url={heroBg} type={site.heroMediaType} poster={site.heroPosterUrl} />
             </div>
-            <div className="absolute inset-0 bg-black/60" />
+            <div className="absolute inset-0" style={{ background: bg.overlay }} />
           </>
         )}
         <div className="relative max-w-6xl mx-auto">
@@ -49,20 +70,20 @@ export default function Bold({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section className="px-6 py-16 border-b border-white/10">
+      <section id="work" className="px-6 py-16 border-b border-white/10">
         <Reveal className="max-w-6xl mx-auto">
           <div className="flex items-baseline justify-between mb-8">
-            <h2 className="text-3xl font-black uppercase">Work</h2>
+            <h2 className="text-3xl font-black uppercase">{t('navGallery', 'Work')}</h2>
           </div>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
+          <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
         </Reveal>
       </section>
 
       {/* About */}
-      <section className="px-6 py-16 border-b border-white/10">
+      <section id="about" className="px-6 py-16 border-b border-white/10">
         <Reveal className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12">
           <div>
-            <h2 className="text-5xl font-black uppercase mb-6">About</h2>
+            <h2 className="text-5xl font-black uppercase mb-6">{t('sectionAboutHeading', 'About')}</h2>
             <p className="text-white/60 leading-relaxed">{site.about}</p>
             {site.city && <p className="mt-6 text-xs font-bold uppercase tracking-widest" style={{ color: accent }}>{site.city}</p>}
           </div>
@@ -72,9 +93,9 @@ export default function Bold({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section className="px-6 py-16 border-b border-white/10">
+        <section id="services" className="px-6 py-16 border-b border-white/10">
           <Reveal className="max-w-6xl mx-auto">
-            <h2 className="text-5xl font-black uppercase mb-10">Services</h2>
+            <h2 className="text-5xl font-black uppercase mb-10">{t('sectionServicesHeading', 'Services')}</h2>
             {site.services.map((s, i) => (
               <div key={s.id} className="border-b border-white/10 py-6 grid md:grid-cols-3 gap-4 group transition-all duration-300 hover:bg-white/[0.03] hover:px-3 -mx-3 px-3">
                 <div className="flex items-center gap-4">
@@ -90,17 +111,27 @@ export default function Bold({ site }: { site: StudioWebsite }) {
         </section>
       )}
 
+      {/* Testimonials */}
+      {!!site.testimonials?.length && (
+        <section id="reviews" className="px-6 py-16 border-b border-white/10">
+          <Reveal className="max-w-6xl mx-auto">
+            <h2 className="text-5xl font-black uppercase mb-10">{t('sectionReviewsHeading', 'Reviews')}</h2>
+            <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
+          </Reveal>
+        </section>
+      )}
+
       {/* Book */}
       <section id="book" className="px-6 py-16">
         <Reveal className="max-w-2xl mx-auto">
-          <h2 className="text-5xl font-black uppercase mb-10">{site.bookingEnabled ? 'Book' : 'Contact'}</h2>
+          <h2 className="text-5xl font-black uppercase mb-10">{site.bookingEnabled ? t('navBook', 'Book') : t('navContact', 'Contact')}</h2>
           {site.bookingEnabled
-            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} />
+            ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} language={site.language} />
             : (
               <div className="space-y-4 text-white/60">
                 {site.contactEmail && <p className="text-lg">{site.contactEmail}</p>}
                 {site.contactPhone && <p className="text-lg">{site.contactPhone}</p>}
-                <WhatsAppButton number={site.whatsapp} />
+                <WhatsAppButton number={site.whatsapp} language={site.language} />
               </div>
             )
           }
@@ -109,7 +140,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
 
       <footer className="border-t border-white/10 py-6 px-6 flex items-center justify-between text-xs text-white/20">
         <span>{site.heroTitle}</span>
-        <span>Powered by VayuStudios</span>
+        <span>{t('footerPoweredBy', 'Powered by')} VayuStudios</span>
       </footer>
     </div>
   )

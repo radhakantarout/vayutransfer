@@ -13,9 +13,12 @@ export interface WebsiteTemplateMeta {
 }
 
 export const WEBSITE_TEMPLATES: WebsiteTemplateMeta[] = [
-  { id: 'lumina',  name: 'Lumina',  desc: 'Dark & elegant, full-bleed',      preview: 'bg-gradient-to-br from-zinc-900 to-amber-950' },
-  { id: 'clarity', name: 'Clarity', desc: 'Minimal white, editorial',        preview: 'bg-gradient-to-br from-white to-gray-100' },
-  { id: 'ember',   name: 'Ember',   desc: 'Warm earth tones, soft',          preview: 'bg-gradient-to-br from-orange-50 to-amber-100' },
-  { id: 'bold',    name: 'Bold',    desc: 'High contrast, large typography', preview: 'bg-gradient-to-br from-zinc-950 to-red-950' },
-  { id: 'bloom',   name: 'Bloom',   desc: 'Pastel, feminine, romantic',      preview: 'bg-gradient-to-br from-pink-50 to-rose-100' },
+  { id: 'lumina',   name: 'Lumina',   desc: 'Dark & elegant, full-bleed',              preview: 'bg-gradient-to-br from-zinc-900 to-amber-950' },
+  { id: 'clarity',  name: 'Clarity',  desc: 'Minimal white, editorial',                preview: 'bg-gradient-to-br from-white to-gray-100' },
+  { id: 'ember',    name: 'Ember',    desc: 'Warm earth tones, soft',                  preview: 'bg-gradient-to-br from-orange-50 to-amber-100' },
+  { id: 'bold',     name: 'Bold',     desc: 'High contrast, large typography',         preview: 'bg-gradient-to-br from-zinc-950 to-red-950' },
+  { id: 'bloom',    name: 'Bloom',    desc: 'Pastel, feminine, romantic',              preview: 'bg-gradient-to-br from-pink-50 to-rose-100' },
+  { id: 'frame',    name: 'Frame',    desc: 'Black & white editorial, gallery-first',  preview: 'bg-gradient-to-br from-white to-black' },
+  { id: 'zari',     name: 'Zari',     desc: 'Ivory & gold, boutique luxury',           preview: 'bg-gradient-to-br from-amber-50 to-yellow-200' },
+  { id: 'monsoon',  name: 'Monsoon',  desc: 'Deep blue & silver, modern geometric',    preview: 'bg-gradient-to-br from-slate-900 to-sky-800' },
 ]
