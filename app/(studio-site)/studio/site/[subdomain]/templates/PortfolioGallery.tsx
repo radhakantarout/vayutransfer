@@ -1,13 +1,18 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { translator } from '@/lib/studio/i18n'
+import type { WebsiteLanguage } from '@/types/studio'
 
 // `type` undefined means 'photo' — every gallery record created before video
 // support existed has no value here and must keep rendering exactly as before.
-interface GalleryItem { id: string; url: string; type?: 'photo' | 'video'; thumbnailUrl?: string; caption?: string; category?: string }
+// Exported so the alternative gallery-style components (templates/gallery-styles/)
+// can share this exact shape + the demo fallback + VideoLightbox below, instead
+// of each re-implementing video playback/lightbox behavior from scratch.
+export interface GalleryItem { id: string; url: string; type?: 'photo' | 'video'; thumbnailUrl?: string; caption?: string; category?: string }
 
 // Demo photos from /public — shown when the studio hasn't uploaded portfolio photos yet.
-const DEMO_PHOTOS: GalleryItem[] = [
+export const DEMO_PHOTOS: GalleryItem[] = [
   { id: 'd1',  url: '/images/gallery/wedding/wedding_1.jpeg',                    category: 'Wedding' },
   { id: 'd2',  url: '/images/gallery/wedding/wedding_bengali.png',               category: 'Wedding' },
   { id: 'd3',  url: '/images/gallery/wedding/Wedding_punjabi.png',               category: 'Wedding' },
@@ -66,9 +71,10 @@ function PageSlot({ content, accent }: { content: PageContent; accent: string })
   )
 }
 
-function AlbumViewer({ photos, title, accent, onClose }: {
-  photos: GalleryItem[]; title: string; accent: string; onClose: () => void
+function AlbumViewer({ photos, title, accent, onClose, language }: {
+  photos: GalleryItem[]; title: string; accent: string; onClose: () => void; language?: WebsiteLanguage
 }) {
+  const t = translator(language)
   const spreads = buildSpreads(photos, title, accent)
   const [current,    setCurrent]    = useState(0)
   const [flipping,   setFlipping]   = useState<'fwd' | 'bwd' | null>(null)
@@ -154,12 +160,12 @@ function AlbumViewer({ photos, title, accent, onClose }: {
       <div className="flex items-center gap-6 mt-6">
         <button onClick={prev} disabled={current === 0}
           className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
-          ← Prev
+          ← {t('galleryPrev', 'Prev')}
         </button>
         <span className="text-white/40 text-xs">{current + 1} / {spreads.length}</span>
         <button onClick={next} disabled={current >= spreads.length - 1}
           className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
-          Next →
+          {t('galleryNext', 'Next')} →
         </button>
       </div>
     </div>
@@ -170,9 +176,10 @@ function AlbumViewer({ photos, title, accent, onClose }: {
 // through a mixed set); kept fully separate from AlbumViewer so the existing
 // 3D flip-book stays untouched for photo-only galleries ────────────────────
 
-function VideoLightbox({ items, startIndex, onClose }: {
-  items: GalleryItem[]; startIndex: number; onClose: () => void
+export function VideoLightbox({ items, startIndex, onClose, language }: {
+  items: GalleryItem[]; startIndex: number; onClose: () => void; language?: WebsiteLanguage
 }) {
+  const t = translator(language)
   const [index, setIndex] = useState(startIndex)
   const touchX = useRef(0)
 
@@ -217,12 +224,12 @@ function VideoLightbox({ items, startIndex, onClose }: {
       <div className="flex items-center gap-6 mt-6">
         <button onClick={prev} disabled={index === 0}
           className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
-          ← Prev
+          ← {t('galleryPrev', 'Prev')}
         </button>
         <span className="text-white/40 text-xs">{index + 1} / {items.length}</span>
         <button onClick={next} disabled={index >= items.length - 1}
           className="px-5 py-2 rounded-full text-sm font-semibold text-white/70 hover:text-white border border-white/20 hover:border-white/50 disabled:opacity-30 transition-all">
-          Next →
+          {t('galleryNext', 'Next')} →
         </button>
       </div>
     </div>
@@ -231,9 +238,10 @@ function VideoLightbox({ items, startIndex, onClose }: {
 
 // ── Main PortfolioGallery ────────────────────────────────────────────────────
 
-export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C', fontColor = '#ffffff' }: {
-  photos: GalleryItem[]; studioName: string; accent?: string; fontColor?: string
+export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C', fontColor = '#ffffff', language }: {
+  photos: GalleryItem[]; studioName: string; accent?: string; fontColor?: string; language?: WebsiteLanguage
 }) {
+  const t = translator(language)
   const isDemo = photos.length === 0
   const displayPhotos = isDemo ? DEMO_PHOTOS : photos
 
@@ -261,7 +269,7 @@ export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C
       {isDemo && (
         <div className="mb-6 px-4 py-3 rounded-xl text-center text-xs"
           style={{ background: `${accent}18`, border: `1px solid ${accent}33`, color: `${accent}cc` }}>
-          These are sample photos. Log in to your dashboard → Website → Gallery to upload your real portfolio.
+          {t('galleryDemoNotice', 'These are sample photos. Log in to your dashboard → Website → Gallery to upload your real portfolio.')}
         </div>
       )}
 
@@ -312,7 +320,7 @@ export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
               {item.type !== 'video' && (
                 <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-semibold">
-                  View Album
+                  {t('viewAlbum', 'View Album')}
                 </span>
               )}
             </div>
@@ -323,12 +331,12 @@ export default function PortfolioGallery({ photos, studioName, accent = '#C9A84C
       {/* 3D album viewer — photos only */}
       {album && (
         <AlbumViewer photos={album.photos} title={album.title} accent={accent}
-          onClose={() => setAlbum(null)} />
+          onClose={() => setAlbum(null)} language={language} />
       )}
 
       {/* Video lightbox */}
       {lightbox && (
-        <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} />
+        <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />
       )}
     </>
   )

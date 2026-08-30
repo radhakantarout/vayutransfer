@@ -1,31 +1,45 @@
 // Template: Clarity — Minimal white, editorial
 import type { StudioWebsite } from '@/types/studio'
 import BookingForm from './BookingForm'
-import PortfolioGallery from './PortfolioGallery'
+import Gallery from './Gallery'
 import SocialIcons, { WhatsAppButton } from './SocialIcons'
 import HeroBackground from './HeroMedia'
 import Reveal from './Reveal'
+import SiteNav from './SiteNav'
+import Testimonials from './Testimonials'
+import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+
+const BACKGROUND_PRESETS: Record<string, { bg: string; alt: string; headerBg: string }> = {
+  default: { bg: '#FFFFFF', alt: '#F9FAFB', headerBg: 'rgba(255,255,255,0.95)' },
+  ivory:   { bg: '#FBF8F3', alt: '#F5EFE4', headerBg: 'rgba(251,248,243,0.95)' },
+  cool:    { bg: '#F7F8FA', alt: '#EEF0F3', headerBg: 'rgba(247,248,250,0.95)' },
+}
 
 export default function Clarity({ site }: { site: StudioWebsite }) {
+  const t = translator(site.language)
   const accent    = site.themeAccent ?? '#1A1A1A'
   const fontColor = site.fontColor   ?? '#1A1A1A'
+  const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
   const heroImg    = site.heroImageUrl || site.galleryPhotos[0]?.url
   const heroType   = site.heroImageUrl ? site.heroMediaType : site.galleryPhotos[0]?.type
   const heroPoster = site.heroImageUrl ? site.heroPosterUrl : site.galleryPhotos[0]?.thumbnailUrl
+  const navLinks = [
+    { label: t('navGallery', 'Work'), href: '#work' },
+    { label: t('navAbout', 'About'), href: '#about' },
+    ...(site.services.length > 0 ? [{ label: t('navServices', 'Services'), href: '#services' }] : []),
+    ...(site.testimonials?.length ? [{ label: t('navReviews', 'Reviews'), href: '#reviews' }] : []),
+    ...(site.bookingEnabled ? [{ label: t('navContact', 'Contact'), href: '#book' }] : []),
+  ]
 
   return (
-    <div className="min-h-screen bg-white" style={{ color: fontColor, fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif' }}>
+    <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Helvetica Neue", Helvetica, Arial, sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur border-b border-gray-100">
+      <header className="fixed top-0 left-0 right-0 z-50 backdrop-blur border-b border-gray-100" style={{ background: bg.headerBg }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <span className="font-bold text-sm tracking-widest uppercase">{site.heroTitle}</span>
-          <nav className="hidden sm:flex items-center gap-8 text-xs uppercase tracking-widest text-gray-500">
-            <a href="#work" className="hover:text-gray-900 transition-colors">Work</a>
-            <a href="#about" className="hover:text-gray-900 transition-colors">About</a>
-            <a href="#services" className="hover:text-gray-900 transition-colors">Services</a>
-            {site.bookingEnabled && <a href="#book" className="hover:text-gray-900 transition-colors">Contact</a>}
-          </nav>
+          <SiteNav links={navLinks} accent={accent} fontColor="#6b7280" panelBg={bg.bg}
+            desktopClassName="hidden md:flex items-center gap-8" linkClassName="text-xs uppercase tracking-widest" />
         </div>
       </header>
 
@@ -51,15 +65,15 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       {/* Gallery */}
       <section id="work" className="py-16 px-6">
         <Reveal className="max-w-6xl mx-auto">
-          <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">Selected Work</p>
-          <PortfolioGallery photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} />
+          <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">{t('navGallery', 'Selected Work')}</p>
+          <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
         </Reveal>
       </section>
 
       {/* About */}
-      <section id="about" className="py-24 px-6 bg-gray-50">
+      <section id="about" className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-3xl mx-auto">
-          <p className="text-xs uppercase tracking-widest text-gray-400 mb-6">About</p>
+          <p className="text-xs uppercase tracking-widest text-gray-400 mb-6">{t('sectionAboutHeading', 'About')}</p>
           <p className="text-2xl font-light leading-relaxed text-gray-700">{site.about}</p>
           {site.city && <p className="mt-8 text-sm text-gray-400 uppercase tracking-widest">{site.city}</p>}
         </Reveal>
@@ -69,7 +83,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       {site.services.length > 0 && (
         <section id="services" className="py-24 px-6">
           <Reveal className="max-w-4xl mx-auto">
-            <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">Services</p>
+            <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">{t('sectionServicesHeading', 'Services')}</p>
             <div className="divide-y divide-gray-100">
               {site.services.map(s => (
                 <div key={s.id} className="py-8 grid sm:grid-cols-3 gap-4 transition-all duration-300 hover:bg-gray-50 rounded-xl px-3 -mx-3">
@@ -84,24 +98,34 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
         </section>
       )}
 
+      {/* Testimonials */}
+      {!!site.testimonials?.length && (
+        <section id="reviews" className="py-24 px-6">
+          <Reveal className="max-w-5xl mx-auto">
+            <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">{t('sectionReviewsHeading', 'What Clients Say')}</p>
+            <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
+          </Reveal>
+        </section>
+      )}
+
       {/* Booking */}
-      <section id="book" className="py-24 px-6 bg-gray-50">
+      <section id="book" className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-2xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">
-            {site.bookingEnabled ? 'Book a Session' : 'Contact'}
+            {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}
           </p>
-          <h2 className="text-3xl font-light mb-10">Get in touch</h2>
+          <h2 className="text-3xl font-light mb-10">{t('bookingIntro', 'Get in touch')}</h2>
           {site.bookingEnabled
             ? (
               <div style={{ '--accent': accent } as React.CSSProperties}>
-                <BookingFormLight subdomain={site.subdomain} message={site.bookingMessage} accent={accent} fontColor={fontColor} />
+                <BookingFormLight subdomain={site.subdomain} message={site.bookingMessage} accent={accent} fontColor={fontColor} language={site.language} />
               </div>
             )
             : (
               <div className="space-y-3 text-sm text-gray-600">
                 {site.contactEmail && <p>{site.contactEmail}</p>}
                 {site.contactPhone && <p>{site.contactPhone}</p>}
-                <WhatsAppButton number={site.whatsapp} />
+                <WhatsAppButton number={site.whatsapp} language={site.language} />
               </div>
             )
           }
@@ -110,16 +134,16 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
 
       <footer className="py-8 px-6 border-t border-gray-100 text-center">
         <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mb-3 text-gray-400" iconClassName="hover:!opacity-100 text-gray-400 hover:text-gray-700" />
-        <p className="text-xs text-gray-300">{site.heroTitle} · Powered by VayuStudios</p>
+        <p className="text-xs text-gray-300">{site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios</p>
       </footer>
     </div>
   )
 }
 
-function BookingFormLight({ subdomain, message, accent, fontColor }: { subdomain: string; message?: string; accent: string; fontColor: string }) {
+function BookingFormLight({ subdomain, message, accent, fontColor, language }: { subdomain: string; message?: string; accent: string; fontColor: string; language?: StudioWebsite['language'] }) {
   return (
     <div className="[&_input]:bg-gray-50 [&_select]:bg-gray-50 [&_textarea]:bg-gray-50">
-      <BookingForm subdomain={subdomain} message={message} accentColor={accent} textOnAccent="#fff" fontColor={fontColor} />
+      <BookingForm subdomain={subdomain} message={message} accentColor={accent} textOnAccent="#fff" fontColor={fontColor} language={language} />
     </div>
   )
 }

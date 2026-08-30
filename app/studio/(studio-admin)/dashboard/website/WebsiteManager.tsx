@@ -1,7 +1,9 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto } from '@/types/studio'
+import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
+import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
+import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
 import LivePreviewPanel from './LivePreviewPanel'
 
 // Which templates read as dark-background — used to pick a phone-bezel color
@@ -30,7 +32,27 @@ const FONT_COLOR_PRESETS: { label: string; color: string }[] = [
   { label: 'Custom',   color: '' },
 ]
 
-type Tab = 'template' | 'content' | 'gallery' | 'services' | 'contact' | 'booking' | 'domain'
+// Presentation style is independent of templateId — pick any style with any
+// template. 'classic' (undefined too) is today's grid + 3D flip-book,
+// unchanged; see app/(studio-site)/.../templates/Gallery.tsx for the dispatch.
+const GALLERY_STYLES: { id: WebsiteGalleryStyle; name: string; desc: string }[] = [
+  { id: 'classic',         name: 'Classic Album',    desc: '3D page-flip book' },
+  { id: 'rotateScroll',    name: 'Rotate Scroll',     desc: 'Tilts as you scroll' },
+  { id: 'stack',           name: 'Card Stack',        desc: 'Tap-through deck' },
+  { id: 'coverflow',       name: 'Coverflow',         desc: '3D carousel' },
+  { id: 'parallaxMasonry', name: 'Parallax Masonry',  desc: 'Depth-scrolling grid' },
+  { id: 'cube',            name: '3D Cube',           desc: 'Rotate through like a cube' },
+  { id: 'orbit',           name: '3D Orbit',          desc: 'Photos circle around you' },
+  { id: 'spiral',          name: '3D Spiral',         desc: 'Spiral through moments' },
+  { id: 'horizontalParallax', name: 'Horizontal Parallax', desc: 'Drag-follow depth carousel' },
+  { id: 'filmReel',        name: 'Film Reel',          desc: 'Curved 35mm filmstrip' },
+  { id: 'cinemaScreen',    name: 'Cinema Screen',      desc: 'Widescreen with Ken Burns zoom' },
+  { id: 'rackFocus',       name: 'Rack Focus',         desc: 'Cinematic blur focus pull' },
+  { id: 'spotlightStage',  name: 'Spotlight Stage',    desc: 'Dark stage with a spotlight' },
+  { id: 'projectorSlide',  name: 'Projector Slide',    desc: 'Classic slide-mount carousel' },
+]
+
+type Tab = 'template' | 'content' | 'gallery' | 'services' | 'testimonials' | 'contact' | 'booking' | 'domain'
 
 interface Props {
   studioId: string
@@ -153,6 +175,21 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const patchService = (id: string, patch: Partial<WebsiteService>) => {
     if (!site) return
     update({ services: site.services.map(s => s.id === id ? { ...s, ...patch } : s) })
+  }
+
+  const addTestimonial = () => {
+    if (!site) return
+    update({ testimonials: [...(site.testimonials ?? []), { id: crypto.randomUUID(), name: '', quote: '', eventType: '', rating: 5 }] })
+  }
+
+  const removeTestimonial = (id: string) => {
+    if (!site) return
+    update({ testimonials: (site.testimonials ?? []).filter(t => t.id !== id) })
+  }
+
+  const patchTestimonial = (id: string, patch: Partial<WebsiteTestimonial>) => {
+    if (!site) return
+    update({ testimonials: (site.testimonials ?? []).map(t => t.id === id ? { ...t, ...patch } : t) })
   }
 
   const [uploading, setUploading] = useState(false)
@@ -515,6 +552,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           ['content',  'Content'],
           ['gallery',  'Gallery'],
           ['services', 'Services'],
+          ['testimonials', 'Testimonials'],
           ['contact',  'Contact'],
           ['booking',  'Booking'],
           ['domain',   'Domain'],
@@ -571,6 +609,25 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               )
             })}
           </div>
+          {(() => {
+            const bgOptions = BACKGROUND_PRESET_OPTIONS[site.templateId] ?? []
+            if (bgOptions.length <= 1) return null
+            return (
+              <div>
+                <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Background</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {bgOptions.map(opt => (
+                    <button key={opt.id} onClick={() => update({ backgroundPreset: opt.id })} title={opt.label}
+                      className={`flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border-2 transition-all ${
+                        (site.backgroundPreset ?? 'default') === opt.id ? 'border-accent' : 'border-border hover:border-accent/50'}`}>
+                      <span className="w-5 h-5 rounded-full border border-white/10" style={{ background: opt.swatch }} />
+                      <span className="text-[10px] font-medium text-text-primary whitespace-nowrap">{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
           <div>
             <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Accent colour <span className="font-normal normal-case">(buttons, highlights)</span></label>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -599,6 +656,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
                 className="sr-only" title="Custom font colour" />
             </div>
             <p className="text-[9px] text-muted mt-1.5">Leave unset to use each template&apos;s default text colour.</p>
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Website language <span className="font-normal normal-case">(nav, headings, booking form, gallery)</span></label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {LANGUAGE_OPTIONS.map(opt => (
+                <button key={opt.id} onClick={() => update({ language: opt.id === 'en' ? undefined : opt.id })}
+                  className={`px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-all ${
+                    (site.language ?? 'en') === opt.id ? 'border-accent bg-accent/10 text-text-primary' : 'border-border text-muted hover:border-accent/50'}`}>
+                  {opt.nativeLabel}
+                </button>
+              ))}
+            </div>
+            <p className="text-[9px] text-muted mt-1.5">Your own text (about, services, testimonials, hero title) is never translated — only the fixed page chrome changes language.</p>
           </div>
         </div>
       )}
@@ -687,6 +757,20 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {tab === 'gallery' && (
         <div className="space-y-5">
           <p className="text-xs text-muted">Upload your best portfolio photos and videos. Visitors see a clean gallery with a 3D album viewer for photos and a fullscreen player for videos — no watermarks.</p>
+
+          {/* Gallery style */}
+          <div>
+            <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Gallery style <span className="font-normal normal-case">(how visitors browse your portfolio)</span></label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+              {GALLERY_STYLES.map(g => (
+                <button key={g.id} onClick={() => update({ galleryStyle: g.id })}
+                  className={`rounded-xl border p-3 text-left transition-all ${(site.galleryStyle ?? 'classic') === g.id ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/40'}`}>
+                  <p className="text-xs font-semibold text-text-primary">{g.name}</p>
+                  <p className="text-[9px] text-muted leading-tight mt-1">{g.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Upload area */}
           <div className="space-y-3">
@@ -788,6 +872,44 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         </div>
       )}
 
+      {/* ── Testimonials ── */}
+      {tab === 'testimonials' && (
+        <div className="space-y-4 max-w-2xl">
+          <p className="text-xs text-muted">Client quotes build trust — shown on your site if you add any. Leave empty and the section just won&apos;t appear.</p>
+          {(site.testimonials ?? []).map(t => (
+            <div key={t.id} className="bg-card border border-border rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted uppercase tracking-wider">Testimonial</span>
+                <button onClick={() => removeTestimonial(t.id)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+              </div>
+              <Field label="Client name" value={t.name} onChange={v => patchTestimonial(t.id, { name: v })} placeholder="Priya & Arjun" />
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Quote</label>
+                <textarea value={t.quote} onChange={e => patchTestimonial(t.id, { quote: e.target.value })} rows={3}
+                  className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none placeholder-muted/50"
+                  placeholder="They captured our wedding day beautifully — every emotion, every moment." />
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <Field label="Event type (optional)" value={t.eventType ?? ''} onChange={v => patchTestimonial(t.id, { eventType: v })} placeholder="Wedding" />
+                <div>
+                  <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Rating</label>
+                  <div className="flex items-center gap-1 py-1">
+                    {[1, 2, 3, 4, 5].map(n => (
+                      <button key={n} onClick={() => patchTestimonial(t.id, { rating: n })}
+                        className="text-xl leading-none transition-opacity"
+                        style={{ opacity: (t.rating ?? 0) >= n ? 1 : 0.25 }}>★</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+          <button onClick={addTestimonial} className="w-full border-2 border-dashed border-border rounded-2xl py-4 text-sm text-muted hover:border-accent hover:text-accent transition-colors">
+            + Add Testimonial
+          </button>
+        </div>
+      )}
+
       {/* ── Contact ── */}
       {tab === 'contact' && (
         <div className="space-y-4 max-w-2xl">
@@ -874,7 +996,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       )}
       </div>
 
-      <LivePreviewPanel publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)} />
+      <LivePreviewPanel site={site} publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)} />
       </div>
     </div>
   )

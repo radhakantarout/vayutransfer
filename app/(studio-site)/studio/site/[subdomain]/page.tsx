@@ -4,13 +4,7 @@ import { headers } from 'next/headers'
 import { getWebsiteBySubdomain, getWebsiteByCustomDomain } from '@/lib/studio/website'
 import { verifyPreviewToken } from '@/lib/studio/previewToken'
 import type { StudioWebsite } from '@/types/studio'
-
-import Lumina from './templates/Lumina'
-import Clarity from './templates/Clarity'
-import Ember from './templates/Ember'
-import Bold from './templates/Bold'
-import Bloom from './templates/Bloom'
-import { WhatsAppFloatingButton } from './templates/SocialIcons'
+import LiveTemplateRenderer from './LiveTemplateRenderer'
 
 async function getSite(subdomain: string): Promise<StudioWebsite | null> {
   if (subdomain === '__custom') {
@@ -48,31 +42,23 @@ export default async function StudioSitePage({
 
   if (!site) notFound()
 
-  if (site.status === 'DRAFT') {
-    // Draft sites 404 to the public — the one exception is the dashboard's own
-    // live-preview panel / manual preview link, which appends a short-lived
-    // signed token (see lib/studio/previewToken.ts) scoped to exactly this
-    // subdomain. A guessable/shared URL with no valid token still 404s.
-    const { previewToken } = await searchParams
-    const isValidPreview = !!previewToken && await verifyPreviewToken(previewToken, subdomain)
-    if (!isValidPreview) notFound()
+  // isPreview is independent of DRAFT/LIVE status — it's just "was this
+  // request verified as coming from this studio's own dashboard preview."
+  // A DRAFT site requires it to be viewable at all; a LIVE site doesn't
+  // require it, but still uses it (when present) to enable the instant
+  // live-update channel below — a real, unauthenticated visitor to a LIVE
+  // site never has a token, so they always get the plain saved render.
+  const { previewToken } = await searchParams
+  const isPreview = !!previewToken && await verifyPreviewToken(previewToken, subdomain)
+
+  if (site.status === 'DRAFT' && !isPreview) {
+    // Draft sites 404 to the public — the one exception is the dashboard's
+    // own live-preview panel / manual preview link, which appends this
+    // short-lived signed token (see lib/studio/previewToken.ts) scoped to
+    // exactly this subdomain. A guessable/shared URL with no valid token
+    // still 404s.
+    notFound()
   }
 
-  const template = (() => {
-    switch (site.templateId) {
-      case 'lumina':  return <Lumina site={site} />
-      case 'clarity': return <Clarity site={site} />
-      case 'ember':   return <Ember site={site} />
-      case 'bold':    return <Bold site={site} />
-      case 'bloom':   return <Bloom site={site} />
-      default:        return <Lumina site={site} />
-    }
-  })()
-
-  return (
-    <>
-      {template}
-      <WhatsAppFloatingButton number={site.whatsapp} />
-    </>
-  )
+  return <LiveTemplateRenderer initialSite={site} isPreview={isPreview} />
 }

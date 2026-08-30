@@ -339,19 +339,43 @@ export interface AuditLog {
 
 // ── Website Builder ────────────────────────────────────────────────────────────
 
-export type WebsiteTemplateId = 'lumina' | 'clarity' | 'ember' | 'bold' | 'bloom'
+export type WebsiteTemplateId =
+  | 'lumina' | 'clarity' | 'ember' | 'bold' | 'bloom'
+  | 'frame' | 'zari' | 'monsoon'
 export type WebsiteStatus = 'DRAFT' | 'LIVE'
+
+// Undefined always means 'en' — the studio's own typed content (about,
+// services, testimonials, hero copy) is never auto-translated; only the
+// fixed template chrome (nav labels, section headings, booking form, etc.)
+// changes language. See lib/studio/i18n.ts.
+export type WebsiteLanguage = 'en' | 'hi' | 'or' | 'bn' | 'ta' | 'te'
 
 // Undefined always means 'photo' everywhere this is read — every gallery item and
 // hero record created before this field existed has no value here, and must keep
 // rendering exactly as it did before video support shipped.
 export type WebsiteMediaType = 'photo' | 'video'
 
+// Undefined/'classic' always renders today's grid + 3D flip-book
+// (PortfolioGallery.tsx) unchanged — every existing site keeps its current
+// gallery behavior. Presentation style is deliberately independent of
+// templateId (see lib/studio/backgroundPresets.ts for the same principle
+// applied to color) — picking a different look for your gallery shouldn't
+// require switching your whole site's layout.
+export type WebsiteGalleryStyle = 'classic' | 'rotateScroll' | 'stack' | 'coverflow' | 'parallaxMasonry' | 'cube' | 'orbit' | 'spiral' | 'horizontalParallax' | 'filmReel' | 'cinemaScreen' | 'rackFocus' | 'spotlightStage' | 'projectorSlide'
+
 export interface WebsiteService {
   id: string
   name: string
   description: string
   price?: string
+}
+
+export interface WebsiteTestimonial {
+  id: string
+  name: string
+  quote: string
+  eventType?: string
+  rating?: number // 1-5, optional
 }
 
 export interface WebsiteGalleryPhoto {
@@ -379,6 +403,13 @@ export interface StudioWebsite {
   subdomain: string
   customDomain?: string
   templateId: WebsiteTemplateId
+  // Undefined resolves to each template's own 'default' preset — see
+  // lib/studio/backgroundPresets.ts. Deliberately not a free hex value: each
+  // template's text opacity/overlay treatment is tuned against its own small
+  // curated set of background shades, not an arbitrary color.
+  backgroundPreset?: string
+  galleryStyle?: WebsiteGalleryStyle
+  language?: WebsiteLanguage
   status: WebsiteStatus
   heroTitle: string
   heroSubtitle: string
@@ -386,6 +417,7 @@ export interface StudioWebsite {
   about: string
   city?: string
   services: WebsiteService[]
+  testimonials?: WebsiteTestimonial[]
   galleryPhotos: WebsiteGalleryPhoto[]
   heroImageUrl?: string
   heroMediaType?: WebsiteMediaType
