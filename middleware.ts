@@ -71,7 +71,15 @@ export async function middleware(request: NextRequest) {
     const rewritePath = path === '/'
       ? `/studio/site/${studioSubdomainMatch}`
       : `/studio/site/${studioSubdomainMatch}${path}`
-    const res = NextResponse.rewrite(new URL(rewritePath, request.url))
+    // `new URL(path, base)` drops base's query string when `path` is an
+    // absolute path with no `?` of its own — without re-attaching it here,
+    // ?previewToken=/&v= (the dashboard live-preview iframe's params) never
+    // reach page.tsx on a real production subdomain, silently disabling the
+    // instant-postMessage preview channel (falls back to only updating on
+    // Save, since that forces a full iframe reload that re-fetches from DB).
+    const rewriteUrl = new URL(rewritePath, request.url)
+    rewriteUrl.search = request.nextUrl.search
+    const res = NextResponse.rewrite(rewriteUrl)
     res.headers.set('Content-Security-Policy', STUDIO_SITE_FRAME_CSP)
     return res
   }
@@ -82,7 +90,9 @@ export async function middleware(request: NextRequest) {
     const rewritePath = path === '/'
       ? '/studio/site/__custom'
       : `/studio/site/__custom${path}`
-    const res = NextResponse.rewrite(new URL(rewritePath, request.url))
+    const rewriteUrl = new URL(rewritePath, request.url)
+    rewriteUrl.search = request.nextUrl.search
+    const res = NextResponse.rewrite(rewriteUrl)
     res.headers.set('x-studio-custom-domain', host)
     res.headers.set('Content-Security-Policy', STUDIO_SITE_FRAME_CSP)
     return res
