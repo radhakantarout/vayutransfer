@@ -40,13 +40,13 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `Georgia, serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 sm:px-10 py-5">
+      <header data-preview-tab="content" className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 sm:px-10 py-5">
         <span className="text-sm uppercase tracking-[0.25em]">{site.heroTitle}</span>
         <SiteNav links={navLinks} accent={accent} fontColor={fontColor} panelBg={bg.bg} linkClassName="text-xs uppercase tracking-[0.2em]" />
       </header>
 
       {/* Hero */}
-      <section className="relative min-h-screen flex flex-col items-center justify-center text-center px-6"
+      <section data-preview-tab="content" className="relative min-h-screen flex flex-col items-center justify-center text-center px-6"
         style={{ background: `linear-gradient(160deg, ${bg.bg} 0%, ${bg.heroEnd} 100%)` }}>
         {heroImg && (
           <div className="absolute inset-0 opacity-20">
@@ -72,7 +72,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      <section id="portfolio" className="py-24 px-6">
+      <section id="portfolio" data-preview-tab="gallery" className="py-24 px-6">
         <Reveal className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('navGallery', 'Portfolio')}</p>
           <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
@@ -80,7 +80,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-3xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-8 opacity-40">{t('sectionAboutHeading', 'About')}</p>
           <p className="text-xl sm:text-2xl font-light leading-relaxed opacity-80">{site.about}</p>
@@ -90,7 +90,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-24 px-6">
+        <section id="services" data-preview-tab="services" className="py-24 px-6">
           <Reveal className="max-w-4xl mx-auto">
             <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('sectionServicesHeading', 'Services')}</p>
             <div className="grid sm:grid-cols-3 gap-8">
@@ -108,7 +108,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-24 px-6" style={{ background: bg.alt }}>
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6" style={{ background: bg.alt }}>
           <Reveal className="max-w-5xl mx-auto">
             <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('sectionReviewsHeading', 'What Clients Say')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -117,7 +117,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Contact + Booking */}
-      <section id="book" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-2xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4 opacity-40">
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}
@@ -144,7 +144,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 function SocialFooter({ site, accent }: { site: StudioWebsite; accent: string }) {
   const t = translator(site.language)
   return (
-    <footer className="py-10 px-6 text-center text-xs opacity-30" style={{ borderTop: '1px solid #222' }}>
+    <footer data-preview-tab="contact" className="py-10 px-6 text-center text-xs opacity-30" style={{ borderTop: '1px solid #222' }}>
       <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mb-4" />
       <p>{site.heroTitle} · {t('footerPoweredBy', 'Powered by')} <span style={{ color: accent }}>VayuStudios</span></p>
     </footer>

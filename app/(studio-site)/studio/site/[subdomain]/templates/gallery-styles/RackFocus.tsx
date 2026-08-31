@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useGalleryData, useGestureNav, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
+import { useGalleryData, useGestureNav, useAutoPlay, useBouncingAutoStep, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
 
@@ -35,6 +35,8 @@ export default function RackFocus({ photos, studioName, accent = '#C9A84C', font
     setCurrent(next)
   }
   const gesture = useGestureNav(filtered.length, step)
+  const autoAdvance = useBouncingAutoStep(filtered.length, current, step)
+  const autoplay = useAutoPlay(filtered.length, autoAdvance)
 
   const item = filtered[current]
   if (!item) return null
@@ -42,7 +44,7 @@ export default function RackFocus({ photos, studioName, accent = '#C9A84C', font
   const TRANSITION = 'opacity 0.6s ease, filter 0.6s ease, transform 0.6s ease'
 
   return (
-    <>
+    <div {...autoplay}>
       <DemoBanner isDemo={isDemo} accent={accent} language={language} />
       <CategoryTabs categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory} accent={accent} fontColor={fontColor} />
 
@@ -83,6 +85,6 @@ export default function RackFocus({ photos, studioName, accent = '#C9A84C', font
       <p className="text-center text-xs opacity-40 mt-3" style={{ color: fontColor }}>{t('galleryScrollNav', 'Scroll or swipe to explore')}</p>
 
       {lightbox && <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />}
-    </>
+    </div>
   )
 }

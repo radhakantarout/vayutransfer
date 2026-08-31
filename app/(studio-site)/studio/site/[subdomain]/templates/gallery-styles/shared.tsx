@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DEMO_PHOTOS, type GalleryItem } from '../PortfolioGallery'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
@@ -127,6 +127,53 @@ export function useGestureNav(count: number, onStep: (dir: 1 | -1) => void, onDr
     onTouchStart: (e: React.TouchEvent) => startDrag(e.touches[0].clientX, e.touches[0].clientY),
     onTouchMove:  (e: React.TouchEvent) => moveDrag(e.touches[0].clientX, e.touches[0].clientY),
     onTouchEnd:   (e: React.TouchEvent) => endDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY),
+  }
+}
+
+// Auto-advances a carousel-style gallery so it feels alive to a visitor who
+// hasn't touched it yet — calls `advance()` every `intervalMs`, and stops
+// permanently (never resumes this mount) the moment the visitor interacts:
+// a click, a touch, or a wheel/scroll anywhere inside the gallery's rendered
+// area. Returns capture-phase handlers meant to be spread onto the style's
+// OUTERMOST wrapping element (not just the 3D box) so a tap on a dot, a
+// rotate button, or a category tab counts as "taking over" too, not just a
+// drag/swipe on the photos themselves. Capture-phase + no preventDefault/
+// stopPropagation means normal clicks/drags still work exactly as before;
+// this only ever flips one bit of state on the way past.
+export function useAutoPlay(count: number, advance: () => void, intervalMs = 3200) {
+  const [paused, setPaused] = useState(false)
+  const advanceRef = useRef(advance)
+  advanceRef.current = advance
+
+  useEffect(() => {
+    if (paused || count <= 1) return
+    const id = setInterval(() => advanceRef.current(), intervalMs)
+    return () => clearInterval(id)
+  }, [paused, count, intervalMs])
+
+  const stop = () => setPaused(true)
+  return { onPointerDownCapture: stop, onTouchStartCapture: stop, onWheelCapture: stop }
+}
+
+// Turns a bounded `step(dir)` (one that clamps at [0, count-1], as every
+// non-ring carousel style already has for its manual prev/next) into a
+// ping-pong advance callback for useAutoPlay — reverses direction once a
+// step would hit either end, instead of jump-cutting back to the first
+// photo. Needs `current` to know when it's at a boundary; read through a
+// ref so the returned callback never goes stale between renders.
+export function useBouncingAutoStep(count: number, current: number, step: (dir: 1 | -1) => void) {
+  const dirRef = useRef<1 | -1>(1)
+  const currentRef = useRef(current)
+  currentRef.current = current
+  const stepRef = useRef(step)
+  stepRef.current = step
+
+  return () => {
+    let dir = dirRef.current
+    if (currentRef.current >= count - 1) dir = -1
+    else if (currentRef.current <= 0) dir = 1
+    dirRef.current = dir
+    stepRef.current(dir)
   }
 }
 

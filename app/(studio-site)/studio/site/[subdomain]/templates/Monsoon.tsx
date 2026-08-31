@@ -35,13 +35,13 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Inter", "Helvetica Neue", sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 sm:px-10 py-5 backdrop-blur" style={{ background: bg.headerBg }}>
+      <header data-preview-tab="content" className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 sm:px-10 py-5 backdrop-blur" style={{ background: bg.headerBg }}>
         <span className="font-bold text-sm uppercase tracking-widest">{site.heroTitle}</span>
         <SiteNav links={navLinks} accent={accent} fontColor={fontColor} panelBg={bg.bg} linkClassName="text-xs font-semibold uppercase tracking-wider" />
       </header>
 
       {/* Hero — diagonal geometric split */}
-      <section className="relative min-h-screen flex items-center px-6 sm:px-10 pt-20 overflow-hidden">
+      <section data-preview-tab="content" className="relative min-h-screen flex items-center px-6 sm:px-10 pt-20 overflow-hidden">
         {heroImg && (
           <div className="absolute inset-y-0 right-0 w-full sm:w-2/3" style={{ clipPath: 'polygon(18% 0, 100% 0, 100% 100%, 0% 100%)' }}>
             <HeroBackground url={heroImg} type={heroType} poster={heroPoster} className="w-full h-full object-cover" />
@@ -62,7 +62,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      <section id="portfolio" className="py-24 px-6">
+      <section id="portfolio" data-preview-tab="gallery" className="py-24 px-6">
         <Reveal className="max-w-6xl mx-auto">
           <div className="flex items-center gap-3 justify-center mb-12">
             <span className="w-8 h-1 rounded-full" style={{ background: accent }} />
@@ -73,7 +73,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-4xl mx-auto grid md:grid-cols-[1fr_1px_1fr] gap-10 items-center">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>{t('sectionAboutHeading', 'About Us')}</p>
@@ -88,7 +88,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-24 px-6">
+        <section id="services" data-preview-tab="services" className="py-24 px-6">
           <Reveal className="max-w-5xl mx-auto">
             <p className="text-xs font-bold uppercase tracking-[0.3em] text-center mb-12" style={{ color: accent }}>{t('sectionServicesHeading', 'What We Offer')}</p>
             <div className="grid sm:grid-cols-3 gap-6">
@@ -107,7 +107,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-24 px-6" style={{ background: bg.alt }}>
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6" style={{ background: bg.alt }}>
           <Reveal className="max-w-5xl mx-auto">
             <p className="text-xs font-bold uppercase tracking-[0.3em] text-center mb-12" style={{ color: accent }}>{t('sectionReviewsHeading', 'Client Reviews')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -116,7 +116,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" className="py-24 px-6">
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6">
         <Reveal className="max-w-2xl mx-auto text-center">
           <p className="text-xs font-bold uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}
@@ -135,7 +135,7 @@ export default function Monsoon({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="py-8 px-6 text-center text-xs opacity-40 border-t" style={{ borderColor: `${accent}22` }}>
+      <footer data-preview-tab="contact" className="py-8 px-6 text-center text-xs opacity-40 border-t" style={{ borderColor: `${accent}22` }}>
         {site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios
       </footer>
     </div>

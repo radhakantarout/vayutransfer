@@ -78,12 +78,16 @@ function PhoneMockup({ src, isDarkTemplate, iframeRef }: {
 }
 
 export default function LivePreviewPanel({
-  site, publishUrl, refreshKey, isDarkTemplate,
+  site, publishUrl, refreshKey, isDarkTemplate, onEditRequest,
 }: {
   site: StudioWebsite
   publishUrl: string | null // null until a subdomain is set
   refreshKey: string        // change this (e.g. site.updatedAt) to force a full reload (fallback resync after a save)
   isDarkTemplate: boolean
+  // Click-to-edit: fired when the studio owner clicks an editable section
+  // inside either preview iframe (see LiveTemplateRenderer.tsx's
+  // data-preview-tab delegation) — the caller switches its own tab state.
+  onEditRequest?: (tab: string) => void
 }) {
   const [token, setToken] = useState<string | null>(null)
   const desktopIframeRef = useRef<HTMLIFrameElement>(null)
@@ -95,6 +99,8 @@ export default function LivePreviewPanel({
   // reverting the preview to an old snapshot every time an iframe reloads.
   const siteRef = useRef(site)
   useEffect(() => { siteRef.current = site }, [site])
+  const onEditRequestRef = useRef(onEditRequest)
+  useEffect(() => { onEditRequestRef.current = onEditRequest }, [onEditRequest])
 
   const fetchToken = async () => {
     const res = await fetch('/studio/api/admin/website/preview-token').then(r => r.json())
@@ -139,14 +145,21 @@ export default function LivePreviewPanel({
 
   // The iframe pings us once it's mounted and listening — covers the case
   // where an edit happens right as the iframe (re)loads and the very first
-  // postMessage above would otherwise land before anyone's listening.
+  // postMessage above would otherwise land before anyone's listening. Also
+  // handles the click-to-edit message from LiveTemplateRenderer.tsx — a
+  // click on an editable section in either iframe — by asking the caller to
+  // switch tabs; this never touches `site`, so it can't affect what's saved.
   useEffect(() => {
     if (!publishUrl) return
     const targetOrigin = new URL(publishUrl, window.location.origin).origin
     const onMessage = (e: MessageEvent) => {
-      if (e.origin !== targetOrigin || e.data?.type !== 'vayustudio-preview-ready') return
-      if (e.source === desktopIframeRef.current?.contentWindow || e.source === mobileIframeRef.current?.contentWindow) {
+      if (e.origin !== targetOrigin) return
+      const isFromPreviewFrame = e.source === desktopIframeRef.current?.contentWindow || e.source === mobileIframeRef.current?.contentWindow
+      if (!isFromPreviewFrame) return
+      if (e.data?.type === 'vayustudio-preview-ready') {
         ;(e.source as Window).postMessage({ type: 'vayustudio-preview-update', site: siteRef.current }, targetOrigin)
+      } else if (e.data?.type === 'vayustudio-preview-edit-request' && typeof e.data.tab === 'string') {
+        onEditRequestRef.current?.(e.data.tab)
       }
     }
     window.addEventListener('message', onMessage)

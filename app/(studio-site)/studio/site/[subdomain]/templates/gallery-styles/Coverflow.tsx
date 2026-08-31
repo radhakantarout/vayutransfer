@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useGalleryData, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
+import { useGalleryData, useAutoPlay, useBouncingAutoStep, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
 
@@ -20,9 +20,12 @@ export default function Coverflow({ photos, studioName, accent = '#C9A84C', font
 
   const prev = () => setCenter(c => Math.max(0, c - 1))
   const next = () => setCenter(c => Math.min(filtered.length - 1, c + 1))
+  const step = (dir: 1 | -1) => dir === 1 ? next() : prev()
+  const autoAdvance = useBouncingAutoStep(filtered.length, center, step)
+  const autoplay = useAutoPlay(filtered.length, autoAdvance)
 
   return (
-    <>
+    <div {...autoplay}>
       <DemoBanner isDemo={isDemo} accent={accent} language={language} />
       <CategoryTabs categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory} accent={accent} fontColor={fontColor} />
       <div className="relative flex items-center justify-center overflow-hidden" style={{ height: 320, perspective: 1200 }}>
@@ -57,6 +60,6 @@ export default function Coverflow({ photos, studioName, accent = '#C9A84C', font
           style={{ color: fontColor, borderColor: `${fontColor}33` }}>{t('galleryNext', 'Next')} →</button>
       </div>
       {lightbox && <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />}
-    </>
+    </div>
   )
 }

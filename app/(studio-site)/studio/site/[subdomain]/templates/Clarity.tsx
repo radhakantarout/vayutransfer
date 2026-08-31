@@ -35,7 +35,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Helvetica Neue", Helvetica, Arial, sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 backdrop-blur border-b border-gray-100" style={{ background: bg.headerBg }}>
+      <header data-preview-tab="content" className="fixed top-0 left-0 right-0 z-50 backdrop-blur border-b border-gray-100" style={{ background: bg.headerBg }}>
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <span className="font-bold text-sm tracking-widest uppercase">{site.heroTitle}</span>
           <SiteNav links={navLinks} accent={accent} fontColor="#6b7280" panelBg={bg.bg}
@@ -44,7 +44,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section className="pt-20">
+      <section data-preview-tab="content" className="pt-20">
         {heroImg ? (
           <div className="relative h-[90vh]">
             <HeroBackground url={heroImg} type={heroType} poster={heroPoster} />
@@ -63,7 +63,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      <section id="work" className="py-16 px-6">
+      <section id="work" data-preview-tab="gallery" className="py-16 px-6">
         <Reveal className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-8">{t('navGallery', 'Selected Work')}</p>
           <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
@@ -71,7 +71,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-3xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-6">{t('sectionAboutHeading', 'About')}</p>
           <p className="text-2xl font-light leading-relaxed text-gray-700">{site.about}</p>
@@ -81,7 +81,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-24 px-6">
+        <section id="services" data-preview-tab="services" className="py-24 px-6">
           <Reveal className="max-w-4xl mx-auto">
             <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">{t('sectionServicesHeading', 'Services')}</p>
             <div className="divide-y divide-gray-100">
@@ -100,7 +100,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-24 px-6">
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6">
           <Reveal className="max-w-5xl mx-auto">
             <p className="text-xs uppercase tracking-widest text-gray-400 mb-12">{t('sectionReviewsHeading', 'What Clients Say')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -109,7 +109,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Booking */}
-      <section id="book" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-2xl mx-auto">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}
@@ -132,7 +132,7 @@ export default function Clarity({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="py-8 px-6 border-t border-gray-100 text-center">
+      <footer data-preview-tab="contact" className="py-8 px-6 border-t border-gray-100 text-center">
         <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mb-3 text-gray-400" iconClassName="hover:!opacity-100 text-gray-400 hover:text-gray-700" />
         <p className="text-xs text-gray-300">{site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios</p>
       </footer>

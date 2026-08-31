@@ -36,7 +36,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Inter", "Helvetica Neue", sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="sticky top-0 z-50 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between gap-4" style={{ background: bg.headerBg }}>
+      <header data-preview-tab="content" className="sticky top-0 z-50 backdrop-blur border-b border-white/10 px-6 py-4 flex items-center justify-between gap-4" style={{ background: bg.headerBg }}>
         <span className="font-black text-sm uppercase tracking-widest">{site.heroTitle}</span>
         <div className="flex items-center gap-6">
           <SiteNav links={navLinks} accent={accent} fontColor="#FFFFFF" panelBg={bg.bg}
@@ -48,7 +48,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section className="relative overflow-hidden px-6 pt-24 pb-16 border-b border-white/10">
+      <section data-preview-tab="content" className="relative overflow-hidden px-6 pt-24 pb-16 border-b border-white/10">
         {heroBg && (
           <>
             <div className="absolute inset-0 opacity-40">
@@ -70,7 +70,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section id="work" className="px-6 py-16 border-b border-white/10">
+      <section id="work" data-preview-tab="gallery" className="px-6 py-16 border-b border-white/10">
         <Reveal className="max-w-6xl mx-auto">
           <div className="flex items-baseline justify-between mb-8">
             <h2 className="text-3xl font-black uppercase">{t('navGallery', 'Work')}</h2>
@@ -80,7 +80,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="px-6 py-16 border-b border-white/10">
+      <section id="about" data-preview-tab="content" className="px-6 py-16 border-b border-white/10">
         <Reveal className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12">
           <div>
             <h2 className="text-5xl font-black uppercase mb-6">{t('sectionAboutHeading', 'About')}</h2>
@@ -93,7 +93,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="px-6 py-16 border-b border-white/10">
+        <section id="services" data-preview-tab="services" className="px-6 py-16 border-b border-white/10">
           <Reveal className="max-w-6xl mx-auto">
             <h2 className="text-5xl font-black uppercase mb-10">{t('sectionServicesHeading', 'Services')}</h2>
             {site.services.map((s, i) => (
@@ -113,7 +113,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="px-6 py-16 border-b border-white/10">
+        <section id="reviews" data-preview-tab="testimonials" className="px-6 py-16 border-b border-white/10">
           <Reveal className="max-w-6xl mx-auto">
             <h2 className="text-5xl font-black uppercase mb-10">{t('sectionReviewsHeading', 'Reviews')}</h2>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -122,7 +122,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" className="px-6 py-16">
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="px-6 py-16">
         <Reveal className="max-w-2xl mx-auto">
           <h2 className="text-5xl font-black uppercase mb-10">{site.bookingEnabled ? t('navBook', 'Book') : t('navContact', 'Contact')}</h2>
           {site.bookingEnabled
@@ -138,7 +138,7 @@ export default function Bold({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="border-t border-white/10 py-6 px-6 flex items-center justify-between text-xs text-white/20">
+      <footer data-preview-tab="contact" className="border-t border-white/10 py-6 px-6 flex items-center justify-between text-xs text-white/20">
         <span>{site.heroTitle}</span>
         <span>{t('footerPoweredBy', 'Powered by')} VayuStudios</span>
       </footer>

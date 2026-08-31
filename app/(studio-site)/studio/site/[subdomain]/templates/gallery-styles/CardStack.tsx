@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useGalleryData, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
+import { useGalleryData, useAutoPlay, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
 
@@ -30,9 +30,10 @@ export default function CardStack({ photos, studioName, accent = '#C9A84C', font
   }
 
   const visible = order.slice(0, 5)
+  const autoplay = useAutoPlay(filtered.length, () => setOrder(o => o.length ? [...o.slice(1), o[0]] : o))
 
   return (
-    <>
+    <div {...autoplay}>
       <DemoBanner isDemo={isDemo} accent={accent} language={language} />
       <CategoryTabs categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory} accent={accent} fontColor={fontColor} />
       <div className="flex justify-center py-4">
@@ -59,6 +60,6 @@ export default function CardStack({ photos, studioName, accent = '#C9A84C', font
       </div>
       <p className="text-center text-xs opacity-50 mt-2" style={{ color: fontColor }}>{t('galleryTapAdvance', 'Tap the photo to see the next one')}</p>
       {lightbox && <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />}
-    </>
+    </div>
   )
 }

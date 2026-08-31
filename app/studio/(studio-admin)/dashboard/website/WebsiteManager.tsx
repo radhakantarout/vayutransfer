@@ -41,7 +41,7 @@ const GALLERY_STYLES: { id: WebsiteGalleryStyle; name: string; desc: string }[] 
   { id: 'stack',           name: 'Card Stack',        desc: 'Tap-through deck' },
   { id: 'coverflow',       name: 'Coverflow',         desc: '3D carousel' },
   { id: 'parallaxMasonry', name: 'Parallax Masonry',  desc: 'Depth-scrolling grid' },
-  { id: 'cube',            name: '3D Cube',           desc: 'Rotate through like a cube' },
+  { id: 'cube',            name: '3D Cube',           desc: 'Hexagonal 3D rotating carousel' },
   { id: 'orbit',           name: '3D Orbit',          desc: 'Photos circle around you' },
   { id: 'spiral',          name: '3D Spiral',         desc: 'Spiral through moments' },
   { id: 'horizontalParallax', name: 'Horizontal Parallax', desc: 'Drag-follow depth carousel' },
@@ -53,6 +53,7 @@ const GALLERY_STYLES: { id: WebsiteGalleryStyle; name: string; desc: string }[] 
 ]
 
 type Tab = 'template' | 'content' | 'gallery' | 'services' | 'testimonials' | 'contact' | 'booking' | 'domain'
+const VALID_TABS: Tab[] = ['template', 'content', 'gallery', 'services', 'testimonials', 'contact', 'booking', 'domain']
 
 interface Props {
   studioId: string
@@ -932,8 +933,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         <div className="space-y-4 max-w-2xl">
           <div className="flex items-center gap-3">
             <button onClick={() => update({ bookingEnabled: !site.bookingEnabled })}
-              className={`relative w-12 h-6 rounded-full transition-colors ${site.bookingEnabled ? 'bg-accent' : 'bg-border'}`}>
-              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${site.bookingEnabled ? 'translate-x-7' : 'translate-x-1'}`} />
+              className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors ${site.bookingEnabled ? 'bg-accent' : 'bg-border'}`}>
+              <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${site.bookingEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
             </button>
             <span className="text-sm font-medium text-text-primary">Enable booking / enquiry form</span>
           </div>
@@ -996,7 +997,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       )}
       </div>
 
-      <LivePreviewPanel site={site} publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)} />
+      <LivePreviewPanel site={site} publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)}
+        onEditRequest={tab => { if ((VALID_TABS as string[]).includes(tab)) setTab(tab as Tab) }} />
       </div>
     </div>
   )

@@ -38,7 +38,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Cormorant Garamond", "Times New Roman", serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="py-5 px-8 text-center" style={{ borderBottom: `1px solid ${bg.border}` }}>
+      <header data-preview-tab="content" className="py-5 px-8 text-center" style={{ borderBottom: `1px solid ${bg.border}` }}>
         <h1 className="text-2xl font-light tracking-[0.15em]">{site.heroTitle}</h1>
         {site.tagline && <p className="text-xs mt-1 tracking-widest" style={{ color: accent }}>{site.tagline}</p>}
         <div className="flex items-center justify-center mt-3">
@@ -48,7 +48,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section className="relative overflow-hidden" style={{ minHeight: '85vh', background: `linear-gradient(135deg, ${bg.heroFrom} 0%, ${bg.heroMid} 50%, ${bg.heroTo} 100%)` }}>
+      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '85vh', background: `linear-gradient(135deg, ${bg.heroFrom} 0%, ${bg.heroMid} 50%, ${bg.heroTo} 100%)` }}>
         <div className="absolute inset-0 opacity-10">
           {/* Decorative circles */}
           <div className="absolute top-10 right-10 w-96 h-96 rounded-full" style={{ background: accent, filter: 'blur(80px)' }} />
@@ -79,7 +79,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section id="gallery" className="py-20 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6">
         <Reveal className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('navGallery', 'Portfolio')}</p>
@@ -90,7 +90,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
+      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
         <Reveal className="max-w-3xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>{t('navAbout', 'Our Story')}</p>
           <h2 className="text-4xl font-light mb-8">{t('sectionAboutHeading', 'About Us')}</h2>
@@ -102,7 +102,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-20 px-6">
+        <section id="services" data-preview-tab="services" className="py-20 px-6">
           <Reveal className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
               <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('sectionServicesHeading', 'Services')}</p>
@@ -126,7 +126,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-20 px-6">
+        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6">
           <Reveal className="max-w-5xl mx-auto">
             <div className="text-center mb-12">
               <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('sectionReviewsHeading', 'Reviews')}</p>
@@ -138,7 +138,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
         <Reveal className="max-w-xl mx-auto text-center">
           <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Say Hello')}
@@ -157,7 +157,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="py-8 text-center text-xs opacity-30" style={{ borderTop: `1px solid ${bg.border}` }}>
+      <footer data-preview-tab="contact" className="py-8 text-center text-xs opacity-30" style={{ borderTop: `1px solid ${bg.border}` }}>
         {site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios
       </footer>
     </div>
