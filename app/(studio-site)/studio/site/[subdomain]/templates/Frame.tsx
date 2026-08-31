@@ -35,7 +35,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Helvetica Neue", Helvetica, Arial, sans-serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-black/10" style={{ background: bg.headerBg }}>
+      <header data-preview-tab="content" className="fixed top-0 left-0 right-0 z-50 border-b border-black/10" style={{ background: bg.headerBg }}>
         <div className="px-6 sm:px-10 py-4 flex items-center justify-between">
           <span className="font-bold text-xs tracking-[0.3em] uppercase">{site.heroTitle}</span>
           <SiteNav links={navLinks} accent={accent} fontColor="#111111" panelBg={bg.bg}
@@ -44,7 +44,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero — short, editorial, lets the gallery dominate */}
-      <section className="relative pt-16" style={{ height: '58vh' }}>
+      <section data-preview-tab="content" className="relative pt-16" style={{ height: '58vh' }}>
         {heroImg ? (
           <>
             <div className="absolute inset-0" style={{ filter: 'grayscale(1) contrast(1.05)' }}>
@@ -62,7 +62,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery — first, dominant */}
-      <section id="gallery" className="py-16 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-16 px-6">
         <Reveal className="max-w-6xl mx-auto">
           <div className="flex items-baseline justify-between mb-8">
             <p className="text-xs uppercase tracking-[0.3em] opacity-50">{t('navGallery', 'Selected Work')}</p>
@@ -73,7 +73,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-24 px-6 border-t border-black/10">
+      <section id="about" data-preview-tab="content" className="py-24 px-6 border-t border-black/10">
         <Reveal className="max-w-3xl mx-auto grid sm:grid-cols-[80px_1fr] gap-6">
           <p className="text-xs uppercase tracking-widest opacity-40">{t('sectionAboutHeading', 'About')}</p>
           <div>
@@ -86,7 +86,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-24 px-6 border-t border-black/10">
+        <section id="services" data-preview-tab="services" className="py-24 px-6 border-t border-black/10">
           <Reveal className="max-w-3xl mx-auto">
             <p className="text-xs uppercase tracking-widest opacity-40 mb-10">{t('sectionServicesHeading', 'Services')}</p>
             <div className="divide-y divide-black/10">
@@ -107,7 +107,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-24 px-6 border-t border-black/10">
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6 border-t border-black/10">
           <Reveal className="max-w-5xl mx-auto">
             <p className="text-xs uppercase tracking-widest opacity-40 mb-10">{t('sectionReviewsHeading', 'Reviews')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -116,7 +116,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" className="py-24 px-6 bg-black text-white">
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6 bg-black text-white">
         <Reveal className="max-w-2xl mx-auto text-center">
           <p className="text-xs uppercase tracking-widest opacity-50 mb-4">{site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}</p>
           <h2 className="text-3xl font-light mb-10">{t('bookingIntro', "Let's work together")}</h2>
@@ -133,7 +133,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="py-8 px-6 border-t border-black/10 text-center">
+      <footer data-preview-tab="contact" className="py-8 px-6 border-t border-black/10 text-center">
         <p className="text-xs opacity-40">{site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios</p>
       </footer>
     </div>

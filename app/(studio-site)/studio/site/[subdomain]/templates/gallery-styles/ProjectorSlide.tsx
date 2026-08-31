@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useGalleryData, useGestureNav, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
+import { useGalleryData, useGestureNav, useAutoPlay, useBouncingAutoStep, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
 
@@ -40,13 +40,15 @@ export default function ProjectorSlide({ photos, studioName, accent = '#C9A84C',
     setCurrent(next)
   }
   const gesture = useGestureNav(filtered.length, step)
+  const autoAdvance = useBouncingAutoStep(filtered.length, current, step)
+  const autoplay = useAutoPlay(filtered.length, autoAdvance)
 
   const item = filtered[current]
   if (!item) return null
   const prevItem = prevIndex !== null ? filtered[prevIndex] : null
 
   return (
-    <>
+    <div {...autoplay}>
       <DemoBanner isDemo={isDemo} accent={accent} language={language} />
       <CategoryTabs categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory} accent={accent} fontColor={fontColor} />
 
@@ -94,6 +96,6 @@ export default function ProjectorSlide({ photos, studioName, accent = '#C9A84C',
       <p className="text-center text-xs opacity-40 mt-3" style={{ color: fontColor }}>{t('galleryScrollNav', 'Scroll or swipe to explore')}</p>
 
       {lightbox && <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />}
-    </>
+    </div>
   )
 }

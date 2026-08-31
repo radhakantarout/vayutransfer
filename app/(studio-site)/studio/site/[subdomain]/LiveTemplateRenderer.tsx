@@ -56,10 +56,35 @@ export default function LiveTemplateRenderer({
     return () => window.removeEventListener('message', onMessage)
   }, [isPreview])
 
-  return (
+  const content = (
     <>
       {renderTemplate(site)}
       <WhatsAppFloatingButton number={site.whatsapp} />
     </>
+  )
+
+  // Click-to-edit (coarse/section-level): only active in preview mode, so a
+  // real visitor's page is byte-for-byte the same `<>...</>` as before this
+  // existed. Delegates from a single listener instead of annotating every
+  // individual field — every template already wraps its content in
+  // <section>/<header>/<footer> landmarks carrying a `data-preview-tab`
+  // attribute (see templates/*.tsx), so "which dashboard tab does this click
+  // belong to" is just a closest() lookup. Posts a message the dashboard's
+  // LivePreviewPanel listens for to switch its tab — never touches `site` or
+  // triggers a save, so it can't affect what's actually persisted.
+  if (!isPreview) return content
+
+  const onPreviewClick = (e: React.MouseEvent) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-preview-tab]')
+    if (target?.dataset.previewTab) {
+      window.parent?.postMessage({ type: 'vayustudio-preview-edit-request', tab: target.dataset.previewTab }, '*')
+    }
+  }
+
+  return (
+    <div onClick={onPreviewClick}>
+      <style>{'[data-preview-tab]:hover{outline:2px dashed rgba(99,102,241,0.85);outline-offset:-2px;cursor:pointer}'}</style>
+      {content}
+    </div>
   )
 }

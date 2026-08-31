@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useGalleryData, useGestureNav, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
+import { useGalleryData, useGestureNav, useAutoPlay, useBouncingAutoStep, DemoBanner, CategoryTabs, TileMedia, VideoPlayBadge, VideoLightbox, type GalleryItem } from './shared'
 import { translator } from '@/lib/studio/i18n'
 import type { WebsiteLanguage } from '@/types/studio'
 
@@ -24,6 +24,8 @@ export default function HorizontalParallax({ photos, studioName, accent = '#C9A8
 
   const step = (dir: 1 | -1) => setCurrent(c => Math.max(0, Math.min(filtered.length - 1, c + dir)))
   const gesture = useGestureNav(filtered.length, step, dx => setDragOffset(dx))
+  const autoAdvance = useBouncingAutoStep(filtered.length, current, step)
+  const autoplay = useAutoPlay(filtered.length, autoAdvance)
 
   const handlers = {
     ...gesture,
@@ -35,7 +37,7 @@ export default function HorizontalParallax({ photos, studioName, accent = '#C9A8
   }
 
   return (
-    <>
+    <div {...autoplay}>
       <DemoBanner isDemo={isDemo} accent={accent} language={language} />
       <CategoryTabs categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory} accent={accent} fontColor={fontColor} />
 
@@ -68,6 +70,6 @@ export default function HorizontalParallax({ photos, studioName, accent = '#C9A8
       <p className="text-center text-xs opacity-40 mt-4" style={{ color: fontColor }}>{t('galleryScrollNav', 'Scroll or swipe to explore')}</p>
 
       {lightbox && <VideoLightbox items={lightbox.items} startIndex={lightbox.index} onClose={() => setLightbox(null)} language={language} />}
-    </>
+    </div>
   )
 }

@@ -35,7 +35,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
     <div className="min-h-screen" style={{ background: bg.bg, color: fontColor, fontFamily: `"Palatino Linotype", Palatino, serif, ${MULTI_SCRIPT_FONT_FALLBACK}` }}>
 
       {/* Nav */}
-      <header className="py-6 px-8 flex items-center justify-between" style={{ borderBottom: `1px solid ${bg.border}` }}>
+      <header data-preview-tab="content" className="py-6 px-8 flex items-center justify-between" style={{ borderBottom: `1px solid ${bg.border}` }}>
         <div>
           <span className="text-xl font-semibold">{site.heroTitle}</span>
           {site.tagline && <span className="text-xs ml-3 opacity-50">{site.tagline}</span>}
@@ -45,7 +45,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section className="relative overflow-hidden" style={{ minHeight: '80vh' }}>
+      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '80vh' }}>
         {heroImg ? (
           <>
             <HeroBackground url={heroImg} type={heroType} poster={heroPoster}
@@ -67,7 +67,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section id="gallery" className="py-20 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6">
         <Reveal className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-light text-center mb-12">{t('navGallery', 'Our Work')}</h2>
           <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
@@ -75,7 +75,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" className="py-20 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-4xl mx-auto grid md:grid-cols-2 gap-12 items-center">
           {site.galleryPhotos[1] && (
             <div className="rounded-3xl overflow-hidden shadow-xl transition-transform duration-500 hover:scale-[1.02]" style={{ aspectRatio: '3/4' }}>
@@ -94,7 +94,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" className="py-20 px-6">
+        <section id="services" data-preview-tab="services" className="py-20 px-6">
           <Reveal className="max-w-4xl mx-auto">
             <h2 className="text-3xl font-light text-center mb-14">{t('sectionServicesHeading', 'What We Offer')}</h2>
             <div className="grid sm:grid-cols-3 gap-6">
@@ -112,7 +112,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" className="py-20 px-6">
+        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6">
           <Reveal className="max-w-5xl mx-auto">
             <h2 className="text-3xl font-light text-center mb-14">{t('sectionReviewsHeading', 'What Clients Say')}</h2>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
@@ -121,7 +121,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" className="py-20 px-6" style={{ background: bg.alt }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: bg.alt }}>
         <Reveal className="max-w-xl mx-auto text-center">
           <p className="text-xs uppercase tracking-widest mb-3" style={{ color: accent }}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Get in Touch')}
@@ -140,7 +140,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
         </Reveal>
       </section>
 
-      <footer className="py-8 px-6 text-center text-xs opacity-40" style={{ borderTop: `1px solid ${bg.border}` }}>
+      <footer data-preview-tab="contact" className="py-8 px-6 text-center text-xs opacity-40" style={{ borderTop: `1px solid ${bg.border}` }}>
         {site.heroTitle} · {t('footerPoweredBy', 'Powered by')} VayuStudios
       </footer>
     </div>
