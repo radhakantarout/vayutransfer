@@ -363,6 +363,23 @@ export type WebsiteMediaType = 'photo' | 'video'
 // require switching your whole site's layout.
 export type WebsiteGalleryStyle = 'classic' | 'rotateScroll' | 'stack' | 'coverflow' | 'parallaxMasonry' | 'cube' | 'orbit' | 'spiral' | 'horizontalParallax' | 'filmReel' | 'cinemaScreen' | 'rackFocus' | 'spotlightStage' | 'projectorSlide'
 
+// The 6 conceptual blocks every template already exposes via its own
+// data-preview-tab attributes (see templates/*.tsx) — reused here as the
+// granularity for per-section style overrides, deliberately coarser than
+// per-field so a studio owner can't assemble a broken-looking mismatch of
+// colors/weights within a single section.
+export type WebsiteSectionKey = 'hero' | 'about' | 'services' | 'testimonials' | 'gallery' | 'book'
+export type SectionEmphasis = 'normal' | 'bold' | 'subtle' | 'italic'
+export interface WebsiteSectionStyle {
+  // undefined/'normal' = the template's own default text weight/opacity for
+  // that section's heading + primary body text.
+  emphasis?: SectionEmphasis
+  // Hex color; undefined = the template's own default background for that
+  // section (whatever it already computes today — a preset shade, a
+  // gradient stop, or transparent).
+  background?: string
+}
+
 export interface WebsiteService {
   id: string
   name: string
@@ -408,6 +425,10 @@ export interface StudioWebsite {
   // template's text opacity/overlay treatment is tuned against its own small
   // curated set of background shades, not an arbitrary color.
   backgroundPreset?: string
+  // Per-section overrides (text emphasis + background color) — undefined,
+  // or a section missing from this map, means that section renders exactly
+  // as it always has (this field didn't exist until now).
+  sectionStyles?: Partial<Record<WebsiteSectionKey, WebsiteSectionStyle>>
   galleryStyle?: WebsiteGalleryStyle
   language?: WebsiteLanguage
   status: WebsiteStatus
@@ -424,6 +445,14 @@ export interface StudioWebsite {
   heroPosterUrl?: string
   heroPosterSizeBytes?: number
   heroImageSizeBytes?: number
+  // Only meaningful on templates that darken the cover with their own
+  // built-in overlay by design (Lumina, Ember, Bold) — those templates use
+  // this directly as that overlay's opacity (0 = fully hidden, 1 = cover
+  // shows fully as-is, no darkening at all). Undefined keeps each of those
+  // templates' own original hardcoded default (0.2/0.85/0.4), so every
+  // existing site renders exactly as before. Templates with no such overlay
+  // ignore this field entirely — their cover already always shows as-is.
+  heroBrightness?: number
   contactEmail?: string
   contactPhone?: string
   whatsapp?: string

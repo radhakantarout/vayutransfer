@@ -8,6 +8,8 @@ import Reveal from './Reveal'
 import SiteNav from './SiteNav'
 import Testimonials from './Testimonials'
 import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+import { emphasisTextStyle } from '@/lib/studio/sectionStyle'
+import type { WebsiteSectionKey } from '@/types/studio'
 
 // 'default' matches every pre-existing site's hardcoded colors exactly — an
 // unset backgroundPreset must render byte-for-byte the same as before this
@@ -22,6 +24,7 @@ const BACKGROUND_PRESETS: Record<string, { bg: string; alt: string; heroEnd: str
 
 export default function Lumina({ site }: { site: StudioWebsite }) {
   const t = translator(site.language)
+  const sx = (key: WebsiteSectionKey) => site.sectionStyles?.[key]
   const accent    = site.themeAccent ?? '#C9A84C'
   const fontColor = site.fontColor   ?? '#F5F0E8'
   const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
@@ -47,9 +50,14 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 
       {/* Hero */}
       <section data-preview-tab="content" className="relative min-h-screen flex flex-col items-center justify-center text-center px-6"
-        style={{ background: `linear-gradient(160deg, ${bg.bg} 0%, ${bg.heroEnd} 100%)` }}>
+        style={{ background: sx('hero')?.background ?? `linear-gradient(160deg, ${bg.bg} 0%, ${bg.heroEnd} 100%)` }}>
         {heroImg && (
-          <div className="absolute inset-0 opacity-20">
+          // Base 20% opacity is what makes this template read as "dark,
+          // moody" by default. heroBrightness IS this wrapper's opacity
+          // directly (not a multiplier) — undefined keeps today's exact 0.2
+          // look, and dragging the dashboard slider all the way up sets it
+          // to 1, which shows the cover fully as-is (no dimming at all).
+          <div className="absolute inset-0" style={{ opacity: site.heroBrightness ?? 0.2 }}>
             <HeroBackground url={heroImg} type={heroType} poster={heroPoster} />
             <div className="absolute inset-0" style={{ background: `linear-gradient(to bottom, ${bg.bg} 0%, transparent 40%, ${bg.bg} 100%)` }} />
           </div>
@@ -57,8 +65,8 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
         <div className="relative z-10">
           <p className="text-xs font-bold uppercase tracking-[0.3em] mb-6" style={{ color: accent }}>Photography Studio</p>
           <h1 className="text-6xl sm:text-8xl font-light mb-6 leading-none tracking-tight">{site.heroTitle}</h1>
-          <p className="text-lg sm:text-xl opacity-60 mb-4 max-w-xl mx-auto font-light">{site.heroSubtitle}</p>
-          {site.tagline && <p className="text-sm opacity-40 mb-10">{site.tagline}</p>}
+          <p className="text-lg sm:text-xl opacity-60 mb-4 max-w-xl mx-auto font-light" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.heroSubtitle}</p>
+          {site.tagline && <p className="text-sm opacity-40 mb-10" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.tagline}</p>}
           {site.bookingEnabled && (
             <a href="#book" style={{ borderColor: accent, color: accent }}
               className="inline-block border px-10 py-3.5 text-sm uppercase tracking-widest hover:opacity-80 transition-opacity">
@@ -72,7 +80,7 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* Gallery */}
-      <section id="portfolio" data-preview-tab="gallery" className="py-24 px-6">
+      <section id="portfolio" data-preview-tab="gallery" className="py-24 px-6" style={{ background: sx('gallery')?.background }}>
         <Reveal className="max-w-6xl mx-auto">
           <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('navGallery', 'Portfolio')}</p>
           <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
@@ -80,19 +88,19 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" data-preview-tab="content" className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-24 px-6" style={{ background: sx('about')?.background ?? bg.alt }}>
         <Reveal className="max-w-3xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-[0.3em] mb-8 opacity-40">{t('sectionAboutHeading', 'About')}</p>
-          <p className="text-xl sm:text-2xl font-light leading-relaxed opacity-80">{site.about}</p>
+          <p className="text-xs uppercase tracking-[0.3em] mb-8 opacity-40" style={emphasisTextStyle(sx('about')?.emphasis)}>{t('sectionAboutHeading', 'About')}</p>
+          <p className="text-xl sm:text-2xl font-light leading-relaxed opacity-80" style={emphasisTextStyle(sx('about')?.emphasis)}>{site.about}</p>
           {site.city && <p className="mt-6 text-sm opacity-40 uppercase tracking-widest">{site.city}</p>}
         </Reveal>
       </section>
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" data-preview-tab="services" className="py-24 px-6">
+        <section id="services" data-preview-tab="services" className="py-24 px-6" style={{ background: sx('services')?.background }}>
           <Reveal className="max-w-4xl mx-auto">
-            <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('sectionServicesHeading', 'Services')}</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40" style={emphasisTextStyle(sx('services')?.emphasis)}>{t('sectionServicesHeading', 'Services')}</p>
             <div className="grid sm:grid-cols-3 gap-8">
               {site.services.map(s => (
                 <div key={s.id} className="border-t pt-6 px-1 rounded-b-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white/[0.03]" style={{ borderColor: `${accent}33` }}>
@@ -108,21 +116,21 @@ export default function Lumina({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6" style={{ background: bg.alt }}>
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6" style={{ background: sx('testimonials')?.background ?? bg.alt }}>
           <Reveal className="max-w-5xl mx-auto">
-            <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40">{t('sectionReviewsHeading', 'What Clients Say')}</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-center mb-12 opacity-40" style={emphasisTextStyle(sx('testimonials')?.emphasis)}>{t('sectionReviewsHeading', 'What Clients Say')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
           </Reveal>
         </section>
       )}
 
       {/* Contact + Booking */}
-      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6" style={{ background: bg.alt }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6" style={{ background: sx('book')?.background ?? bg.alt }}>
         <Reveal className="max-w-2xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-[0.3em] mb-4 opacity-40">
+          <p className="text-xs uppercase tracking-[0.3em] mb-4 opacity-40" style={emphasisTextStyle(sx('book')?.emphasis)}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}
           </p>
-          <h2 className="text-3xl font-light mb-12">{t('bookingIntro', "Let's create something beautiful")}</h2>
+          <h2 className="text-3xl font-light mb-12" style={emphasisTextStyle(sx('book')?.emphasis)}>{t('bookingIntro', "Let's create something beautiful")}</h2>
           {site.bookingEnabled
             ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} language={site.language} />
             : (

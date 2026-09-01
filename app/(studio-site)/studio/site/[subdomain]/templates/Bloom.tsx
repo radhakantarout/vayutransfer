@@ -8,6 +8,8 @@ import Reveal from './Reveal'
 import SiteNav from './SiteNav'
 import Testimonials from './Testimonials'
 import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+import { emphasisTextStyle } from '@/lib/studio/sectionStyle'
+import type { WebsiteSectionKey } from '@/types/studio'
 
 const BACKGROUND_PRESETS: Record<string, {
   bg: string; border: string; heroFrom: string; heroMid: string; heroTo: string
@@ -20,6 +22,7 @@ const BACKGROUND_PRESETS: Record<string, {
 
 export default function Bloom({ site }: { site: StudioWebsite }) {
   const t = translator(site.language)
+  const sx = (key: WebsiteSectionKey) => site.sectionStyles?.[key]
   const accent    = site.themeAccent ?? '#D4849A'
   const fontColor = site.fontColor   ?? '#3D2B2B'
   const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
@@ -48,7 +51,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '85vh', background: `linear-gradient(135deg, ${bg.heroFrom} 0%, ${bg.heroMid} 50%, ${bg.heroTo} 100%)` }}>
+      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '85vh', background: sx('hero')?.background ?? `linear-gradient(135deg, ${bg.heroFrom} 0%, ${bg.heroMid} 50%, ${bg.heroTo} 100%)` }}>
         <div className="absolute inset-0 opacity-10">
           {/* Decorative circles */}
           <div className="absolute top-10 right-10 w-96 h-96 rounded-full" style={{ background: accent, filter: 'blur(80px)' }} />
@@ -57,8 +60,8 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
         <div className="relative z-10 flex flex-col md:flex-row items-center justify-center min-h-[85vh] max-w-5xl mx-auto px-8 gap-12">
           <div className="text-center md:text-left flex-1">
             <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>Photography Studio</p>
-            <h2 className="text-5xl sm:text-6xl font-light leading-tight mb-6">{site.heroSubtitle}</h2>
-            <p className="text-sm opacity-60 mb-8 max-w-xs leading-relaxed">{site.tagline}</p>
+            <h2 className="text-5xl sm:text-6xl font-light leading-tight mb-6" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.heroSubtitle}</h2>
+            <p className="text-sm opacity-60 mb-8 max-w-xs leading-relaxed" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.tagline}</p>
             <div className="flex gap-4 justify-center md:justify-start">
               {site.bookingEnabled && (
                 <a href="#book" className="px-7 py-3 text-xs font-semibold uppercase tracking-widest rounded-full text-white transition-opacity hover:opacity-80"
@@ -79,7 +82,7 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6" style={{ background: sx('gallery')?.background }}>
         <Reveal className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('navGallery', 'Portfolio')}</p>
@@ -90,11 +93,11 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
+      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: sx('about')?.background ?? `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
         <Reveal className="max-w-3xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>{t('navAbout', 'Our Story')}</p>
-          <h2 className="text-4xl font-light mb-8">{t('sectionAboutHeading', 'About Us')}</h2>
-          <p className="text-lg font-light leading-relaxed opacity-70">{site.about}</p>
+          <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent, ...emphasisTextStyle(sx('about')?.emphasis) }}>{t('navAbout', 'Our Story')}</p>
+          <h2 className="text-4xl font-light mb-8" style={emphasisTextStyle(sx('about')?.emphasis)}>{t('sectionAboutHeading', 'About Us')}</h2>
+          <p className="text-lg font-light leading-relaxed opacity-70" style={emphasisTextStyle(sx('about')?.emphasis)}>{site.about}</p>
           {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
           <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="justify-center mt-6" />
         </Reveal>
@@ -102,11 +105,11 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" data-preview-tab="services" className="py-20 px-6">
+        <section id="services" data-preview-tab="services" className="py-20 px-6" style={{ background: sx('services')?.background }}>
           <Reveal className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
-              <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('sectionServicesHeading', 'Services')}</p>
-              <h2 className="text-4xl font-light">{t('sectionServicesHeading', 'What We Create')}</h2>
+              <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent, ...emphasisTextStyle(sx('services')?.emphasis) }}>{t('sectionServicesHeading', 'Services')}</p>
+              <h2 className="text-4xl font-light" style={emphasisTextStyle(sx('services')?.emphasis)}>{t('sectionServicesHeading', 'What We Create')}</h2>
             </div>
             <div className="grid sm:grid-cols-3 gap-6">
               {site.services.map(s => (
@@ -126,11 +129,11 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6">
+        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6" style={{ background: sx('testimonials')?.background }}>
           <Reveal className="max-w-5xl mx-auto">
             <div className="text-center mb-12">
-              <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent }}>{t('sectionReviewsHeading', 'Reviews')}</p>
-              <h2 className="text-4xl font-light">{t('sectionReviewsHeading', 'What Clients Say')}</h2>
+              <p className="text-xs uppercase tracking-[0.3em] mb-2" style={{ color: accent, ...emphasisTextStyle(sx('testimonials')?.emphasis) }}>{t('sectionReviewsHeading', 'Reviews')}</p>
+              <h2 className="text-4xl font-light" style={emphasisTextStyle(sx('testimonials')?.emphasis)}>{t('sectionReviewsHeading', 'What Clients Say')}</h2>
             </div>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
           </Reveal>
@@ -138,12 +141,12 @@ export default function Bloom({ site }: { site: StudioWebsite }) {
       )}
 
       {/* Book */}
-      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: sx('book')?.background ?? `linear-gradient(135deg, ${bg.altFrom} 0%, ${bg.altTo} 100%)` }}>
         <Reveal className="max-w-xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent }}>
+          <p className="text-xs uppercase tracking-[0.3em] mb-4" style={{ color: accent, ...emphasisTextStyle(sx('book')?.emphasis) }}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Say Hello')}
           </p>
-          <h2 className="text-4xl font-light mb-10">{t('bookingIntro', "Let's Work Together")}</h2>
+          <h2 className="text-4xl font-light mb-10" style={emphasisTextStyle(sx('book')?.emphasis)}>{t('bookingIntro', "Let's Work Together")}</h2>
           {site.bookingEnabled
             ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} language={site.language} />
             : (

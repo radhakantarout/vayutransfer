@@ -8,6 +8,8 @@ import Reveal from './Reveal'
 import SiteNav from './SiteNav'
 import Testimonials from './Testimonials'
 import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+import { emphasisTextStyle } from '@/lib/studio/sectionStyle'
+import type { WebsiteSectionKey } from '@/types/studio'
 
 const BACKGROUND_PRESETS: Record<string, { bg: string; headerBg: string }> = {
   default: { bg: '#FFFFFF', headerBg: '#FFFFFF' },
@@ -17,6 +19,7 @@ const BACKGROUND_PRESETS: Record<string, { bg: string; headerBg: string }> = {
 
 export default function Frame({ site }: { site: StudioWebsite }) {
   const t = translator(site.language)
+  const sx = (key: WebsiteSectionKey) => site.sectionStyles?.[key]
   const accent    = site.themeAccent ?? '#111111'
   const fontColor = site.fontColor   ?? '#111111'
   const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
@@ -44,7 +47,7 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero — short, editorial, lets the gallery dominate */}
-      <section data-preview-tab="content" className="relative pt-16" style={{ height: '58vh' }}>
+      <section data-preview-tab="content" className="relative pt-16" style={{ height: '58vh', background: sx('hero')?.background }}>
         {heroImg ? (
           <>
             <div className="absolute inset-0" style={{ filter: 'grayscale(1) contrast(1.05)' }}>
@@ -57,12 +60,12 @@ export default function Frame({ site }: { site: StudioWebsite }) {
         )}
         <div className="absolute bottom-8 left-6 sm:left-10 right-6 sm:right-10 flex items-end justify-between gap-6">
           <h1 className="text-4xl sm:text-6xl font-bold uppercase tracking-tight leading-none text-white">{site.heroTitle}</h1>
-          <p className="hidden sm:block text-xs uppercase tracking-widest text-white/70 max-w-[240px] text-right">{site.heroSubtitle}</p>
+          <p className="hidden sm:block text-xs uppercase tracking-widest text-white/70 max-w-[240px] text-right" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.heroSubtitle}</p>
         </div>
       </section>
 
       {/* Gallery — first, dominant */}
-      <section id="gallery" data-preview-tab="gallery" className="py-16 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-16 px-6" style={{ background: sx('gallery')?.background }}>
         <Reveal className="max-w-6xl mx-auto">
           <div className="flex items-baseline justify-between mb-8">
             <p className="text-xs uppercase tracking-[0.3em] opacity-50">{t('navGallery', 'Selected Work')}</p>
@@ -73,11 +76,11 @@ export default function Frame({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" data-preview-tab="content" className="py-24 px-6 border-t border-black/10">
+      <section id="about" data-preview-tab="content" className="py-24 px-6 border-t border-black/10" style={{ background: sx('about')?.background }}>
         <Reveal className="max-w-3xl mx-auto grid sm:grid-cols-[80px_1fr] gap-6">
-          <p className="text-xs uppercase tracking-widest opacity-40">{t('sectionAboutHeading', 'About')}</p>
+          <p className="text-xs uppercase tracking-widest opacity-40" style={emphasisTextStyle(sx('about')?.emphasis)}>{t('sectionAboutHeading', 'About')}</p>
           <div>
-            <p className="text-xl sm:text-2xl font-light leading-relaxed">{site.about}</p>
+            <p className="text-xl sm:text-2xl font-light leading-relaxed" style={emphasisTextStyle(sx('about')?.emphasis)}>{site.about}</p>
             {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
             <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" />
           </div>
@@ -86,9 +89,9 @@ export default function Frame({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" data-preview-tab="services" className="py-24 px-6 border-t border-black/10">
+        <section id="services" data-preview-tab="services" className="py-24 px-6 border-t border-black/10" style={{ background: sx('services')?.background }}>
           <Reveal className="max-w-3xl mx-auto">
-            <p className="text-xs uppercase tracking-widest opacity-40 mb-10">{t('sectionServicesHeading', 'Services')}</p>
+            <p className="text-xs uppercase tracking-widest opacity-40 mb-10" style={emphasisTextStyle(sx('services')?.emphasis)}>{t('sectionServicesHeading', 'Services')}</p>
             <div className="divide-y divide-black/10">
               {site.services.map((s, i) => (
                 <div key={s.id} className="py-6 grid sm:grid-cols-[40px_1fr_auto] gap-4 items-baseline transition-all duration-300 hover:bg-black/[0.02] px-3 -mx-3 rounded-lg">
@@ -107,19 +110,19 @@ export default function Frame({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6 border-t border-black/10">
+        <section id="reviews" data-preview-tab="testimonials" className="py-24 px-6 border-t border-black/10" style={{ background: sx('testimonials')?.background }}>
           <Reveal className="max-w-5xl mx-auto">
-            <p className="text-xs uppercase tracking-widest opacity-40 mb-10">{t('sectionReviewsHeading', 'Reviews')}</p>
+            <p className="text-xs uppercase tracking-widest opacity-40 mb-10" style={emphasisTextStyle(sx('testimonials')?.emphasis)}>{t('sectionReviewsHeading', 'Reviews')}</p>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
           </Reveal>
         </section>
       )}
 
       {/* Book */}
-      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6 bg-black text-white">
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-24 px-6 bg-black text-white" style={{ background: sx('book')?.background }}>
         <Reveal className="max-w-2xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-widest opacity-50 mb-4">{site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}</p>
-          <h2 className="text-3xl font-light mb-10">{t('bookingIntro', "Let's work together")}</h2>
+          <p className="text-xs uppercase tracking-widest opacity-50 mb-4" style={emphasisTextStyle(sx('book')?.emphasis)}>{site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Contact')}</p>
+          <h2 className="text-3xl font-light mb-10" style={emphasisTextStyle(sx('book')?.emphasis)}>{t('bookingIntro', "Let's work together")}</h2>
           {site.bookingEnabled
             ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor="#ffffff" textOnAccent="#111111" fontColor="#ffffff" language={site.language} />
             : (
