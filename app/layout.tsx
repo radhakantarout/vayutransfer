@@ -20,6 +20,12 @@ export const metadata: Metadata = {
   description:
     'Send large files securely across the globe. Pay only for what you use. No subscription, no hidden charges. Transfer instantly.',
   metadataBase: new URL('https://vayutransfer.com'),
+  // No app/favicon.ico or app/icon.* file exists, and this field was never
+  // set — every page had no favicon at all. /logo.png is the same asset
+  // StudioNavbar.tsx already uses for VayuStudios' own in-app logo, so one
+  // file covers both domains; app/studio/layout.tsx repeats this explicitly
+  // rather than relying on metadata inheritance from this root layout.
+  icons: { icon: '/logo.png', shortcut: '/logo.png', apple: '/logo.png' },
   openGraph: {
     title: 'VayuTransfer — Secure File Transfer. Prepaid. No surprises.',
     description: 'Send large files securely across the globe. Pay only for what you use. No subscription, no hidden charges.',

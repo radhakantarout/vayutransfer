@@ -32,7 +32,10 @@ Tone: warm, professional, confident — never cheesy or over-the-top.
 Rules:
 - Return ONLY the requested text. No preamble, no explanation, no markdown, no surrounding quotes.
 - Respect the requested word count closely.
-- Use the studio's actual name/city naturally if given; never invent facts (awards, years in business, specific numbers) that weren't provided.`
+- Use the studio's actual name/city naturally if given; never invent facts (awards, years in business, specific numbers) that weren't provided.
+- If the studio owner gives a specific request, prioritize working it in naturally without breaking the word count or tone.`
+
+const MAX_USER_PROMPT_LENGTH = 300
 
 export async function POST(req: NextRequest) {
   const auth = await verifyStudioJWT(req)
@@ -45,17 +48,20 @@ export async function POST(req: NextRequest) {
     studioName?: string
     city?: string
     serviceName?: string
+    userPrompt?: string
   } | null
 
   if (!body?.field || !(body.field in FIELD_SPEC)) {
     return NextResponse.json({ success: false, error: 'A valid field is required' }, { status: 400 })
   }
   const spec = FIELD_SPEC[body.field]
+  const userPrompt = body.userPrompt?.trim().slice(0, MAX_USER_PROMPT_LENGTH)
 
   const context = [
     body.studioName && `Studio name: ${body.studioName}`,
     body.city && `Location: ${body.city}`,
     body.field === 'serviceDescription' && body.serviceName && `Service name: ${body.serviceName}`,
+    userPrompt && `Studio owner's specific request: ${userPrompt}`,
   ].filter(Boolean).join('\n')
 
   const userMessage = `${spec.instruction}\n\n${context || 'No further details provided — keep it generic but still warm and specific-sounding.'}`

@@ -8,6 +8,8 @@ import Reveal from './Reveal'
 import SiteNav from './SiteNav'
 import Testimonials from './Testimonials'
 import { translator, MULTI_SCRIPT_FONT_FALLBACK } from '@/lib/studio/i18n'
+import { emphasisTextStyle } from '@/lib/studio/sectionStyle'
+import type { WebsiteSectionKey } from '@/types/studio'
 
 const BACKGROUND_PRESETS: Record<string, { bg: string; alt: string; border: string; heroOverlay: string; heroFrom: string; heroTo: string }> = {
   default:     { bg: '#FAF6F1', alt: '#F0E8DF', border: '#E8DDD5', heroOverlay: 'rgba(250,246,241,0.9)', heroFrom: '#F5EDE3', heroTo: '#E8D5C4' },
@@ -17,6 +19,7 @@ const BACKGROUND_PRESETS: Record<string, { bg: string; alt: string; border: stri
 
 export default function Ember({ site }: { site: StudioWebsite }) {
   const t = translator(site.language)
+  const sx = (key: WebsiteSectionKey) => site.sectionStyles?.[key]
   const accent    = site.themeAccent ?? '#C4622D'
   const fontColor = site.fontColor   ?? '#2C1810'
   const bg = BACKGROUND_PRESETS[site.backgroundPreset ?? 'default'] ?? BACKGROUND_PRESETS.default
@@ -45,11 +48,14 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </header>
 
       {/* Hero */}
-      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '80vh' }}>
+      <section data-preview-tab="content" className="relative overflow-hidden" style={{ minHeight: '80vh', background: sx('hero')?.background }}>
         {heroImg ? (
           <>
+            {/* heroBrightness IS this opacity directly — undefined keeps
+                today's 0.85, and the dashboard slider can push it to 1 for
+                the cover to show fully as-is. */}
             <HeroBackground url={heroImg} type={heroType} poster={heroPoster}
-              className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: 0.85 }} />
+              className="w-full h-full object-cover absolute inset-0" style={{ minHeight: '80vh', opacity: site.heroBrightness ?? 0.85 }} />
             <div className="absolute inset-0" style={{ background: `linear-gradient(to right, ${bg.heroOverlay} 40%, transparent 100%)` }} />
           </>
         ) : (
@@ -58,7 +64,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
         <div className="relative z-10 max-w-2xl px-10 py-24 flex flex-col justify-center" style={{ minHeight: '80vh' }}>
           <p className="text-xs uppercase tracking-[0.25em] mb-4" style={{ color: accent }}>Photography</p>
           <h1 className="text-5xl sm:text-7xl font-light leading-tight mb-6">{site.heroTitle}</h1>
-          <p className="text-lg leading-relaxed mb-8 opacity-70">{site.heroSubtitle}</p>
+          <p className="text-lg leading-relaxed mb-8 opacity-70" style={emphasisTextStyle(sx('hero')?.emphasis)}>{site.heroSubtitle}</p>
           {site.bookingEnabled && (
             <a href="#book" className="self-start px-8 py-3.5 text-sm font-semibold rounded-full text-white transition-opacity hover:opacity-80"
               style={{ backgroundColor: accent }}>{t('sectionBookHeadingEnabled', 'Book a Session')} →</a>
@@ -67,7 +73,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </section>
 
             {/* Gallery */}
-      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6">
+      <section id="gallery" data-preview-tab="gallery" className="py-20 px-6" style={{ background: sx('gallery')?.background }}>
         <Reveal className="max-w-5xl mx-auto">
           <h2 className="text-3xl font-light text-center mb-12">{t('navGallery', 'Our Work')}</h2>
           <Gallery style={site.galleryStyle} photos={site.galleryPhotos} studioName={site.heroTitle} accent={accent} fontColor={fontColor} language={site.language} />
@@ -75,7 +81,7 @@ export default function Ember({ site }: { site: StudioWebsite }) {
       </section>
 
       {/* About */}
-      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: bg.alt }}>
+      <section id="about" data-preview-tab="content" className="py-20 px-6" style={{ background: sx('about')?.background ?? bg.alt }}>
         <Reveal className="max-w-4xl mx-auto grid md:grid-cols-2 gap-12 items-center">
           {site.galleryPhotos[1] && (
             <div className="rounded-3xl overflow-hidden shadow-xl transition-transform duration-500 hover:scale-[1.02]" style={{ aspectRatio: '3/4' }}>
@@ -83,9 +89,9 @@ export default function Ember({ site }: { site: StudioWebsite }) {
             </div>
           )}
           <div>
-            <p className="text-xs uppercase tracking-widest mb-4" style={{ color: accent }}>{t('navAbout', 'Our Story')}</p>
+            <p className="text-xs uppercase tracking-widest mb-4" style={{ color: accent, ...emphasisTextStyle(sx('about')?.emphasis) }}>{t('navAbout', 'Our Story')}</p>
             <h2 className="text-3xl font-light mb-6">{t('sectionAboutHeading', 'About Us')}</h2>
-            <p className="leading-relaxed opacity-70 text-sm">{site.about}</p>
+            <p className="leading-relaxed opacity-70 text-sm" style={emphasisTextStyle(sx('about')?.emphasis)}>{site.about}</p>
             {site.city && <p className="mt-6 text-xs uppercase tracking-widest opacity-40">{site.city}</p>}
             <SocialIcons instagram={site.socialLinks?.instagram} facebook={site.socialLinks?.facebook} youtube={site.socialLinks?.youtube} className="mt-6" />
           </div>
@@ -94,9 +100,9 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
       {/* Services */}
       {site.services.length > 0 && (
-        <section id="services" data-preview-tab="services" className="py-20 px-6">
+        <section id="services" data-preview-tab="services" className="py-20 px-6" style={{ background: sx('services')?.background }}>
           <Reveal className="max-w-4xl mx-auto">
-            <h2 className="text-3xl font-light text-center mb-14">{t('sectionServicesHeading', 'What We Offer')}</h2>
+            <h2 className="text-3xl font-light text-center mb-14" style={emphasisTextStyle(sx('services')?.emphasis)}>{t('sectionServicesHeading', 'What We Offer')}</h2>
             <div className="grid sm:grid-cols-3 gap-6">
               {site.services.map((s, i) => (
                 <div key={s.id} className="rounded-2xl p-6 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl" style={{ background: i % 2 === 0 ? bg.alt : bg.bg, border: `1px solid ${bg.border}` }}>
@@ -112,21 +118,21 @@ export default function Ember({ site }: { site: StudioWebsite }) {
 
       {/* Testimonials */}
       {!!site.testimonials?.length && (
-        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6">
+        <section id="reviews" data-preview-tab="testimonials" className="py-20 px-6" style={{ background: sx('testimonials')?.background }}>
           <Reveal className="max-w-5xl mx-auto">
-            <h2 className="text-3xl font-light text-center mb-14">{t('sectionReviewsHeading', 'What Clients Say')}</h2>
+            <h2 className="text-3xl font-light text-center mb-14" style={emphasisTextStyle(sx('testimonials')?.emphasis)}>{t('sectionReviewsHeading', 'What Clients Say')}</h2>
             <Testimonials testimonials={site.testimonials} accent={accent} fontColor={fontColor} />
           </Reveal>
         </section>
       )}
 
       {/* Book */}
-      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: bg.alt }}>
+      <section id="book" data-preview-tab={site.bookingEnabled ? 'booking' : 'contact'} className="py-20 px-6" style={{ background: sx('book')?.background ?? bg.alt }}>
         <Reveal className="max-w-xl mx-auto text-center">
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: accent }}>
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: accent, ...emphasisTextStyle(sx('book')?.emphasis) }}>
             {site.bookingEnabled ? t('sectionBookHeadingEnabled', 'Book a Session') : t('sectionBookHeadingDisabled', 'Get in Touch')}
           </p>
-          <h2 className="text-3xl font-light mb-10">{t('bookingIntro', "Let's create memories together")}</h2>
+          <h2 className="text-3xl font-light mb-10" style={emphasisTextStyle(sx('book')?.emphasis)}>{t('bookingIntro', "Let's create memories together")}</h2>
           {site.bookingEnabled
             ? <BookingForm subdomain={site.subdomain} message={site.bookingMessage} accentColor={accent} fontColor={fontColor} language={site.language} />
             : (

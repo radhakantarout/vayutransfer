@@ -1,15 +1,23 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle } from '@/types/studio'
+import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
 import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
 import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
+import { EMPHASIS_OPTIONS, SECTION_BG_SWATCHES } from '@/lib/studio/sectionStyle'
 import LivePreviewPanel from './LivePreviewPanel'
 
 // Which templates read as dark-background — used to pick a phone-bezel color
 // that contrasts with whatever the preview is actually showing (see
 // LivePreviewPanel's isDarkTemplate prop).
 const DARK_TEMPLATE_IDS = new Set(['lumina', 'bold'])
+
+// Only these 3 templates darken their cover with a built-in overlay whose
+// opacity heroBrightness controls directly (see each template's hero
+// section) — matches their own hardcoded default exactly so the slider
+// starts wherever the template already sits before it's ever touched.
+// Every other template shows its cover as-is always, unaffected by this field.
+const HERO_VISIBILITY_DEFAULTS: Record<string, number> = { lumina: 0.2, ember: 0.85, bold: 0.4 }
 
 const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Gold',      color: '#C9A84C' },
@@ -114,6 +122,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   }, [studioId, studioName])
 
   const update = (patch: Partial<StudioWebsite>) => setSite(s => s ? { ...s, ...patch } : s)
+
+  const updateSectionStyle = (key: WebsiteSectionKey, patch: Partial<WebsiteSectionStyle>) =>
+    setSite(s => s ? { ...s, sectionStyles: { ...s.sectionStyles, [key]: { ...s.sectionStyles?.[key], ...patch } } } : s)
 
   const save = async (patch?: Partial<StudioWebsite>) => {
     if (!site) return
@@ -429,9 +440,19 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const [aiLoading, setAiLoading] = useState<string | null>(null)
   const [aiError, setAiError]     = useState<{ key: string; message: string } | null>(null)
 
+  // Both "Ask AI to write this" and "Regenerate" open this same prompt dialog
+  // rather than generating immediately — lets the studio owner optionally
+  // steer what the AI emphasizes, every time, not just on the first try.
+  const [aiPromptModal, setAiPromptModal] = useState<{
+    field: 'about' | 'tagline' | 'heroSubtitle' | 'serviceDescription'
+    opts?: { serviceId?: string; serviceName?: string }
+    value: string
+  } | null>(null)
+
   const askAiForContent = async (
     field: 'about' | 'tagline' | 'heroSubtitle' | 'serviceDescription',
-    opts?: { serviceId?: string; serviceName?: string }
+    opts?: { serviceId?: string; serviceName?: string },
+    userPrompt?: string
   ) => {
     const key = opts?.serviceId ? `service:${opts.serviceId}` : field
     setAiLoading(key)
@@ -441,7 +462,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       const res = await fetch('/studio/api/ai/website-content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, studioName: site?.heroTitle, city: site?.city, serviceName: opts?.serviceName }),
+        body: JSON.stringify({ field, studioName: site?.heroTitle, city: site?.city, serviceName: opts?.serviceName, userPrompt }),
       }).then(r => r.json())
       if (!res.success) throw new Error(res.error ?? 'Could not generate a draft')
       setAiDraft({ key, text: res.text })
@@ -677,45 +698,49 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Content ── */}
       {tab === 'content' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionStyleControls label="Hero style" current={site.sectionStyles?.hero}
+            onChange={patch => updateSectionStyle('hero', patch)} />
           <Field label="Studio / Hero title" value={site.heroTitle} onChange={v => update({ heroTitle: v })} placeholder="Ram Photography" />
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Hero subtitle</label>
-              <AskAiButton loading={aiLoading === 'heroSubtitle'} onClick={() => askAiForContent('heroSubtitle')} />
+              <AskAiButton loading={aiLoading === 'heroSubtitle'} onClick={() => setAiPromptModal({ field: 'heroSubtitle', value: '' })} />
             </div>
             <input value={site.heroSubtitle} onChange={e => update({ heroSubtitle: e.target.value })} placeholder="Capturing your most precious moments"
               className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
             <AiDraftBox draftKey="heroSubtitle" aiDraft={aiDraft} aiError={aiError}
               onUse={text => { update({ heroSubtitle: text }); setAiDraft(null) }}
-              onRegenerate={() => askAiForContent('heroSubtitle')}
+              onRegenerate={() => setAiPromptModal({ field: 'heroSubtitle', value: '' })}
               onDismiss={() => setAiDraft(null)} />
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Tagline (short)</label>
-              <AskAiButton loading={aiLoading === 'tagline'} onClick={() => askAiForContent('tagline')} />
+              <AskAiButton loading={aiLoading === 'tagline'} onClick={() => setAiPromptModal({ field: 'tagline', value: '' })} />
             </div>
             <input value={site.tagline ?? ''} onChange={e => update({ tagline: e.target.value })} placeholder="Professional photography for every occasion"
               className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
             <AiDraftBox draftKey="tagline" aiDraft={aiDraft} aiError={aiError}
               onUse={text => { update({ tagline: text }); setAiDraft(null) }}
-              onRegenerate={() => askAiForContent('tagline')}
+              onRegenerate={() => setAiPromptModal({ field: 'tagline', value: '' })}
               onDismiss={() => setAiDraft(null)} />
           </div>
 
+          <SectionStyleControls label="About style" current={site.sectionStyles?.about}
+            onChange={patch => updateSectionStyle('about', patch)} />
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-semibold text-muted uppercase tracking-wider">About your studio</label>
-              <AskAiButton loading={aiLoading === 'about'} onClick={() => askAiForContent('about')} />
+              <AskAiButton loading={aiLoading === 'about'} onClick={() => setAiPromptModal({ field: 'about', value: '' })} />
             </div>
             <textarea value={site.about} onChange={e => update({ about: e.target.value })} rows={5}
               className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none"
               placeholder="Tell your story…" />
             <AiDraftBox draftKey="about" aiDraft={aiDraft} aiError={aiError}
               onUse={text => { update({ about: text }); setAiDraft(null) }}
-              onRegenerate={() => askAiForContent('about')}
+              onRegenerate={() => setAiPromptModal({ field: 'about', value: '' })}
               onDismiss={() => setAiDraft(null)} />
           </div>
 
@@ -750,6 +775,24 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               <div className="bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-xs text-danger mt-2">{uploadError}</div>
             )}
             <p className="text-[10px] text-muted mt-2">Shown behind your hero title — photo or a short looping video (max 60MB). If left unset, your first portfolio item is used instead.</p>
+
+            {HERO_VISIBILITY_DEFAULTS[site.templateId] !== undefined && (() => {
+              const defaultVisibility = HERO_VISIBILITY_DEFAULTS[site.templateId]
+              const visibility = site.heroBrightness ?? defaultVisibility
+              return (
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Cover visibility</label>
+                    <span className="text-xs text-muted">{Math.round(visibility * 100)}%</span>
+                  </div>
+                  <input type="range" min={0} max={100} step={5}
+                    value={Math.round(visibility * 100)}
+                    onChange={e => update({ heroBrightness: Number(e.target.value) / 100 })}
+                    className="w-full accent-accent" />
+                  <p className="text-[10px] text-muted mt-1">This template darkens its cover by design (starts at {Math.round(defaultVisibility * 100)}%) — drag to 100% to show it fully as-is, with no darkening at all.</p>
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}
@@ -758,6 +801,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {tab === 'gallery' && (
         <div className="space-y-5">
           <p className="text-xs text-muted">Upload your best portfolio photos and videos. Visitors see a clean gallery with a 3D album viewer for photos and a fullscreen player for videos — no watermarks.</p>
+
+          <SectionStyleControls label="Gallery section background" current={site.sectionStyles?.gallery} showEmphasis={false}
+            onChange={patch => updateSectionStyle('gallery', patch)} />
 
           {/* Gallery style */}
           <div>
@@ -845,6 +891,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Services ── */}
       {tab === 'services' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionStyleControls label="Services style" current={site.sectionStyles?.services}
+            onChange={patch => updateSectionStyle('services', patch)} />
           {site.services.map(s => (
             <div key={s.id} className="bg-card border border-border rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -855,13 +903,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Description</label>
-                  <AskAiButton loading={aiLoading === `service:${s.id}`} onClick={() => askAiForContent('serviceDescription', { serviceId: s.id, serviceName: s.name })} />
+                  <AskAiButton loading={aiLoading === `service:${s.id}`} onClick={() => setAiPromptModal({ field: 'serviceDescription', opts: { serviceId: s.id, serviceName: s.name }, value: '' })} />
                 </div>
                 <input value={s.description} onChange={e => patchService(s.id, { description: e.target.value })} placeholder="Full-day coverage with edited gallery"
                   className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent placeholder-muted/50" />
                 <AiDraftBox draftKey={`service:${s.id}`} aiDraft={aiDraft} aiError={aiError}
                   onUse={text => { patchService(s.id, { description: text }); setAiDraft(null) }}
-                  onRegenerate={() => askAiForContent('serviceDescription', { serviceId: s.id, serviceName: s.name })}
+                  onRegenerate={() => setAiPromptModal({ field: 'serviceDescription', opts: { serviceId: s.id, serviceName: s.name }, value: '' })}
                   onDismiss={() => setAiDraft(null)} />
               </div>
               <Field label="Price (optional)" value={s.price ?? ''} onChange={v => patchService(s.id, { price: v })} placeholder="₹50,000 onwards" />
@@ -876,6 +924,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Testimonials ── */}
       {tab === 'testimonials' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionStyleControls label="Testimonials style" current={site.sectionStyles?.testimonials}
+            onChange={patch => updateSectionStyle('testimonials', patch)} />
           <p className="text-xs text-muted">Client quotes build trust — shown on your site if you add any. Leave empty and the section just won&apos;t appear.</p>
           {(site.testimonials ?? []).map(t => (
             <div key={t.id} className="bg-card border border-border rounded-2xl p-4 space-y-3">
@@ -931,6 +981,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Booking ── */}
       {tab === 'booking' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionStyleControls label="Booking / Contact style" current={site.sectionStyles?.book}
+            onChange={patch => updateSectionStyle('book', patch)} />
           <div className="flex items-center gap-3">
             <button onClick={() => update({ bookingEnabled: !site.bookingEnabled })}
               className={`relative flex-shrink-0 w-12 h-6 rounded-full transition-colors ${site.bookingEnabled ? 'bg-accent' : 'bg-border'}`}>
@@ -1000,6 +1052,72 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       <LivePreviewPanel site={site} publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)}
         onEditRequest={tab => { if ((VALID_TABS as string[]).includes(tab)) setTab(tab as Tab) }} />
       </div>
+
+      {aiPromptModal && (
+        <AiPromptDialog
+          value={aiPromptModal.value}
+          onChange={v => setAiPromptModal(m => m ? { ...m, value: v } : m)}
+          onSkip={() => { const m = aiPromptModal; setAiPromptModal(null); askAiForContent(m.field, m.opts) }}
+          onGenerate={() => { const m = aiPromptModal; setAiPromptModal(null); askAiForContent(m.field, m.opts, m.value.trim() || undefined) }}
+          onClose={() => setAiPromptModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Compact inline block embedded at the top of each relevant tab — lets the
+// studio owner override one section's text emphasis and/or background color
+// without leaving the tab they're already editing that section's content in.
+// `current` is undefined until the owner sets anything for this section, in
+// which case the section renders exactly as its template's own default (see
+// each template's own `sx(key)` fallback chain).
+function SectionStyleControls({
+  label, current, onChange, showEmphasis = true,
+}: {
+  label: string
+  current: WebsiteSectionStyle | undefined
+  onChange: (patch: Partial<WebsiteSectionStyle>) => void
+  showEmphasis?: boolean
+}) {
+  const customColorRef = useRef<HTMLInputElement>(null)
+  return (
+    <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+      <p className="text-xs font-semibold text-text-primary">{label}</p>
+      {showEmphasis && (
+        <div>
+          <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">Emphasis</label>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {EMPHASIS_OPTIONS.map(opt => (
+              <button key={opt.id} onClick={() => onChange({ emphasis: opt.id === 'normal' ? undefined : opt.id })}
+                className={`px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-all ${
+                  (current?.emphasis ?? 'normal') === opt.id ? 'border-accent bg-accent/10 text-text-primary' : 'border-border text-muted hover:border-accent/50'}`}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div>
+        <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5">Background</label>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button onClick={() => onChange({ background: undefined })} title="Default"
+            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-[8px] transition-transform hover:scale-110 ${!current?.background ? 'border-accent scale-110' : 'border-border'}`}
+            style={{ background: 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 0/8px 8px' }}>
+            ✕
+          </button>
+          {SECTION_BG_SWATCHES.map(color => (
+            <button key={color} onClick={() => onChange({ background: color })} title={color}
+              className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${current?.background === color ? 'border-accent scale-110' : 'border-border'}`}
+              style={{ background: color }} />
+          ))}
+          <button onClick={() => customColorRef.current?.click()} title="Custom"
+            className="w-5 h-5 rounded-full border-2 border-transparent transition-transform hover:scale-110"
+            style={{ background: 'conic-gradient(red,orange,yellow,green,blue,indigo,violet,red)' }} />
+          <input ref={customColorRef} type="color" value={current?.background ?? '#000000'}
+            onChange={e => onChange({ background: e.target.value })} className="sr-only" title="Custom background" />
+        </div>
+      </div>
     </div>
   )
 }
@@ -1050,6 +1168,52 @@ function AiDraftBox({
         <button onClick={() => onUse(aiDraft.text)} className="text-[11px] font-bold text-accent hover:underline">Use this</button>
         <button onClick={onRegenerate} className="text-[11px] font-semibold text-muted hover:text-text-primary">Regenerate</button>
         <button onClick={onDismiss} className="text-[11px] text-muted hover:text-text-primary">Dismiss</button>
+      </div>
+    </div>
+  )
+}
+
+// Opened by both "Ask AI to write this" and "Regenerate" — lets the studio
+// owner optionally steer what the AI emphasizes before every generation,
+// not just the first. "Not sure — generate for me" skips straight to
+// generating with no extra instruction, identical to the old one-click
+// behavior, so nobody who doesn't care about this is slowed down.
+function AiPromptDialog({
+  value, onChange, onSkip, onGenerate, onClose,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onSkip: () => void
+  onGenerate: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">✨</span>
+          <h3 className="text-sm font-bold text-text-primary">Ask AI to write this</h3>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+            What should it emphasize? <span className="font-normal normal-case">(optional)</span>
+          </label>
+          <textarea autoFocus value={value} onChange={e => onChange(e.target.value)} rows={3} maxLength={300}
+            placeholder="e.g. mention we specialize in destination weddings and candid photography"
+            className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none placeholder-muted/50" />
+        </div>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <button onClick={onSkip} className="text-xs font-semibold text-muted hover:text-text-primary transition-colors whitespace-nowrap">
+            Not sure — generate for me
+          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button onClick={onClose} className="px-4 py-2 text-xs font-semibold text-muted hover:text-text-primary transition-colors">Cancel</button>
+            <button onClick={onGenerate} className="px-4 py-2 bg-accent text-bg text-xs font-bold rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
+              ✨ Generate
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
