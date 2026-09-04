@@ -22,6 +22,7 @@ try {
 
 const REGION       = process.env.AWS_REGION ?? 'ap-south-1'
 const DYNAMO_TABLE = process.env.DYNAMO_TABLE ?? 'vayustudio-mediafiles'
+const JOBS_TABLE   = process.env.DYNAMO_STUDIO_JOBS_TABLE ?? 'vayustudio-jobs'
 const PREVIEW_BASE = (process.env.PREVIEW_BASE_URL ?? 'https://previews-test.test.vayutransfer.com').replace(/\/$/, '')
 const MAX_DIM      = 1200  // px — longest edge of preview
 
@@ -53,6 +54,44 @@ async function setStatus(projectId, fileId, status, extra = {}) {
     ExpressionAttributeNames: Object.keys(names).length ? names : undefined,
     ExpressionAttributeValues: vals,
   }))
+}
+
+// Atomically bumps the bulk StudioJob's progress counter — this Lambda is
+// invoked once per file with no shared state between invocations, so this
+// is the only coordination point across a whole batch. Flips the job to
+// READY once every file has reported in. Guarded with a status condition so
+// a job the admin already cancelled (see the cancel route) never gets
+// silently resurrected to READY by a late-finishing invocation.
+async function bumpJobProgress(jobId) {
+  if (!jobId) return
+  try {
+    const result = await ddb.send(new UpdateCommand({
+      TableName: JOBS_TABLE,
+      Key: { jobId },
+      // "processed" is a DynamoDB reserved keyword — an unaliased
+      // UpdateExpression referencing it fails with ValidationException at
+      // runtime (caught below), which is exactly what silently kept every
+      // watermark job stuck at 0 processed until this was found via
+      // CloudWatch logs.
+      UpdateExpression: 'ADD outputPayload.#processed :one',
+      ExpressionAttributeNames: { '#processed': 'processed' },
+      ExpressionAttributeValues: { ':one': 1 },
+      ReturnValues: 'ALL_NEW',
+    }))
+    const out = result.Attributes?.outputPayload
+    if (out && typeof out.processed === 'number' && typeof out.total === 'number' && out.processed >= out.total) {
+      await ddb.send(new UpdateCommand({
+        TableName: JOBS_TABLE,
+        Key: { jobId },
+        UpdateExpression: 'SET #s = :ready, completedAt = :now',
+        ConditionExpression: '#s = :processing',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExpressionAttributeValues: { ':ready': 'READY', ':now': new Date().toISOString(), ':processing': 'PROCESSING' },
+      })).catch(() => {}) // already CANCELLED/READY — leave it alone
+    }
+  } catch (err) {
+    console.error('[watermark] bumpJobProgress failed:', err)
+  }
 }
 
 // Tiled circular badge watermark — staggered grid covering the full image.
@@ -136,6 +175,7 @@ exports.handler = async (event) => {
     r2Bucket, r2Key, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     watermarkEnabled = true,
     fileType = 'IMAGE',
+    jobId,
   } = event
 
   const resolvedSourceKey = sourceKey ?? s3Key
@@ -149,6 +189,7 @@ exports.handler = async (event) => {
   if (fileType !== 'IMAGE') {
     await setStatus(projectId, fileId, 'READY')
     console.log(`[watermark] ${fileId} skipped (${fileType}), marked READY`)
+    await bumpJobProgress(jobId)
     return { statusCode: 200, body: `Skipped: ${fileType}` }
   }
 
@@ -218,6 +259,7 @@ exports.handler = async (event) => {
     const r2PreviewUrl = `${PREVIEW_BASE}/${r2Key}`
     await setStatus(projectId, fileId, 'READY', { r2PreviewUrl })
     console.log(`[watermark] done → ${r2PreviewUrl}`)
+    await bumpJobProgress(jobId)
 
     return { statusCode: 200, body: r2PreviewUrl }
 
@@ -228,6 +270,7 @@ exports.handler = async (event) => {
     } catch (dbErr) {
       console.error('[watermark] also failed to mark FAILED:', dbErr)
     }
+    await bumpJobProgress(jobId)
     return { statusCode: 500, body: String(err.message ?? err) }
   }
 }

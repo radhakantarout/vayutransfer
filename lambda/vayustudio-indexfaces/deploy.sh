@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-FUNCTION_NAME="vayustudio-indexfaces"
+FUNCTION_NAME="${FUNCTION_NAME:-vayustudio-indexfaces}"
 REGION="ap-south-1"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 

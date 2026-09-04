@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-FUNCTION_NAME="vayustudio-watermark"
+FUNCTION_NAME="${FUNCTION_NAME:-vayustudio-watermark}"
 REGION="ap-south-1"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -14,8 +14,31 @@ fi
 R2_ENDPOINT_VAL="${STUDIO_R2_ENDPOINT:-}"
 R2_KEY_VAL="${R2_ACCESS_KEY_ID:-}"
 R2_SECRET_VAL="${R2_SECRET_ACCESS_KEY:-}"
-PREVIEW_URL_VAL="${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-https://previews-test.test.vayutransfer.com}"
+# Default keyed off FUNCTION_NAME, not a hardcoded test URL — a real
+# production incident happened here: deploying to the bare "vayustudio-
+# watermark" (production) function with no NEXT_PUBLIC_STUDIO_PREVIEW_URL
+# in .env.local silently fell back to the test domain and overwrote
+# production's PREVIEW_BASE_URL, since update-function-configuration
+# REPLACES the whole env set. Now the fallback matches whichever function
+# is actually being deployed.
+if [[ "$FUNCTION_NAME" == *-test ]]; then
+  DEFAULT_PREVIEW_URL="https://previews-test.test.vayutransfer.com"
+else
+  DEFAULT_PREVIEW_URL="https://previews.vayustudios.com"
+fi
+PREVIEW_URL_VAL="${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-$DEFAULT_PREVIEW_URL}"
 S3_BUCKET_VAL="${STUDIO_S3_BUCKET:-vayutransfer-studio-originals}"
+# Must match whichever environment FUNCTION_NAME targets — the bulk-job
+# progress counter (StudioJob rows) lives in this table. Left unset (or
+# wrong), a -test Lambda would silently write progress into the PRODUCTION
+# jobs table instead of vayustudio-jobs-test (default also keyed off
+# FUNCTION_NAME, same fix as PREVIEW_URL_VAL/DYNAMO_MEDIAFILES_TABLE_VAL).
+if [[ "$FUNCTION_NAME" == *-test ]]; then
+  DEFAULT_JOBS_TABLE="vayustudio-jobs-test"
+else
+  DEFAULT_JOBS_TABLE="vayustudio-jobs"
+fi
+JOBS_TABLE_VAL="${DYNAMO_STUDIO_JOBS_TABLE:-$DEFAULT_JOBS_TABLE}"
 
 if [ -z "$R2_ENDPOINT_VAL" ] || [ -z "$R2_KEY_VAL" ] || [ -z "$R2_SECRET_VAL" ]; then
   echo "ERROR: R2 credentials not found in .env.local"
@@ -59,11 +82,21 @@ aws lambda wait function-updated \
   --region "$REGION"
 
 echo "==> Setting environment variables..."
+# Defaults keyed off FUNCTION_NAME (same fix as PREVIEW_URL_VAL above) — a
+# -test deploy run without an explicit DYNAMO_TABLE override must not
+# silently fall back to the PRODUCTION mediafiles table.
+if [[ "$FUNCTION_NAME" == *-test ]]; then
+  DEFAULT_MEDIAFILES_TABLE="vayustudio-mediafiles-test"
+else
+  DEFAULT_MEDIAFILES_TABLE="vayustudio-mediafiles"
+fi
+DYNAMO_MEDIAFILES_TABLE_VAL="${DYNAMO_TABLE:-$DEFAULT_MEDIAFILES_TABLE}"
 ENV_JSON=$(python3 -c "
 import json
 env = {
-  'DYNAMO_TABLE':      'vayustudio-mediafiles',
-  'PREVIEW_BASE_URL':  '${PREVIEW_URL_VAL}',
+  'DYNAMO_TABLE':               '${DYNAMO_MEDIAFILES_TABLE_VAL}',
+  'PREVIEW_BASE_URL':           '${PREVIEW_URL_VAL}',
+  'DYNAMO_STUDIO_JOBS_TABLE':   '${JOBS_TABLE_VAL}',
 }
 print(json.dumps({'Variables': env}))
 ")
@@ -79,7 +112,8 @@ aws lambda update-function-configuration \
 
 echo ""
 echo "✓ Deploy complete: $FUNCTION_NAME"
-echo "  DYNAMO_TABLE:    vayustudio-mediafiles"
+echo "  DYNAMO_TABLE:    $DYNAMO_MEDIAFILES_TABLE_VAL"
+echo "  DYNAMO_STUDIO_JOBS_TABLE: $JOBS_TABLE_VAL"
 echo "  PREVIEW_BASE_URL: $PREVIEW_URL_VAL"
 echo ""
 echo "Note: R2 credentials are passed in the Lambda event payload"

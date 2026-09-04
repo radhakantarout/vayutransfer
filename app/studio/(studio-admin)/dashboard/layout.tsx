@@ -24,6 +24,10 @@ import { ROLE_LABEL } from '@/lib/studio/roleLabels'
 import type { StudioRole } from '@/lib/studio/auth'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import { useJobTracker, type TrackedJob } from '@/lib/studio/useJobTracker'
+import { startBulkWatermark } from '@/lib/studio/watermarkClient'
+import BulkJobProgressToast from '@/components/studio/BulkJobProgressToast'
+import JobConfirmDialog from '@/components/studio/JobConfirmDialog'
 
 interface NotificationItem {
   jobId: string
@@ -540,6 +544,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  // Persistent background-job tracker (watermark + AI sorting progress),
+  // instantiated exactly once here so it survives navigating between
+  // events/tabs — see lib/studio/useJobTracker.ts.
+  const jobTracker = useJobTracker()
+  const [pendingWatermarkConfirm, setPendingWatermarkConfirm] = useState<{ watermarkEnabled: boolean } | null>(null)
+  // AI-sorting cancel needs one extra confirmation step (already-charged
+  // credits can't be un-spent) that plain watermark cancel doesn't — see
+  // handleToastCancelRequest below.
+  const [pendingCancelJob, setPendingCancelJob] = useState<TrackedJob | null>(null)
   // Dispatched to EventSection so its own `files` state updates instantly
   // (no full reload) when the global pill's star toggle fires — see
   // EventSection's externalCurationUpdate prop.
@@ -875,38 +888,90 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // button (one less button cluttering the gallery header). Targets whatever
   // photos are selected in the grid, or every photo across the currently
   // open events when nothing's selected.
-  const handleBulkWatermark = async (watermarkEnabled: boolean) => {
+  //
+  // Two-step: the sidebar menu click only opens a confirmation (so a stray
+  // click can't kick off a run nobody meant to start); the actual POST +
+  // job registration happens in confirmBulkWatermark below.
+  const handleBulkWatermark = (watermarkEnabled: boolean) => setPendingWatermarkConfirm({ watermarkEnabled })
+
+  const confirmBulkWatermark = async () => {
+    if (!pendingWatermarkConfirm) return
+    const { watermarkEnabled } = pendingWatermarkConfirm
+    setPendingWatermarkConfirm(null)
     setBulkWatermarking(true)
-    if (totalPhotoSelected > 0) {
-      await Promise.all(
-        Array.from(photoSelections.entries()).map(([pid, ids]) =>
-          fetch(`/studio/api/admin/projects/${pid}/watermark`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileIds: Array.from(ids), watermarkEnabled }),
-          }).catch(() => {})
-        )
-      )
-    } else {
-      await Promise.all(
-        selectedProjects.map(p =>
-          fetch(`/studio/api/admin/projects/${p.projectId}/watermark`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ watermarkEnabled }),
-          }).catch(() => {})
-        )
-      )
-    }
+    const targets = totalPhotoSelected > 0
+      ? Array.from(photoSelections.entries()).map(([pid, ids]) => ({ projectId: pid, fileIds: Array.from(ids) }))
+      : selectedProjects.map(p => ({ projectId: p.projectId }))
+    const { started, alreadyRunning, failed } = await startBulkWatermark(targets, watermarkEnabled)
     setBulkWatermarking(false)
-    // Watermarking runs async (Lambda) — give it a moment before reloading
-    // each affected EventSection's files, same delay as before the move.
-    setTimeout(() => {
+    // JOB_RUNNING/failures used to be swallowed silently here — surfaced
+    // now so a stuck run-lock (or a real failure) is visible instead of
+    // looking like nothing happened. For "already running", re-attach to
+    // that job's own row in the tracker instead of dead-ending on a plain
+    // message — the admin gets the same live progress + Cancel they'd have
+    // seen had they not navigated away in the first place.
+    if (alreadyRunning.length > 0) {
+      setToast(`Watermarking is already running for ${alreadyRunning.length} of the selected event${alreadyRunning.length !== 1 ? 's' : ''} — showing its progress below.`)
+    } else if (failed > 0) {
+      setToast(`Couldn't start watermarking for ${failed} event${failed !== 1 ? 's' : ''}.`)
+    }
+    const labelFor = (projectId: string) => {
+      const proj = projects.find(p => p.projectId === projectId)
+      return proj ? (proj.eventType ?? '').replace(/_/g, ' ') || proj.clientName : 'Watermarking'
+    }
+    started.forEach(s => jobTracker.registerJob({
+      jobId: s.jobId, jobType: 'WATERMARK', projectId: s.projectId,
+      label: labelFor(s.projectId), total: s.total,
+    }))
+    alreadyRunning.forEach(a => jobTracker.registerJob({
+      jobId: a.jobId, jobType: 'WATERMARK', projectId: a.projectId,
+      label: labelFor(a.projectId), total: 0,
+    }))
+    // Actual reload now happens off the job-completion watcher below, not a
+    // blind timeout — a fixed 3s guess is exactly what let some photos'
+    // updated watermark status get missed whenever a batch legitimately
+    // took longer than that to finish.
+  }
+
+  // AI-sorting cancel needs an extra "already charged" acknowledgment;
+  // watermark's soft-cancel doesn't (nothing dishonest about it — see
+  // useJobTracker's cancelJob doc comment).
+  const handleToastCancelRequest = (job: TrackedJob) => {
+    if (job.jobType === 'INDEX_FACES') setPendingCancelJob(job)
+    else jobTracker.cancelJob(job)
+  }
+
+  // Auto-reloads whichever project's files once its watermark/AI-sorting
+  // job actually finishes (READY) — replaces the old blind
+  // setTimeout(loadFiles, 3000), which fired a fixed few seconds after
+  // STARTING a job rather than after it completed. A batch that legitimately
+  // took longer than 3s left its later-finishing files' watermark/AI status
+  // stale in the grid until a manual refresh — this fires exactly once per
+  // job the moment it transitions to READY, regardless of how long it took
+  // or which UI surface (sidebar, selection bar, AISortingModal) started it.
+  const prevJobStatusRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    jobTracker.jobs.forEach(job => {
+      const prevStatus = prevJobStatusRef.current.get(job.jobId)
+      prevJobStatusRef.current.set(job.jobId, job.status)
+      if (prevStatus === job.status || job.status !== 'READY') return
       setRefreshTriggers(prev => {
         const next = new Map(prev)
-        selectedProjects.forEach(p => next.set(p.projectId, (next.get(p.projectId) ?? 0) + 1))
+        next.set(job.projectId, (next.get(job.projectId) ?? 0) + 1)
+        // The visible <EventSection> only reads refreshTriggers keyed by the
+        // merged view's host (selectedProjects[0]) — bump that too when the
+        // finished job belongs to one of the currently-open events, so a
+        // multi-select merged view refreshes even if the job's own project
+        // isn't literally the host.
+        const hostId = selectedProjects[0]?.projectId
+        if (hostId && selectedProjects.some(p => p.projectId === job.projectId)) {
+          next.set(hostId, (next.get(hostId) ?? 0) + 1)
+        }
         return next
       })
-    }, 3000)
-  }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobTracker.jobs])
 
   const bumpRefreshForSelectedProjects = () => {
     setRefreshTriggers(prev => {
@@ -1491,6 +1556,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 initialTab={pendingActiveTab ?? undefined}
                 onActiveTabChange={setCurrentActiveTab}
                 onAiCreditsChanged={loadStats}
+                onJobStarted={jobTracker.registerJob}
+                hasActiveJob={jobTracker.hasActiveJob}
               />
             )}
           </div>
@@ -1579,6 +1646,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <AISortingModal
           projects={aiModalProjects}
           onClose={() => setAiModalProjects(null)}
+          onJobStarted={jobTracker.registerJob}
+        />
+      )}
+
+      {/* ── Background job progress (watermark + AI sorting) — one panel,
+          rendered once here (not per-EventSection), so it stays visible
+          across every page/tab and never stacks duplicates. ───────────── */}
+      <BulkJobProgressToast
+        jobs={jobTracker.jobs}
+        onCancel={handleToastCancelRequest}
+        onDismiss={jobTracker.dismiss}
+      />
+
+      {pendingWatermarkConfirm && (
+        <JobConfirmDialog
+          icon={pendingWatermarkConfirm.watermarkEnabled ? '🖼️' : '✂️'}
+          title={pendingWatermarkConfirm.watermarkEnabled ? 'Apply watermark?' : 'Remove watermark?'}
+          message={`The selected ${totalPhotoSelected > 0 ? `${totalPhotoSelected} photo${totalPhotoSelected !== 1 ? 's' : ''}` : 'photos'} will be temporarily unavailable for other actions (like delete or move) while watermarking is in progress. You'll see live progress in the bottom-right corner and can cancel anytime.`}
+          confirmLabel={pendingWatermarkConfirm.watermarkEnabled ? 'Apply Watermark' : 'Remove Watermark'}
+          onConfirm={confirmBulkWatermark}
+          onCancel={() => setPendingWatermarkConfirm(null)}
+        />
+      )}
+
+      {pendingCancelJob && (
+        <JobConfirmDialog
+          icon="⚠️"
+          danger
+          title="Stop AI sorting?"
+          message={`Photos already indexed can't be un-indexed, and have already used your AI search credits. Stop processing the remaining ${Math.max(0, pendingCancelJob.total - pendingCancelJob.processed)} photo${Math.max(0, pendingCancelJob.total - pendingCancelJob.processed) !== 1 ? 's' : ''}?`}
+          confirmLabel="Stop processing"
+          cancelLabel="Keep going"
+          onConfirm={() => { jobTracker.cancelJob(pendingCancelJob); setPendingCancelJob(null) }}
+          onCancel={() => setPendingCancelJob(null)}
         />
       )}
 

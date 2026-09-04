@@ -225,8 +225,10 @@ export interface StudioFace {
   updatedAt: string
 }
 
-export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH'
-export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED'
+export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK'
+// CANCELLED is only ever set by an explicit cancel request (never by a
+// Lambda on its own) — see lib/studio/jobs.ts and the two cancel routes.
+export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED'
 
 export interface StudioJob {
   jobId: string
@@ -235,6 +237,8 @@ export interface StudioJob {
   projectId: string
   studioId: string
   inputPayload?: Record<string, unknown>
+  // WATERMARK jobs: { processed: number, total: number }. INDEX_FACES jobs:
+  // { indexedCount, totalFiles } at completion (unchanged from before).
   outputPayload?: Record<string, unknown>
   errorMessage?: string
   createdAt: string
