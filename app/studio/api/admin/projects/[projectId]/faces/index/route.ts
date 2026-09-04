@@ -59,20 +59,27 @@ export async function POST(
       }, { status: 402 })
     }
 
-    // Check if a job is already running for this project
+    // Check if a job is already running for this project. The
+    // projectId-status-index GSI has no jobType in its key (see
+    // faces/route.ts's comment on this same limitation), so a stuck/
+    // legitimate PROCESSING job of a *different* type (a print-portal
+    // ZIP_DOWNLOAD, or a bulk WATERMARK run) would otherwise be picked up
+    // as "indexing already running" and block every future request here —
+    // fetch a small batch and filter to INDEX_FACES in code.
     const runningJobs = await studioQueryByIndex<StudioJob>(
       TABLES.jobs,
       'projectId-status-index',
       'projectId = :pid AND #s = :processing',
       { ':pid': projectId, ':processing': 'PROCESSING' },
       { '#s': 'status' },
-      1
+      25
     )
-    if (runningJobs.length > 0) {
+    const runningIndexJob = runningJobs.find(j => j.jobType === 'INDEX_FACES')
+    if (runningIndexJob) {
       return NextResponse.json({
         success: false, error: 'JOB_RUNNING',
         message: 'Face indexing is already in progress',
-        data: { jobId: runningJobs[0].jobId },
+        data: { jobId: runningIndexJob.jobId },
       }, { status: 409 })
     }
 

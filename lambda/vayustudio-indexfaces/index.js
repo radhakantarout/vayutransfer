@@ -173,10 +173,32 @@ exports.handler = async (event) => {
       ))
     }
 
+    // Seed real progress immediately — pollers (the bottom-right toast, the
+    // Faces tab) otherwise show a stale total until the first photo finishes.
+    await updateJob(jobId, { outputPayload: { processed: 0, total: files.length } })
+
     let indexed = 0
+    let processed = 0
+    let cancelled = false
     const now = new Date().toISOString()
+    // How often to re-check our own job row for a CANCELLED flag — cheap
+    // and infrequent, but frequent enough that Cancel feels responsive on a
+    // large batch. Unlike the per-file watermark Lambda (independent
+    // invocations, no shared state), this Lambda already loops sequentially
+    // through the whole project in one execution, so it can genuinely stop
+    // mid-run instead of only offering a "soft" cancel.
+    const CANCEL_CHECK_EVERY = 3
 
     for (const file of files) {
+      if (processed > 0 && processed % CANCEL_CHECK_EVERY === 0) {
+        const jobRow = await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: { jobId } })).catch(() => null)
+        if (jobRow?.Item?.status === 'CANCELLED') {
+          console.log(`[indexfaces] cancelled after ${processed}/${files.length}`)
+          cancelled = true
+          break
+        }
+      }
+
       try {
         const faceCount = await indexFileFaces(projectId, file, qualityFilter)
         await ddb.send(new UpdateCommand({
@@ -186,39 +208,53 @@ exports.handler = async (event) => {
           ExpressionAttributeValues: { ':cnt': faceCount, ':t': true, ':now': now },
         }))
         indexed++
+        // Incremental, not batched at the end — Rekognition was just
+        // actually called (and billed) for this photo, so the studio's own
+        // credit ledger must reflect it right away. A mid-run cancel would
+        // otherwise under-report real AWS cost already incurred, which is
+        // exactly what the cancel confirmation's "already charged" warning
+        // promises is true.
+        await ddb.send(new UpdateCommand({
+          TableName: STUDIOS_TABLE,
+          Key: { studioId },
+          UpdateExpression: 'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+          ExpressionAttributeValues: { ':n': 1, ':now': new Date().toISOString() },
+        })).catch((err) => console.error('[indexfaces] aiSearchCreditsUsed increment failed:', err.message))
       } catch (err) {
         console.error(`[indexfaces] Failed on file ${file.fileId}:`, err.message)
       }
-    }
-
-    await ddb.send(new UpdateCommand({
-      TableName: JOBS_TABLE,
-      Key: { jobId },
-      UpdateExpression: 'SET #s = :s, completedAt = :ca, outputPayload = :op',
-      ExpressionAttributeNames: { '#s': 'status' },
-      ExpressionAttributeValues: {
-        ':s':  'READY',
-        ':ca': new Date().toISOString(),
-        ':op': { indexedCount: indexed, totalFiles: files.length },
-      },
-    }))
-
-    // Persisted, increment-only — this is the only place indexing actually
-    // happens, so it's the only place this needs incrementing. Deliberately
-    // never decremented anywhere else (not on photo/project delete): the
-    // Rekognition cost was already paid the moment this ran, so deleting
-    // the photo afterward must not make the studio's AI-search usage look
-    // smaller than what was actually billed.
-    if (indexed > 0) {
+      processed++
+      // "processed" is a DynamoDB reserved keyword — must be aliased or the
+      // UpdateExpression fails with ValidationException at runtime (this
+      // exact bug silently kept every watermark job stuck at 0 processed
+      // until caught via CloudWatch logs; fixing it here too before it hits
+      // the same wall).
       await ddb.send(new UpdateCommand({
-        TableName: STUDIOS_TABLE,
-        Key: { studioId },
-        UpdateExpression: 'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
-        ExpressionAttributeValues: { ':n': indexed, ':now': new Date().toISOString() },
-      })).catch((err) => console.error('[indexfaces] aiSearchCreditsUsed increment failed:', err.message))
+        TableName: JOBS_TABLE,
+        Key: { jobId },
+        UpdateExpression: 'SET outputPayload.#processed = :p',
+        ExpressionAttributeNames: { '#processed': 'processed' },
+        ExpressionAttributeValues: { ':p': processed },
+      })).catch((err) => console.error('[indexfaces] progress update failed:', err.message))
     }
 
-    console.log(`[indexfaces] DONE — indexed ${indexed}/${files.length}`)
+    // A cancel already set status=CANCELLED (and completedAt) via the cancel
+    // route — leave it alone so this doesn't silently resurrect it to READY.
+    if (!cancelled) {
+      await ddb.send(new UpdateCommand({
+        TableName: JOBS_TABLE,
+        Key: { jobId },
+        UpdateExpression: 'SET #s = :s, completedAt = :ca, outputPayload = :op',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExpressionAttributeValues: {
+          ':s':  'READY',
+          ':ca': new Date().toISOString(),
+          ':op': { processed, total: files.length, indexedCount: indexed, totalFiles: files.length },
+        },
+      }))
+    }
+
+    console.log(`[indexfaces] DONE — indexed ${indexed}/${files.length}${cancelled ? ' (cancelled)' : ''}`)
     return { statusCode: 200, body: `Indexed ${indexed}/${files.length}` }
   } catch (err) {
     console.error('[indexfaces] Fatal error:', err)

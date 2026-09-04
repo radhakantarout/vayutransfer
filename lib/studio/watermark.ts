@@ -22,6 +22,10 @@ interface WatermarkSource {
   // forever even though the underlying object changed. A distinct suffix
   // gives every regeneration a brand-new, never-cached URL instead.
   previewKeySuffix?: string
+  // Ties this single-file invocation back to the bulk StudioJob row so the
+  // Lambda can atomically bump its progress counter — see
+  // lambda/vayustudio-watermark/index.js.
+  jobId?: string
 }
 
 export async function invokeStudioWatermarkLambda(source: WatermarkSource): Promise<void> {
@@ -52,6 +56,8 @@ export async function invokeStudioWatermarkLambda(source: WatermarkSource): Prom
     logoS3Key: studio?.brandingConfig?.logoS3Key ?? null,
     watermarkEnabled: source.watermarkEnabled,
     fileType: source.fileType,
+    jobId: source.jobId,
+    jobsTable: source.jobId ? TABLES.jobs : undefined,
   }
 
   await lambda.send(new InvokeCommand({

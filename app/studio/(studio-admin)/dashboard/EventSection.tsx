@@ -18,6 +18,9 @@ import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
 import AccuracySlider from '@/components/studio/AccuracySlider'
 import { loadAccuracyLevel, saveAccuracyLevel } from '@/lib/studio/faceAccuracy'
+import JobConfirmDialog from '@/components/studio/JobConfirmDialog'
+import { startBulkWatermark } from '@/lib/studio/watermarkClient'
+import type { TrackedJob } from '@/lib/studio/useJobTracker'
 
 // At most this many files upload at once — selecting hundreds/thousands of
 // files and firing them all simultaneously overwhelms both the browser's
@@ -202,6 +205,15 @@ interface Props {
   // state instantly, instead of waiting on a full loadFiles() re-fetch —
   // `token` must change on every dispatch (even repeats) so the effect fires.
   externalCurationUpdate?: { fileIds: string[]; curationStatus: CurationStatus | undefined; token: number } | null
+  // Registers a started WATERMARK/INDEX_FACES job with the shared
+  // background-job tracker owned by dashboard/layout.tsx, so its progress
+  // shows up in the always-visible bottom-right toast.
+  onJobStarted?: (job: { jobId: string; jobType: TrackedJob['jobType']; projectId: string; label: string; total: number; status?: TrackedJob['status'] }) => void
+  // Whether any of this component's active projects currently has a running
+  // WATERMARK/INDEX_FACES job — used to disable Delete/Move while one is in
+  // flight, so the "photos will be unavailable" warning shown before
+  // starting a job is actually true.
+  hasActiveJob?: (projectId: string, jobType?: TrackedJob['jobType']) => boolean
 }
 
 export default function EventSection({
@@ -212,7 +224,7 @@ export default function EventSection({
   onClose,
   photoSourceProjects, photoSelectionsMap, onPhotoSelectionChange, onFilesLoadedFor,
   externalCurationUpdate, onNarrowSelection, initialTab, onActiveTabChange,
-  onAiCreditsChanged,
+  onAiCreditsChanged, onJobStarted, hasActiveJob,
 }: Props) {
   const pathname = usePathname()
 
@@ -250,6 +262,15 @@ export default function EventSection({
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
   const [bulkWatermarking, setBulkWatermarking] = useState(false)
   const [bulkAISorting, setBulkAISorting] = useState(false)
+  // Surfaces JOB_RUNNING/failures from the two bulk actions above — these
+  // used to be swallowed silently (Promise.all + .catch(() => {})), which
+  // made a stuck run-lock look like a watermark/AI-sort click did nothing.
+  const [bulkActionNotice, setBulkActionNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (!bulkActionNotice) return
+    const t = setTimeout(() => setBulkActionNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [bulkActionNotice])
   const [dragRect, setDragRect]         = useState<{ left: number; top: number; width: number; height: number } | null>(null)
   const [searchQuery, setSearchQuery]   = useState('')
 
@@ -885,36 +906,72 @@ export default function EventSection({
     onUpdated()
   }
 
+  // Confirmation state for the two selection-bar triggers below — a click
+  // only opens the dialog; the actual POST + job registration happens once
+  // confirmed, in confirmBulkApplyWatermark / confirmBulkAISort.
+  const [pendingWatermarkConfirm, setPendingWatermarkConfirm] = useState<{ watermarkEnabled: boolean } | null>(null)
+  const [showAISortConfirm, setShowAISortConfirm] = useState(false)
+
+  const labelForProject = (pid: string) => {
+    const p = activeSourceProjects.find(sp => sp.projectId === pid)
+    return p ? (p.eventType ?? '').replace(/_/g, ' ') || p.clientName : 'Photos'
+  }
+
+  // Delete/Move/Copy are disabled for the whole selection while any of the
+  // relevant projects has an active watermark/AI-sorting job — see Part A4
+  // in the plan. Scoped to activeSourceProjects (not just the host project)
+  // since a merged multi-event grid's selection can span several.
+  const jobActiveOnSelection = activeSourceProjects.some(p => hasActiveJob?.(p.projectId))
+
   // Omitting fileIds targets every eligible file in the project — the
   // backend route already supports this (used for the header's always-on
   // Watermark button when nothing is selected; targets just the selection
   // when something is). Grouped per-project so this stays correct when the
-  // grid is showing merged multi-event photos.
+  // grid is showing merged multi-event photos. Shared with layout.tsx's
+  // sidebar trigger via lib/studio/watermarkClient.ts — this used to be a
+  // second, independently-maintained copy of that same fetch logic.
   const bulkApplyWatermark = async (watermarkEnabled: boolean) => {
     setBulkWatermarking(true)
-    if (selectedIds.size > 0) {
-      const byProject = new Map<string, string[]>()
-      selectedIds.forEach(fid => {
-        const pid = projectIdOf(fid)
-        if (!byProject.has(pid)) byProject.set(pid, [])
-        byProject.get(pid)!.push(fid)
-      })
-      await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
-        fetch(`/studio/api/admin/projects/${pid}/watermark`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileIds, watermarkEnabled }),
-        }).catch(() => {})
-      ))
-    } else {
-      await Promise.all(activeSourceProjects.map(p =>
-        fetch(`/studio/api/admin/projects/${p.projectId}/watermark`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ watermarkEnabled }),
-        }).catch(() => {})
-      ))
-    }
+    const targets = selectedIds.size > 0
+      ? (() => {
+          const byProject = new Map<string, string[]>()
+          selectedIds.forEach(fid => {
+            const pid = projectIdOf(fid)
+            if (!byProject.has(pid)) byProject.set(pid, [])
+            byProject.get(pid)!.push(fid)
+          })
+          return Array.from(byProject.entries()).map(([projectId, fileIds]) => ({ projectId, fileIds }))
+        })()
+      : activeSourceProjects.map(p => ({ projectId: p.projectId }))
+    const { started, alreadyRunning, failed } = await startBulkWatermark(targets, watermarkEnabled)
     setBulkWatermarking(false)
-    setTimeout(loadFiles, 3000)
+    // "Already running" re-attaches to that job's own row in the shared
+    // tracker instead of dead-ending on a plain message — same live
+    // progress + Cancel the admin would've seen without navigating away.
+    if (alreadyRunning.length > 0) {
+      setBulkActionNotice(`Watermarking is already running for ${alreadyRunning.length} of the selected event${alreadyRunning.length !== 1 ? 's' : ''} — showing its progress below.`)
+    } else if (failed > 0) {
+      setBulkActionNotice(`Couldn't start watermarking for ${failed} event${failed !== 1 ? 's' : ''}.`)
+    }
+    started.forEach(s => onJobStarted?.({
+      jobId: s.jobId, jobType: 'WATERMARK', projectId: s.projectId,
+      label: labelForProject(s.projectId), total: s.total,
+    }))
+    alreadyRunning.forEach(a => onJobStarted?.({
+      jobId: a.jobId, jobType: 'WATERMARK', projectId: a.projectId,
+      label: labelForProject(a.projectId), total: 0,
+    }))
+    // No blind timeout here anymore — dashboard/layout.tsx watches the
+    // shared tracker and bumps refreshTrigger the moment the job actually
+    // reaches READY (see its job-completion effect), which is what drives
+    // this component's own loadFiles() via the refreshTrigger prop.
+  }
+
+  const confirmBulkApplyWatermark = () => {
+    if (!pendingWatermarkConfirm) return
+    const { watermarkEnabled } = pendingWatermarkConfirm
+    setPendingWatermarkConfirm(null)
+    bulkApplyWatermark(watermarkEnabled)
   }
 
   // Selection-bar bulk star toggle — standard "star-all" UX: if every
@@ -932,6 +989,7 @@ export default function EventSection({
   // the Face Index tab already uses, grouped per-project the same way
   // bulkApplyWatermark is (a selection can span multiple merged events).
   const bulkAISort = async () => {
+    setShowAISortConfirm(false)
     setBulkAISorting(true)
     const byProject = new Map<string, string[]>()
     selectedIds.forEach(fid => {
@@ -939,12 +997,25 @@ export default function EventSection({
       if (!byProject.has(pid)) byProject.set(pid, [])
       byProject.get(pid)!.push(fid)
     })
-    await Promise.all(Array.from(byProject.entries()).map(([pid, fileIds]) =>
-      fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
+    const results = await Promise.allSettled(Array.from(byProject.entries()).map(async ([pid, fileIds]) => {
+      const res = await fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileIds }),
-      }).catch(() => {})
-    ))
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.message ?? 'Failed to start')
+      return { projectId: pid, jobId: res.data.jobId as string, total: fileIds.length }
+    }))
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    if (rejected.length > 0) {
+      setBulkActionNotice(String((rejected[0].reason as Error)?.message ?? 'Failed to start AI sorting'))
+    }
+    results.forEach(r => {
+      if (r.status !== 'fulfilled') return
+      onJobStarted?.({
+        jobId: r.value.jobId, jobType: 'INDEX_FACES', projectId: r.value.projectId,
+        label: labelForProject(r.value.projectId), total: r.value.total,
+      })
+    })
     setBulkAISorting(false)
   }
 
@@ -1111,15 +1182,23 @@ export default function EventSection({
     if (tab === 'selections') loadSelItems()
   }
 
-  // Mounting directly onto a non-default tab (e.g. via initialTab, or a
-  // pathname ending in /faces) skips the click-driven loads above entirely
-  // — without this, the AI Face status row shows "0 requested / 0 AI
-  // enabled" even though the grid below it (backed by `files`, loaded
-  // separately) correctly shows the already-indexed photos.
+  // Mounting directly onto a non-default tab (e.g. via initialTab, a
+  // pathname ending in /faces or /selections, or a plain refresh while
+  // already on one of those tabs) skips the click-driven loads in
+  // switchTab entirely — without this, e.g. the AI Face status row shows
+  // "0 requested / 0 AI enabled" even though the grid below it (backed by
+  // `files`, loaded separately) correctly shows the already-indexed
+  // photos. Selections had the exact same bug (missing here, only ever
+  // loaded from switchTab's click) — clicking the "View Selection" email
+  // link, or refreshing while already on the Selections tab, both mount
+  // straight onto activeTab === 'selections' and silently showed "No
+  // selections yet" until the admin clicked away and back.
   useEffect(() => {
     if (activeTab === 'faces') {
       if (!faceStatus && !faceLoading) loadFaceStatus()
       if (faceGroups === null && !faceGroupsLoading) loadFaceGroups()
+    } else if (activeTab === 'selections' && selItems === null && !selItemsLoading) {
+      loadSelItems()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -1166,9 +1245,20 @@ export default function EventSection({
 
   // Face index derived — also stops on count parity, not just the job
   // record, so the spinner doesn't keep rolling if the backend job status
-  // lags a moment behind the counts actually catching up.
-  const isIndexing = !!faceStatus?.activeJob && (faceStatus?.indexedPhotos ?? 0) < (faceStatus?.totalPhotos ?? 0)
+  // lags a moment behind the counts actually catching up. Also ORs in the
+  // shared job tracker (hasActiveJob) — faceStatus only ever gets fetched
+  // once the Faces tab has actually been visited this mount, so relying on
+  // it alone missed the blur entirely for a job kicked off from the
+  // selection bar or AISortingModal while the admin stayed on Photos.
+  const isIndexing = (!!faceStatus?.activeJob && (faceStatus?.indexedPhotos ?? 0) < (faceStatus?.totalPhotos ?? 0))
+    || activeSourceProjects.some(p => hasActiveJob?.(p.projectId, 'INDEX_FACES'))
   const neverRun   = !isIndexing && (faceStatus?.indexedPhotos ?? 0) === 0
+  // Watermarking has no per-file "still pending" signal like faceIndexed —
+  // it's N independent Lambda invocations with no partial-file granularity
+  // exposed to the client — so this blurs every tile in the project while
+  // any WATERMARK job is active, same coarse "unavailable" scope Delete/
+  // Move already use (jobActiveOnSelection, further up).
+  const isWatermarking = activeSourceProjects.some(p => hasActiveJob?.(p.projectId, 'WATERMARK'))
 
   // Keyboard navigation for the admin photo preview lightbox — placed here
   // (not with the other effects near the top) because it needs previewPhotos,
@@ -1311,6 +1401,46 @@ export default function EventSection({
             </div>
           </div>
         </div>
+      )}
+
+      {bulkActionNotice && (
+        <div className="fixed top-4 right-4 z-50 bg-card border border-border rounded-xl shadow-2xl px-4 py-2.5 flex items-center gap-2 max-w-sm">
+          <svg className="w-4 h-4 text-yellow-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-8.25 3.75h.008v.008h-.008v-.008z" />
+          </svg>
+          <span className="text-sm font-medium text-text-primary">{bulkActionNotice}</span>
+          <button onClick={() => setBulkActionNotice(null)} className="text-muted hover:text-text-primary flex-shrink-0 ml-1">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* ── Selection-bar bulk-watermark / AI-sorting confirmations — same
+          "temporarily unavailable" warning shown from every trigger point
+          (sidebar, here, AISortingModal) so they all converge on one
+          consistent message. ─────────────────────────────────────────── */}
+      {pendingWatermarkConfirm && (
+        <JobConfirmDialog
+          icon={pendingWatermarkConfirm.watermarkEnabled ? '🖼️' : '✂️'}
+          title={pendingWatermarkConfirm.watermarkEnabled ? 'Apply watermark?' : 'Remove watermark?'}
+          message={`The selected ${selectedIds.size > 0 ? `${selectedIds.size} photo${selectedIds.size !== 1 ? 's' : ''}` : 'photos'} will be temporarily unavailable for other actions (like delete or move) while watermarking is in progress. You'll see live progress in the bottom-right corner and can cancel anytime.`}
+          confirmLabel={pendingWatermarkConfirm.watermarkEnabled ? 'Apply Watermark' : 'Remove Watermark'}
+          onConfirm={confirmBulkApplyWatermark}
+          onCancel={() => setPendingWatermarkConfirm(null)}
+        />
+      )}
+
+      {showAISortConfirm && (
+        <JobConfirmDialog
+          icon="✨"
+          title="Start AI sorting?"
+          message="This scans the selected photos for faces so guests can find themselves by selfie — it uses a bit of your AI search balance per photo, charged as it runs. The photos will be temporarily unavailable for other actions until it finishes, and you'll see live progress with a cancel option in the bottom-right corner."
+          confirmLabel="Start AI Sorting"
+          onConfirm={bulkAISort}
+          onCancel={() => setShowAISortConfirm(false)}
+        />
       )}
 
       {/* ── Delete-group confirmation — the photos themselves are never
@@ -1966,7 +2096,7 @@ export default function EventSection({
 
                   {/* AI Sorting / Search — selection only */}
                   <Tooltip label={bulkAISorting ? 'Starting AI Sorting…' : 'AI Sorting / Search'}>
-                    <button onClick={bulkAISort}
+                    <button onClick={() => setShowAISortConfirm(true)}
                       className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
                       {bulkAISorting
                         ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -2014,17 +2144,22 @@ export default function EventSection({
                     actions={[
                       { label: 'Apply Watermark',
                         icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-                        onClick: () => bulkApplyWatermark(true) },
+                        onClick: () => setPendingWatermarkConfirm({ watermarkEnabled: true }) },
                       { label: 'Remove Watermark',
                         icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
-                        onClick: () => bulkApplyWatermark(false) },
+                        onClick: () => setPendingWatermarkConfirm({ watermarkEnabled: false }) },
                     ]}
                   />
 
-                  {/* Delete — selection only */}
-                  <Tooltip label="Delete selected">
-                    <button onClick={() => setDeleteMode('selected')}
-                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-red-500/40 transition-colors">
+                  {/* Delete — selection only, disabled while a background job
+                      (watermark/AI sorting) is running on this event, so the
+                      "temporarily unavailable" warning shown before starting
+                      one is actually true. */}
+                  <Tooltip label={jobActiveOnSelection ? 'Unavailable while watermarking/AI sorting is in progress' : 'Delete selected'}>
+                    <button onClick={() => { if (!jobActiveOnSelection) setDeleteMode('selected') }}
+                      disabled={jobActiveOnSelection}
+                      className={`w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors
+                        ${jobActiveOnSelection ? 'text-white/30 cursor-not-allowed' : 'text-white/85 hover:text-white hover:bg-red-500/40'}`}>
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                       </svg>
@@ -2051,9 +2186,11 @@ export default function EventSection({
                       }] : []),
                       { label: 'Copy to event…',
                         icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" /></svg>,
+                        disabled: jobActiveOnSelection, disabledTitle: 'Unavailable while watermarking/AI sorting is in progress',
                         onClick: () => setMoveCopyTarget({ mode: 'copy', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
                       { label: 'Move to event…',
                         icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" /></svg>,
+                        disabled: jobActiveOnSelection, disabledTitle: 'Unavailable while watermarking/AI sorting is in progress',
                         onClick: () => setMoveCopyTarget({ mode: 'move', clientName: project.clientName, files: Array.from(selectedIds).map(fid => ({ fileId: fid, projectId: projectIdOf(fid) })) }) },
                       { label: 'Download selected',
                         icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>,
@@ -2320,11 +2457,13 @@ export default function EventSection({
                         {sortedDisplayFiles.map((f, idx) => {
                           const isSelected = selectedIds.has(f.fileId)
                           const isBeingIndexed = isIndexing && !f.faceIndexed
+                          const isBeingWatermarked = isWatermarking
+                          const isBeingProcessed = isBeingIndexed || isBeingWatermarked
                           return (
                             <div key={f.fileId}
-                              onClick={() => { if (!isBeingIndexed) togglePhoto(f.fileId) }}
-                              onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
-                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl transition-colors ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'} ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
+                              onClick={() => { if (!isBeingProcessed) togglePhoto(f.fileId) }}
+                              onDoubleClick={e => { if (isBeingProcessed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                              className={`flex items-center gap-3 px-2.5 py-2 rounded-xl transition-colors ${isBeingProcessed ? 'cursor-default' : 'cursor-pointer'} ${isSelected ? 'bg-accent/10' : 'hover:bg-border/30'}`}>
                               <div className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors
                                 ${isSelected ? 'bg-accent border-accent text-bg' : 'border-muted'}`}>
                                 {isSelected && (
@@ -2336,9 +2475,9 @@ export default function EventSection({
                               <div className="relative w-11 h-11 rounded-lg overflow-hidden bg-border/40 flex-shrink-0">
                                 {f.r2PreviewUrl
                                   ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
-                                      className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
+                                      className={`w-full h-full object-cover ${isBeingProcessed ? 'blur-sm scale-105' : ''}`} draggable={false} />
                                   : <div className="w-full h-full flex items-center justify-center text-muted text-sm">📄</div>}
-                                {isBeingIndexed && (
+                                {isBeingProcessed && (
                                   <div className="absolute inset-0 bg-bg/50 flex items-center justify-center">
                                     <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                                   </div>
@@ -2355,6 +2494,7 @@ export default function EventSection({
                                   )}
                                   {(f.editedS3Key || f.editedR2Key) && <span className="text-[9px] text-muted">Edited</span>}
                                   {f.watermarkEnabled && <span className="text-[9px] text-muted">Watermarked</span>}
+                                  {f.faceIndexed && <span className="text-[9px] text-accent font-semibold">AI enabled</span>}
                                   {isMultiSource && (
                                     <span className="text-[9px] font-semibold text-accent uppercase">
                                       {(activeSourceProjects.find(p => p.projectId === f.projectId)?.eventType ?? '').replace(/_/g, ' ')}
@@ -2415,14 +2555,20 @@ export default function EventSection({
                       // a run is active, show those specific photos as busy
                       // (blurred + spinner, not clickable) anywhere they
                       // appear in the gallery, not just the AI Face tab.
+                      // Watermarking has no such per-file granularity (N
+                      // independent invocations, no partial-progress signal
+                      // per photo) so it blurs every tile in the project —
+                      // see isWatermarking above.
                       const isBeingIndexed = isIndexing && !f.faceIndexed
+                      const isBeingWatermarked = isWatermarking
+                      const isBeingProcessed = isBeingIndexed || isBeingWatermarked
                       const editComment = editCommentMap.get(f.fileId)
                       return (
                         <div key={f.fileId} data-fileid={f.fileId}
-                          onClick={() => { if (!isBeingIndexed) handleTileClick(f.fileId) }}
-                          onDoubleClick={e => { if (isBeingIndexed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
+                          onClick={() => { if (!isBeingProcessed) handleTileClick(f.fileId) }}
+                          onDoubleClick={e => { if (isBeingProcessed) return; e.stopPropagation(); setPreviewMode('all'); setAdminPreviewIdx(idx); setShowAdminPreview(true) }}
                           className={`group rounded-lg overflow-hidden bg-card border transition-all duration-150 shadow-md hover:shadow-xl hover:-translate-y-0.5
-                            ${isBeingIndexed ? 'cursor-default' : 'cursor-pointer'}
+                            ${isBeingProcessed ? 'cursor-default' : 'cursor-pointer'}
                             ${isSelected ? 'border-accent ring-2 ring-accent/40' : 'border-border hover:border-border/80'}`}>
                           {/* Frame's top strip — real space above the photo, not overlaid on it */}
                           {!isFailed && (
@@ -2457,7 +2603,7 @@ export default function EventSection({
                             <div className="relative aspect-square rounded overflow-hidden bg-bg">
                               {f.r2PreviewUrl
                                 ? <img src={f.r2PreviewUrl} alt={f.originalFilename}
-                                    className={`w-full h-full object-cover ${isBeingIndexed ? 'blur-sm scale-105' : ''}`} draggable={false} />
+                                    className={`w-full h-full object-cover ${isBeingProcessed ? 'blur-sm scale-105' : ''}`} draggable={false} />
                                 : <div className="w-full h-full flex items-center justify-center">
                                     {(f.processingStatus === 'UPLOADING' || f.processingStatus === 'PROCESSING') && !isStaleUpload
                                       ? <div className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
@@ -2501,10 +2647,10 @@ export default function EventSection({
                                   )}
                                 </div>
                               )}
-                              {isBeingIndexed && !isFailed && (
+                              {isBeingProcessed && !isFailed && (
                                 <div className="absolute inset-0 bg-bg/50 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1">
                                   <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                                  <span className="text-[8px] text-muted font-semibold">AI processing…</span>
+                                  <span className="text-[8px] text-muted font-semibold">{isBeingWatermarked ? 'Watermarking…' : 'AI processing…'}</span>
                                 </div>
                               )}
                               {/* Always-visible checkbox (not just on hover/selected) — a reliable,
@@ -2524,6 +2670,16 @@ export default function EventSection({
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                   </svg>
                                   Watermarked
+                                </span>
+                              )}
+                              {/* AI-indexed marker — icon-only (unlike the text-labeled watermark
+                                  badge) and on the opposite corner so the two never collide. */}
+                              {f.faceIndexed && (
+                                <span title="Enabled for AI search/sorting"
+                                  className="absolute bottom-1 right-1 flex items-center justify-center w-4 h-4 bg-black/55 text-accent rounded-md">
+                                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+                                  </svg>
                                 </span>
                               )}
                               {editComment && (

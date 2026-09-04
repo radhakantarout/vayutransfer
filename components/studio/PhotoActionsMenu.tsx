@@ -23,6 +23,10 @@ export interface PhotoMenuAction {
   // clicking it does NOT close the menu — for a "select all / deselect
   // individually" style list where the admin toggles several rows in a row.
   checked?: boolean
+  // Greys the row out and blocks the click — e.g. Delete/Move while a
+  // background watermark/AI-sorting job is running on the same photos.
+  disabled?: boolean
+  disabledTitle?: string
 }
 
 interface PhotoActionsMenuProps {
@@ -104,9 +108,11 @@ export default function PhotoActionsMenu({ actions, trigger, align = 'right', di
           {actions.map((action, i) => (
             <button
               key={i}
-              onClick={() => { if (action.checked === undefined) setOpen(false); action.onClick() }}
+              disabled={action.disabled}
+              title={action.disabled ? action.disabledTitle : undefined}
+              onClick={() => { if (action.disabled) return; if (action.checked === undefined) setOpen(false); action.onClick() }}
               className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-left transition-colors
-                ${action.danger ? 'text-red-400 hover:bg-red-500/10' : 'text-text-primary hover:bg-border/50'}`}
+                ${action.disabled ? 'text-muted/50 cursor-not-allowed' : action.danger ? 'text-red-400 hover:bg-red-500/10' : 'text-text-primary hover:bg-border/50'}`}
             >
               {action.checked !== undefined && (
                 <span className={`w-3.5 h-3.5 flex-shrink-0 rounded border flex items-center justify-center transition-colors

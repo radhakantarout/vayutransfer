@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-FUNCTION_NAME="vayustudio-watermark"
+FUNCTION_NAME="${FUNCTION_NAME:-vayustudio-watermark}"
 REGION="ap-south-1"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -16,6 +16,11 @@ R2_KEY_VAL="${R2_ACCESS_KEY_ID:-}"
 R2_SECRET_VAL="${R2_SECRET_ACCESS_KEY:-}"
 PREVIEW_URL_VAL="${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-https://previews-test.test.vayutransfer.com}"
 S3_BUCKET_VAL="${STUDIO_S3_BUCKET:-vayutransfer-studio-originals}"
+# Must match whichever environment FUNCTION_NAME targets — the bulk-job
+# progress counter (StudioJob rows) lives in this table. Left unset (or
+# wrong), a -test Lambda would silently write progress into the PRODUCTION
+# jobs table instead of vayustudio-jobs-test.
+JOBS_TABLE_VAL="${DYNAMO_STUDIO_JOBS_TABLE:-vayustudio-jobs}"
 
 if [ -z "$R2_ENDPOINT_VAL" ] || [ -z "$R2_KEY_VAL" ] || [ -z "$R2_SECRET_VAL" ]; then
   echo "ERROR: R2 credentials not found in .env.local"
@@ -59,11 +64,17 @@ aws lambda wait function-updated \
   --region "$REGION"
 
 echo "==> Setting environment variables..."
+# Deliberately explicit rather than reusing the -test DYNAMO_TABLE default —
+# update-function-configuration REPLACES the whole env set, so whatever the
+# calling environment overrides (DYNAMO_MEDIAFILES_TABLE_VAL below) must be
+# threaded all the way through, same lesson as indexfaces' deploy.sh comment.
+DYNAMO_MEDIAFILES_TABLE_VAL="${DYNAMO_TABLE:-vayustudio-mediafiles}"
 ENV_JSON=$(python3 -c "
 import json
 env = {
-  'DYNAMO_TABLE':      'vayustudio-mediafiles',
-  'PREVIEW_BASE_URL':  '${PREVIEW_URL_VAL}',
+  'DYNAMO_TABLE':               '${DYNAMO_MEDIAFILES_TABLE_VAL}',
+  'PREVIEW_BASE_URL':           '${PREVIEW_URL_VAL}',
+  'DYNAMO_STUDIO_JOBS_TABLE':   '${JOBS_TABLE_VAL}',
 }
 print(json.dumps({'Variables': env}))
 ")
