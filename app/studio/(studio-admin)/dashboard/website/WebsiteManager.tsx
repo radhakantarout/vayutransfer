@@ -1,10 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
 import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
 import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
 import { EMPHASIS_OPTIONS, SECTION_BG_SWATCHES } from '@/lib/studio/sectionStyle'
+import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import ShareWebsiteModal from '@/components/studio/ShareWebsiteModal'
 import LivePreviewPanel from './LivePreviewPanel'
 
 // Which templates read as dark-background — used to pick a phone-bezel color
@@ -69,11 +72,22 @@ interface Props {
 }
 
 export default function WebsiteManager({ studioId, studioName }: Props) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { setOpen: setChatOpen } = useChatWidget()
+  const [showShareModal, setShowShareModal] = useState(false)
+  // Driven by the URL (?tab=...) rather than local state — the persistent
+  // dashboard sidebar (app/studio/(studio-admin)/dashboard/layout.tsx) is a
+  // route sibling, not a parent/child of this component, and sets the same
+  // param when a section is clicked there. This also makes the active
+  // section bookmarkable and survive a refresh.
+  const rawTab = searchParams.get('tab')
+  const tab: Tab = rawTab && (VALID_TABS as string[]).includes(rawTab) ? (rawTab as Tab) : 'template'
+  const setTab = (next: Tab) => router.push(`/studio/dashboard/website?tab=${next}`)
   const [site, setSite] = useState<StudioWebsite | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [tab, setTab] = useState<Tab>('template')
   const [subdomainInput, setSubdomainInput] = useState('')
   const [subdomainCheck, setSubdomainCheck] = useState<{ available: boolean; message: string } | null>(null)
   const [checkingSlug, setCheckingSlug] = useState(false)
@@ -529,10 +543,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {publishUrl && (
-            <a href={`${publishUrl}?preview=1`} target="_blank" rel="noopener noreferrer"
-              className="px-3 py-1.5 text-[11px] font-semibold text-accent border border-accent/30 rounded-full hover:bg-accent/10 transition-colors whitespace-nowrap">
-              ↗ Preview
-            </a>
+            <button onClick={() => setShowShareModal(true)}
+              className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-accent border border-accent/30 rounded-full hover:bg-accent/10 transition-colors whitespace-nowrap">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+              </svg>
+              Share
+            </button>
           )}
           {site.status === 'LIVE' ? (
             <button
@@ -567,8 +584,10 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       <div className="grid grid-cols-1 min-[1680px]:grid-cols-[minmax(0,680px)_1fr] gap-6 items-start">
       <div className="space-y-6 min-w-0">
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-card border border-border rounded-2xl p-1 overflow-x-auto">
+      {/* Tabs — mobile only (<768px). On md+ screens, the persistent
+          dashboard sidebar's own website-section nav (see
+          app/studio/(studio-admin)/dashboard/layout.tsx) replaces this. */}
+      <div className="md:hidden flex gap-1 bg-card border border-border rounded-2xl p-1 overflow-x-auto">
         {([
           ['template', 'Template'],
           ['content',  'Content'],
@@ -589,7 +608,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Template ── */}
       {tab === 'template' && (
         <div className="space-y-4">
-          <p className="text-xs text-muted">Choose a design. You can switch anytime — your content stays.</p>
+          <SectionHeader title="Template Settings" subtitle="Choose a design. You can switch anytime — your content stays." />
 
           <div className="bg-card border border-border rounded-xl px-3 py-2 space-y-1.5">
             <div className="flex items-center gap-2">
@@ -698,6 +717,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Content ── */}
       {tab === 'content' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionHeader title="Content" subtitle="Edit your hero, about, and studio details" />
           <SectionStyleControls label="Hero style" current={site.sectionStyles?.hero}
             onChange={patch => updateSectionStyle('hero', patch)} />
           <Field label="Studio / Hero title" value={site.heroTitle} onChange={v => update({ heroTitle: v })} placeholder="Ram Photography" />
@@ -800,7 +820,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Gallery ── */}
       {tab === 'gallery' && (
         <div className="space-y-5">
-          <p className="text-xs text-muted">Upload your best portfolio photos and videos. Visitors see a clean gallery with a 3D album viewer for photos and a fullscreen player for videos — no watermarks.</p>
+          <SectionHeader title="Gallery" subtitle="Upload your best portfolio photos and videos. Visitors see a clean gallery with a 3D album viewer for photos and a fullscreen player for videos — no watermarks." />
 
           <SectionStyleControls label="Gallery section background" current={site.sectionStyles?.gallery} showEmphasis={false}
             onChange={patch => updateSectionStyle('gallery', patch)} />
@@ -891,6 +911,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Services ── */}
       {tab === 'services' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionHeader title="Services" subtitle="List what you offer, with optional pricing" />
           <SectionStyleControls label="Services style" current={site.sectionStyles?.services}
             onChange={patch => updateSectionStyle('services', patch)} />
           {site.services.map(s => (
@@ -924,9 +945,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Testimonials ── */}
       {tab === 'testimonials' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionHeader title="Testimonials" subtitle="Client quotes build trust — shown on your site if you add any. Leave empty and the section just won't appear." />
           <SectionStyleControls label="Testimonials style" current={site.sectionStyles?.testimonials}
             onChange={patch => updateSectionStyle('testimonials', patch)} />
-          <p className="text-xs text-muted">Client quotes build trust — shown on your site if you add any. Leave empty and the section just won&apos;t appear.</p>
           {(site.testimonials ?? []).map(t => (
             <div key={t.id} className="bg-card border border-border rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -964,6 +985,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Contact ── */}
       {tab === 'contact' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionHeader title="Contact" subtitle="How clients can reach you, plus your social links" />
           <Field label="Contact email" value={site.contactEmail ?? ''} onChange={v => update({ contactEmail: v })} placeholder="ram@ramstudio.com" type="email" />
           <Field label="Phone number" value={site.contactPhone ?? ''} onChange={v => update({ contactPhone: v })} placeholder="+91 98765 43210" />
           <Field label="WhatsApp number (with country code)" value={site.whatsapp ?? ''} onChange={v => update({ whatsapp: v })} placeholder="+919876543210" />
@@ -981,6 +1003,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Booking ── */}
       {tab === 'booking' && (
         <div className="space-y-4 max-w-2xl">
+          <SectionHeader title="Booking" subtitle="Turn the enquiry form on or off, and customise its message" />
           <SectionStyleControls label="Booking / Contact style" current={site.sectionStyles?.book}
             onChange={patch => updateSectionStyle('book', patch)} />
           <div className="flex items-center gap-3">
@@ -1008,6 +1031,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Domain ── */}
       {tab === 'domain' && (
         <div className="space-y-6 max-w-md">
+          <SectionHeader title="Domain" subtitle="Choose your vayustudios.com subdomain" />
           <div>
             <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Your subdomain</label>
             <div className="flex items-center gap-0 rounded-xl overflow-hidden border border-border focus-within:border-accent">
@@ -1047,6 +1071,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </div>
         </div>
       )}
+
+      <div className="pt-2 border-t border-border">
+        <p className="text-xs text-muted">
+          Need help? <button onClick={() => setChatOpen(true)} className="font-semibold text-accent hover:underline">Chat with us</button>
+        </p>
+      </div>
       </div>
 
       <LivePreviewPanel site={site} publishUrl={publishUrl} refreshKey={site.updatedAt} isDarkTemplate={DARK_TEMPLATE_IDS.has(site.templateId)}
@@ -1062,11 +1092,27 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           onClose={() => setAiPromptModal(null)}
         />
       )}
+
+      {showShareModal && publishUrl && (
+        <ShareWebsiteModal url={publishUrl} studioName={site.heroTitle || studioName} onClose={() => setShowShareModal(false)} />
+      )}
     </div>
   )
 }
 
 // Compact inline block embedded at the top of each relevant tab — lets the
+// Small title + one-line subtitle shown at the top of each settings panel —
+// now that navigation lives in the sidebar (see dashboard/layout.tsx) rather
+// than a same-page tab bar, each panel needs its own heading for context.
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div>
+      <h2 className="text-base font-bold text-text-primary">{title}</h2>
+      <p className="text-xs text-muted mt-0.5">{subtitle}</p>
+    </div>
+  )
+}
+
 // studio owner override one section's text emphasis and/or background color
 // without leaving the tab they're already editing that section's content in.
 // `current` is undefined until the owner sets anything for this section, in

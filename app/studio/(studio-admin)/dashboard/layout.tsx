@@ -134,6 +134,53 @@ function BookingIcon() {
     </svg>
   )
 }
+// ── Website-builder sidebar section icons (My Website mode) ──────────────
+function TemplateIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="3" y="3" width="7" height="7" rx="1.2" />
+      <rect x="14" y="3" width="7" height="7" rx="1.2" />
+      <rect x="3" y="14" width="7" height="7" rx="1.2" />
+      <rect x="14" y="14" width="7" height="7" rx="1.2" />
+    </svg>
+  )
+}
+function ContentIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />
+    </svg>
+  )
+}
+function ServicesIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
+    </svg>
+  )
+}
+function TestimonialIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3.75h6.75m-9.75 6l3-3H18a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0018 4.5H6a2.25 2.25 0 00-2.25 2.25v9a2.25 2.25 0 002.25 2.25h.75z" />
+    </svg>
+  )
+}
+function ContactIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25H4.5a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5H4.5a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.909a2.25 2.25 0 01-1.07-1.916V6.75" />
+    </svg>
+  )
+}
+function DomainIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9 9 0 100-18 9 9 0 000 18z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18M12 3a15 15 0 000 18" />
+    </svg>
+  )
+}
 function BellIcon() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -148,6 +195,20 @@ function HelpIcon() {
     </svg>
   )
 }
+
+// The 8 real website-builder settings sections — same ids as WebsiteManager.tsx's
+// own `Tab` type, driven by the shared ?tab= URL param (see the sidebar block
+// below and WebsiteManager.tsx's useSearchParams()-derived tab).
+const WEBSITE_SECTIONS: { id: string; label: string; icon: React.ReactNode }[] = [
+  { id: 'template',     label: 'Templates',     icon: <TemplateIcon /> },
+  { id: 'content',      label: 'Content',       icon: <ContentIcon /> },
+  { id: 'gallery',      label: 'Gallery',       icon: <GalleryIcon /> },
+  { id: 'services',     label: 'Services',      icon: <ServicesIcon /> },
+  { id: 'testimonials', label: 'Testimonials',  icon: <TestimonialIcon /> },
+  { id: 'contact',      label: 'Contact',       icon: <ContactIcon /> },
+  { id: 'booking',      label: 'Booking',       icon: <BookingIcon /> },
+  { id: 'domain',       label: 'Domain',        icon: <DomainIcon /> },
+]
 
 function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
@@ -1134,10 +1195,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
 
-        {/* Non-gallery modes have no tree — let their own page fill the
-            remaining space so Settings/Storage/AI-usage/profile still pin
-            to the bottom instead of floating under a short sidebar. */}
-        {activeProduct !== 'gallery' && <div className="flex-1" />}
+        {/* My Website mode: the 8 website-builder settings sections, moved
+            here from what used to be a horizontal pill-tab row inside
+            WebsiteManager.tsx — same ?tab= URL-param pattern already used
+            above for the Projects tree's Recent/Starred/Projects tabs, so
+            WebsiteManager.tsx (a route sibling, not a child of this sidebar)
+            can read the same param via its own useSearchParams(). Only
+            active >=768px (md) — below that, WebsiteManager.tsx's own
+            horizontal pill-tab bar becomes the mobile fallback instead of
+            duplicating a hamburger/drawer pattern that doesn't exist
+            anywhere else in this dashboard. */}
+        {activeProduct === 'website' && (
+          <div className="hidden md:flex flex-1 min-h-0 overflow-y-auto flex-col px-2 pt-2 pb-3 space-y-0.5">
+            {WEBSITE_SECTIONS.map(({ id, label, icon }) => {
+              const active = (searchParams.get('tab') ?? 'template') === id
+              return (
+                <button key={id}
+                  onClick={() => router.push(`/studio/dashboard/website?tab=${id}`)}
+                  className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-colors text-left ${
+                    active ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <span className="w-4 h-4 flex-shrink-0">{icon}</span>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Bookings mode has no tree yet either — unchanged from before. */}
+        {activeProduct === 'bookings' && <div className="flex-1" />}
 
         {/* Pinned bottom group — Settings / Storage / AI-usage. Profile now
             lives in the top header row instead, next to the brand name.
@@ -1269,42 +1356,60 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
             <div className="w-6 border-t border-border/60 flex-shrink-0" />
 
-            {/* Dashboard / Recent / Starred / Projects — same destinations
-                as the expanded tabs, icon-only */}
-            <Link href="/studio/dashboard/overview" onClick={() => { clearSelection(); setSidebarView('dashboard') }}
-              title="Dashboard"
-              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
-                sidebarView === 'dashboard' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
-              }`}>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-                <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-              </svg>
-            </Link>
-            <button onClick={() => { setSidebarView('recent'); clearSelection(); router.push('/studio/dashboard/projects?filter=recent') }} title="Recent Projects"
-              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
-                sidebarView === 'recent' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
-              }`}>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
-            <button onClick={() => { setSidebarView('starred'); clearSelection(); router.push('/studio/dashboard/projects?filter=starred') }} title="Starred Projects"
-              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
-                sidebarView === 'starred' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
-              }`}>
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-              </svg>
-            </button>
-            <button onClick={() => { setSidebarView('projects'); clearSelection(); router.push('/studio/dashboard/projects') }} title="All Projects"
-              className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
-                sidebarView === 'projects' && !focusedClient ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
-              }`}>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-              </svg>
-            </button>
+            {activeProduct === 'gallery' && (
+              <>
+                {/* Dashboard / Recent / Starred / Projects — same destinations
+                    as the expanded tabs, icon-only */}
+                <Link href="/studio/dashboard/overview" onClick={() => { clearSelection(); setSidebarView('dashboard') }}
+                  title="Dashboard"
+                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                    sidebarView === 'dashboard' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </Link>
+                <button onClick={() => { setSidebarView('recent'); clearSelection(); router.push('/studio/dashboard/projects?filter=recent') }} title="Recent Projects"
+                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                    sidebarView === 'recent' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+                <button onClick={() => { setSidebarView('starred'); clearSelection(); router.push('/studio/dashboard/projects?filter=starred') }} title="Starred Projects"
+                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                    sidebarView === 'starred' ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={sidebarView === 'starred' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.385a.563.563 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                  </svg>
+                </button>
+                <button onClick={() => { setSidebarView('projects'); clearSelection(); router.push('/studio/dashboard/projects') }} title="All Projects"
+                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                    sidebarView === 'projects' && !focusedClient ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                  </svg>
+                </button>
+              </>
+            )}
+
+            {/* Website sections, icon-only — same ?tab= destinations as the
+                expanded sidebar's website nav above. */}
+            {activeProduct === 'website' && WEBSITE_SECTIONS.map(({ id, label, icon }) => {
+              const active = (searchParams.get('tab') ?? 'template') === id
+              return (
+                <button key={id} onClick={() => router.push(`/studio/dashboard/website?tab=${id}`)} title={label}
+                  className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                    active ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                  }`}>
+                  <span className="w-3.5 h-3.5">{icon}</span>
+                </button>
+              )
+            })}
 
             {/* Focused client's events — short 3-letter chips, still
                 clickable/multi-selectable, same selectedIds/toggleSelect as
