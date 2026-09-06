@@ -52,6 +52,13 @@ export async function PUT(req: NextRequest) {
     body.subdomain = slug
   }
 
+  // Safety net behind the editor's own maxLength/counter (WebsiteManager.tsx)
+  // — truncate rather than reject, so a stray direct API call can't wedge an
+  // unbounded string into a field the public booking form renders.
+  if (typeof body.bookingMessage === 'string') {
+    body.bookingMessage = body.bookingMessage.slice(0, 500)
+  }
+
   const updated: StudioWebsite = {
     ...existing,
     ...body,

@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { translator } from '@/lib/studio/i18n'
+import { MAX_NAME_LENGTH, MAX_MESSAGE_LENGTH, validateEmail, validatePhone, validateName } from '@/lib/studio/bookingValidation'
 import type { WebsiteLanguage } from '@/types/studio'
 
 interface Props {
@@ -21,13 +22,6 @@ const EVENT_TYPE_KEYS: Record<string, string> = {
   'Birthday': 'eventBirthday', 'Corporate': 'eventCorporate', 'Portrait': 'eventPortrait', 'Other': 'eventOther',
 }
 
-function validateEmail(v: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
-}
-function validatePhone(v: string) {
-  return !v || /^(\+91[\s-]?|0)?[6-9]\d{9}$/.test(v.trim())
-}
-
 export default function BookingForm({ subdomain, message, accentColor, textOnAccent = '#fff', fontColor, language }: Props) {
   const t = translator(language)
   const [form, setForm] = useState({ name: '', email: '', phone: '', eventType: '', eventDate: '', message: '' })
@@ -41,15 +35,25 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
     setFieldErrors(e => ({ ...e, [k]: '' }))
   }
 
+  // Distinguishes "too short" from "not actually a name" (digits/symbols
+  // only) so the message tells the visitor what's actually wrong, instead of
+  // one generic "please enter your name" for both.
+  const nameError = (v: string): string => {
+    const trimmed = v.trim()
+    if (trimmed.length < 2) return t('formErrName', 'Please enter your full name')
+    if (!validateName(trimmed)) return t('formErrNameInvalid', 'Name should only contain letters, not numbers or symbols')
+    return ''
+  }
+
   const blurValidate = (k: string, v: string) => {
-    if (k === 'name')  setFieldErrors(e => ({ ...e, name:  v.trim().length < 2 ? t('formErrName', 'Please enter your full name') : '' }))
+    if (k === 'name')  setFieldErrors(e => ({ ...e, name:  nameError(v) }))
     if (k === 'email') setFieldErrors(e => ({ ...e, email: !validateEmail(v) ? t('formErrEmail', 'Enter a valid email address') : '' }))
     if (k === 'phone') setFieldErrors(e => ({ ...e, phone: !validatePhone(v) ? t('formErrPhone', 'Enter a valid 10-digit Indian mobile number') : '' }))
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const nameErr  = form.name.trim().length < 2 ? t('formErrName', 'Please enter your full name') : ''
+    const nameErr  = nameError(form.name)
     const emailErr = !validateEmail(form.email) ? t('formErrEmail', 'Enter a valid email address') : ''
     const phoneErr = !validatePhone(form.phone) ? t('formErrPhone', 'Enter a valid 10-digit Indian mobile number') : ''
     if (nameErr || emailErr || phoneErr) {
@@ -92,7 +96,7 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>{t('formName', 'Name')} *</label>
-          <input required value={form.name} onChange={e => setField('name', e.target.value)}
+          <input required value={form.name} onChange={e => setField('name', e.target.value)} maxLength={MAX_NAME_LENGTH}
             className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none"
             style={{ ...fieldStyle, borderColor: fieldErrors.name ? '#ef4444' : `${accentColor}60`, outlineColor: accentColor }}
             onFocus={e => (e.currentTarget.style.borderColor = fieldErrors.name ? '#ef4444' : accentColor)}
@@ -143,8 +147,12 @@ export default function BookingForm({ subdomain, message, accentColor, textOnAcc
           onBlur={e => (e.currentTarget.style.borderColor = `${accentColor}60`)} />
       </div>
       <div>
-        <label className="block text-xs font-semibold mb-1 uppercase tracking-wider" style={labelStyle}>{t('formMessage', 'Message')}</label>
-        <textarea value={form.message} onChange={e => setField('message', e.target.value)}
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-semibold uppercase tracking-wider" style={labelStyle}>{t('formMessage', 'Message')}</label>
+          <span className="text-[10px]" style={labelStyle}>{form.message.length}/{MAX_MESSAGE_LENGTH}</span>
+        </div>
+        <textarea value={form.message} onChange={e => setField('message', e.target.value.slice(0, MAX_MESSAGE_LENGTH))}
+          maxLength={MAX_MESSAGE_LENGTH}
           rows={3} className="w-full bg-white/10 border rounded-xl px-4 py-3 text-sm outline-none resize-none"
           style={{ ...fieldStyle, outlineColor: accentColor }}
           onFocus={e => (e.currentTarget.style.borderColor = accentColor)}

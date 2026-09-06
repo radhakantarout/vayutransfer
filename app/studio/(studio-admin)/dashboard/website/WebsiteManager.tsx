@@ -16,6 +16,13 @@ import LivePreviewPanel from './LivePreviewPanel'
 // LivePreviewPanel's isDarkTemplate prop).
 const DARK_TEMPLATE_IDS = new Set(['lumina', 'bold'])
 
+// The admin's own short blurb shown above the public booking form — a few
+// sentences, not an essay. Enforced client-side (maxLength + slice on every
+// keystroke, so pasting a huge block truncates immediately rather than only
+// showing an error) and again server-side (see the website PUT route) as a
+// safety net for anything that bypasses this UI.
+const MAX_BOOKING_INTRO_LENGTH = 500
+
 // Only these 3 templates darken their cover with a built-in overlay whose
 // opacity heroBrightness controls directly (see each template's hero
 // section) — matches their own hardcoded default exactly so the slider
@@ -1053,8 +1060,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </div>
           {site.bookingEnabled && (
             <div>
-              <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Form intro message</label>
-              <textarea value={site.bookingMessage ?? ''} onChange={e => update({ bookingMessage: e.target.value })} rows={3}
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Form intro message</label>
+                <span className="text-[10px] text-muted">{(site.bookingMessage ?? '').length}/{MAX_BOOKING_INTRO_LENGTH}</span>
+              </div>
+              <textarea value={site.bookingMessage ?? ''} onChange={e => update({ bookingMessage: e.target.value.slice(0, MAX_BOOKING_INTRO_LENGTH) })} rows={3}
+                maxLength={MAX_BOOKING_INTRO_LENGTH}
                 className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none"
                 placeholder="Fill in your details and we'll get back to you within 24 hours." />
             </div>
