@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey } from '@/types/studio'
+import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey, WebsiteTemplateId } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
 import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
 import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
@@ -29,6 +29,27 @@ const MAX_BOOKING_INTRO_LENGTH = 500
 // starts wherever the template already sits before it's ever touched.
 // Every other template shows its cover as-is always, unaffected by this field.
 const HERO_VISIBILITY_DEFAULTS: Record<string, number> = { lumina: 0.2, ember: 0.85, bold: 0.4 }
+
+// Each template's own hardcoded accent/font color fallback (the exact
+// literal each template file falls back to via `site.themeAccent ?? '...'`
+// when the field is unset) — used to reset styling to "this template's own
+// look" when switching templates below. Deliberately real, concrete values
+// rather than trying to clear the field back to unset: JSON.stringify drops
+// object keys whose value is undefined before the save request is even
+// sent, so an old customization from the previous template would just
+// silently survive the switch (the exact bug already found and fixed once
+// for the language picker — same underlying footgun, avoided here by never
+// producing an undefined value in the first place).
+const TEMPLATE_STYLE_DEFAULTS: Record<WebsiteTemplateId, { accent: string; fontColor: string }> = {
+  lumina:  { accent: '#C9A84C', fontColor: '#F5F0E8' },
+  clarity: { accent: '#1A1A1A', fontColor: '#1A1A1A' },
+  ember:   { accent: '#C4622D', fontColor: '#2C1810' },
+  bold:    { accent: '#FF3B30', fontColor: '#FFFFFF' },
+  bloom:   { accent: '#D4849A', fontColor: '#3D2B2B' },
+  frame:   { accent: '#111111', fontColor: '#111111' },
+  zari:    { accent: '#C6A15B', fontColor: '#4A3F35' },
+  monsoon: { accent: '#5B8FB9', fontColor: '#EAF1F5' },
+}
 
 const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Gold',      color: '#C9A84C' },
@@ -156,6 +177,37 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const updateSectionStyle = (key: WebsiteSectionKey, patch: Partial<WebsiteSectionStyle>) =>
     setSite(s => s ? { ...s, sectionStyles: { ...s.sectionStyles, [key]: { ...s.sectionStyles?.[key], ...patch } } } : s)
+
+  // Switching templates used to leave every color/background/section-style
+  // customization from the PREVIOUS template in place — e.g. a gold accent
+  // tuned for Zari would carry straight over onto Monsoon's deep-blue
+  // palette and clash. Resets those fields to the new template's own
+  // defaults (confirming first if there's actual customization to lose),
+  // while leaving all real content (text, photos, services, contact info,
+  // etc.) completely untouched.
+  const selectTemplate = (id: WebsiteTemplateId) => {
+    if (!site || id === site.templateId) return
+    const hasCustomStyling = !!(
+      site.themeAccent || site.fontColor || site.backgroundPreset ||
+      site.heroBrightness !== undefined ||
+      (site.sectionStyles && Object.keys(site.sectionStyles).length > 0)
+    )
+    if (hasCustomStyling) {
+      const name = TEMPLATES.find(t => t.id === id)?.name ?? 'this template'
+      const proceed = window.confirm(`Switching to ${name} will reset your custom colors, background, and section styling to ${name}'s own defaults. Continue?`)
+      if (!proceed) return
+    }
+    const defaults = TEMPLATE_STYLE_DEFAULTS[id]
+    const heroDefault = HERO_VISIBILITY_DEFAULTS[id]
+    update({
+      templateId: id,
+      themeAccent: defaults.accent,
+      fontColor: defaults.fontColor,
+      backgroundPreset: 'default',
+      sectionStyles: {},
+      ...(heroDefault !== undefined ? { heroBrightness: heroDefault } : {}),
+    })
+  }
 
   const save = async (patch?: Partial<StudioWebsite>) => {
     if (!site) return
@@ -647,7 +699,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Template ── */}
       {tab === 'template' && (
         <div className="space-y-4">
-          <SectionHeader title="Template Settings" subtitle="Choose a design. You can switch anytime — your content stays." />
+          <SectionHeader title="Template Settings" subtitle="Choose a design. You can switch anytime — your content stays, colors reset to the new template's own defaults." />
 
           <div className="bg-card border border-border rounded-xl px-3 py-2 space-y-1.5">
             <div className="flex items-center gap-2">
@@ -673,7 +725,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             {TEMPLATES.map(t => {
               const isRecommended = templateSuggestion?.templateId === t.id
               return (
-                <button key={t.id} onClick={() => update({ templateId: t.id })}
+                <button key={t.id} onClick={() => selectTemplate(t.id)}
                   className={`relative rounded-lg overflow-hidden border transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02] shadow-md' : isRecommended ? 'border-accent/60 ring-1 ring-accent/30' : 'border-border hover:border-accent/50'}`}>
                   {isRecommended && (
                     <span className="absolute top-1 right-1 z-10 bg-accent text-bg text-[8px] font-bold px-1 py-px rounded-full">✨ AI</span>
