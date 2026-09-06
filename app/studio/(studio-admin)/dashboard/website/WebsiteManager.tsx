@@ -203,6 +203,29 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [site])
 
+  // Same comparison the auto-save effect above already uses to decide
+  // whether there's anything worth persisting — reused here to drive the
+  // Save button's enabled state and the unsaved-changes warning below,
+  // rather than tracking a second, separate "dirty" flag that could drift
+  // out of sync with it.
+  const hasUnsavedChanges = !!site && snapshotForCompare(site) !== lastAutoSavedSnapshot.current
+
+  // Warns on an actual browser unload (refresh, close tab, navigate away to
+  // a different URL) — in-app sidebar navigation is a client-side route
+  // change, not a real unload, so it isn't covered by this and wasn't asked
+  // for. Browsers ignore any custom message and show their own generic
+  // "changes you made may not be saved" text — e.returnValue just needs to
+  // be set to trigger that native prompt at all.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasUnsavedChanges])
+
   const checkSubdomain = useCallback(async (slug: string) => {
     if (slug.length < 3) { setSubdomainCheck(null); return }
     setCheckingSlug(true)
@@ -561,8 +584,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               ↑ Publish
             </button>
           )}
-          <button onClick={() => save()} disabled={saving}
-            className="px-4 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-full disabled:opacity-60 transition-all whitespace-nowrap">
+          <button onClick={() => save()} disabled={saving || !hasUnsavedChanges}
+            className="px-4 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-full disabled:opacity-60 disabled:cursor-not-allowed transition-all whitespace-nowrap">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
           </button>
         </div>
