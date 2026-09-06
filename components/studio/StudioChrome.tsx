@@ -6,6 +6,7 @@ import ConditionalFooter from './ConditionalFooter'
 import ChatWidget from './ChatWidget'
 import { ExpandedGridProvider, useExpandedGrid } from './ExpandedGridContext'
 import { ChatWidgetProvider } from './ChatWidgetContext'
+import { UnsavedChangesProvider } from './UnsavedChangesContext'
 
 function Chrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -54,7 +55,9 @@ export default function StudioChrome({ children }: { children: React.ReactNode }
   return (
     <ExpandedGridProvider>
       <ChatWidgetProvider>
-        <Chrome>{children}</Chrome>
+        <UnsavedChangesProvider>
+          <Chrome>{children}</Chrome>
+        </UnsavedChangesProvider>
       </ChatWidgetProvider>
     </ExpandedGridProvider>
   )

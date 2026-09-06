@@ -24,6 +24,7 @@ import { ROLE_LABEL } from '@/lib/studio/roleLabels'
 import type { StudioRole } from '@/lib/studio/auth'
 import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import { useUnsavedChanges } from '@/components/studio/UnsavedChangesContext'
 import { useJobTracker, type TrackedJob } from '@/lib/studio/useJobTracker'
 import { startBulkWatermark } from '@/lib/studio/watermarkClient'
 import BulkJobProgressToast from '@/components/studio/BulkJobProgressToast'
@@ -474,6 +475,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const searchParams = useSearchParams()
   const { setNavCollapsed } = useExpandedGrid()
   const { setOpen: setChatOpen } = useChatWidget()
+  const { hasUnsavedChanges: hasUnsavedWebsiteChanges } = useUnsavedChanges()
+  // Guards any navigation-away action that would abandon unsaved website
+  // builder edits — beforeunload (in WebsiteManager.tsx) already covers an
+  // actual browser refresh/close; this covers in-app client-side route
+  // changes, which that API can't intercept. Returns whether the caller
+  // should actually proceed with navigating.
+  const confirmLeaveIfUnsaved = () =>
+    !hasUnsavedWebsiteChanges || window.confirm('You have unsaved changes to your website design. Leave without saving?')
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const [settingsBillingAutoExpand, setSettingsBillingAutoExpand] = useState(false)
@@ -771,6 +780,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [selectedIds.join(',')])
 
   const handleLogout = async () => {
+    if (!confirmLeaveIfUnsaved()) return
     localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
     sessionStorage.removeItem(LAST_LOCATION_KEY)
     await fetch('/studio/api/auth/logout', { method: 'POST' })
@@ -1141,9 +1151,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               }
               menuClassName="w-48"
               actions={[
-                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
-                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
-                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
+                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
+                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/website') } },
+                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/bookings') } },
               ]}
             />
             {activeProduct === 'gallery' && (
@@ -1413,9 +1423,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </span>
               }
               actions={[
-                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
-                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/website') } },
-                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { clearSelection(); router.push('/studio/dashboard/bookings') } },
+                { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
+                { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/website') } },
+                { label: 'My Booking', icon: <BookingIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/bookings') } },
               ]}
             />
 

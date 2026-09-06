@@ -7,6 +7,7 @@ import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
 import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
 import { EMPHASIS_OPTIONS, SECTION_BG_SWATCHES } from '@/lib/studio/sectionStyle'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import { useUnsavedChanges } from '@/components/studio/UnsavedChangesContext'
 import ShareWebsiteModal from '@/components/studio/ShareWebsiteModal'
 import LivePreviewPanel from './LivePreviewPanel'
 
@@ -75,6 +76,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { setOpen: setChatOpen } = useChatWidget()
+  const { setHasUnsavedChanges: setSidebarUnsavedFlag } = useUnsavedChanges()
   const [showShareModal, setShowShareModal] = useState(false)
   // Driven by the URL (?tab=...) rather than local state — the persistent
   // dashboard sidebar (app/studio/(studio-admin)/dashboard/layout.tsx) is a
@@ -211,11 +213,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const hasUnsavedChanges = !!site && snapshotForCompare(site) !== lastAutoSavedSnapshot.current
 
   // Warns on an actual browser unload (refresh, close tab, navigate away to
-  // a different URL) — in-app sidebar navigation is a client-side route
-  // change, not a real unload, so it isn't covered by this and wasn't asked
-  // for. Browsers ignore any custom message and show their own generic
-  // "changes you made may not be saved" text — e.returnValue just needs to
-  // be set to trigger that native prompt at all.
+  // a different URL). Browsers ignore any custom message and show their own
+  // generic "changes you made may not be saved" text — e.returnValue just
+  // needs to be set to trigger that native prompt at all.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!hasUnsavedChanges) return
@@ -225,6 +225,17 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [hasUnsavedChanges])
+
+  // beforeunload above only covers a real browser-level unload — it can't
+  // intercept an in-app client-side route change (e.g. switching to Client
+  // Gallery from the sidebar's product switcher). Publishing this flag into
+  // UnsavedChangesContext lets dashboard/layout.tsx's navigation-away
+  // actions confirm with the admin first. Cleared on unmount so a stale
+  // "true" can never linger and block navigation after this page is gone.
+  useEffect(() => {
+    setSidebarUnsavedFlag(hasUnsavedChanges)
+    return () => setSidebarUnsavedFlag(false)
+  }, [hasUnsavedChanges, setSidebarUnsavedFlag])
 
   const checkSubdomain = useCallback(async (slug: string) => {
     if (slug.length < 3) { setSubdomainCheck(null); return }
