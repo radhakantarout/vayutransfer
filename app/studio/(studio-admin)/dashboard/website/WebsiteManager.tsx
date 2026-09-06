@@ -88,6 +88,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // R2 objects queued for deletion by removeHeroImage/removeGalleryPhoto —
+  // only actually deleted once save() confirms the metadata change that
+  // stops referencing them is persisted (see save() below). Deleting the
+  // object first would risk a broken image on the live site if the record
+  // isn't saved for a while (e.g. LIVE status, where saves are deliberate
+  // rather than auto-debounced).
+  const pendingDeletesRef = useRef<{ url: string; sizeBytes?: number }[]>([])
   const [subdomainInput, setSubdomainInput] = useState('')
   const [subdomainCheck, setSubdomainCheck] = useState<{ available: boolean; message: string } | null>(null)
   const [checkingSlug, setCheckingSlug] = useState(false)
@@ -142,18 +150,40 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const save = async (patch?: Partial<StudioWebsite>) => {
     if (!site) return
-    setSaving(true); setSaved(false)
+    setSaving(true); setSaved(false); setSaveError(null)
     const body = patch ? { ...site, ...patch } : site
-    const res = await fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(r => r.json())
-    setSaving(false)
-    if (res.success) {
+    try {
+      const res = await fetch('/studio/api/admin/website', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(r => r.json())
+      if (!res.success) {
+        setSaveError(res.error ?? 'Could not save changes — please try again')
+        return
+      }
       setSite(res.data)
       lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
       setSaved(true); setTimeout(() => setSaved(false), 2500)
+      // Flush any storage deletions queued by removeHeroImage/removeGalleryPhoto
+      // now that the metadata no longer referencing them is confirmed persisted.
+      const toDelete = pendingDeletesRef.current
+      pendingDeletesRef.current = []
+      toDelete.forEach(({ url, sizeBytes }) => {
+        fetch('/studio/api/admin/website/portfolio-upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, sizeBytes }),
+        }).catch(() => {})
+      })
+    } catch {
+      // Network failure (offline, etc.) — without this catch, the function
+      // exits via the thrown exception and setSaving(false) below never
+      // runs, leaving the Save button permanently stuck on "Saving…" (and
+      // disabled) even after the connection comes back.
+      setSaveError('Could not save — check your connection and try again')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -319,13 +349,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       }
       if (newPhotos.length > 0) {
         const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
+        // Just update local state — the debounced auto-save effect below
+        // persists it (immediately while DRAFT, or on the next explicit
+        // "Save Changes" click while LIVE). Used to also PUT immediately
+        // here, which wrote straight to the live-readable record with no
+        // review step even while LIVE, and double-saved while DRAFT (this
+        // fetch's response never updated lastAutoSavedSnapshot, so the
+        // debounce effect fired again 800ms later anyway).
         setSite(prev => prev ? { ...prev, galleryPhotos: updatedPhotos } : prev)
-        const saveRes = await fetch('/studio/api/admin/website', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
-        }).then(r => r.json())
-        if (!saveRes.success) throw new Error('Upload succeeded but could not be saved — please try again')
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed — please try again')
@@ -362,13 +393,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         heroPosterUrl,
         heroPosterSizeBytes,
       }
+      // Local state only — see the comment in handlePhotoUpload above for why.
       setSite(prev => prev ? { ...prev, ...patch } : prev)
-      const saveRes = await fetch('/studio/api/admin/website', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...site, ...patch }),
-      }).then(r => r.json())
-      if (!saveRes.success) throw new Error('Cover uploaded but could not be saved — please try again')
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Cover upload failed — please try again')
     } finally {
@@ -379,56 +405,30 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const removeHeroImage = () => {
     if (!site) return
-    if (site.heroImageUrl) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes }),
-      }).catch(() => {})
-    }
-    if (site.heroPosterUrl) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: site.heroPosterUrl, sizeBytes: site.heroPosterSizeBytes }),
-      }).catch(() => {})
-    }
+    // Queued, not deleted immediately — flushed from inside save() only
+    // once the metadata change that stops referencing these objects is
+    // actually confirmed persisted. Deleting first would risk a broken
+    // image on the live site if the record isn't saved for a while (e.g.
+    // LIVE status, where saves are deliberate rather than auto-debounced).
+    if (site.heroImageUrl) pendingDeletesRef.current.push({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes })
+    if (site.heroPosterUrl) pendingDeletesRef.current.push({ url: site.heroPosterUrl, sizeBytes: site.heroPosterSizeBytes })
     // Empty string (not undefined) so it survives JSON — the API merges by spreading
     // the request body over the existing record, and `undefined` keys are dropped by
     // JSON.stringify before the request is even sent, so the old value would stick.
     const patch = { heroImageUrl: '', heroImageSizeBytes: 0, heroMediaType: 'photo' as const, heroPosterUrl: '', heroPosterSizeBytes: 0 }
     update(patch)
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, ...patch }),
-    }).catch(() => {})
   }
 
   const removeGalleryPhoto = (id: string) => {
     if (!site) return
     const photo = site.galleryPhotos.find(p => p.id === id)
     if (photo) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: photo.url, sizeBytes: photo.sizeBytes }),
-      }).catch(() => {})
-      if (photo.thumbnailUrl) {
-        fetch('/studio/api/admin/website/portfolio-upload', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: photo.thumbnailUrl, sizeBytes: photo.thumbnailSizeBytes }),
-        }).catch(() => {})
-      }
+      // Queued, not deleted immediately — see removeHeroImage's comment above.
+      pendingDeletesRef.current.push({ url: photo.url, sizeBytes: photo.sizeBytes })
+      if (photo.thumbnailUrl) pendingDeletesRef.current.push({ url: photo.thumbnailUrl, sizeBytes: photo.thumbnailSizeBytes })
     }
     const updatedPhotos = site.galleryPhotos.filter(p => p.id !== id)
     update({ galleryPhotos: updatedPhotos })
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
-    }).catch(() => {})
   }
 
   const movePhoto = (id: string, dir: -1 | 1) => {
@@ -440,11 +440,6 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     if (to < 0 || to >= arr.length) return
     ;[arr[idx], arr[to]] = [arr[to], arr[idx]]
     update({ galleryPhotos: arr })
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, galleryPhotos: arr }),
-    }).catch(() => {})
   }
 
   // ── AI content drafts (About / Tagline / Hero subtitle / Service description) ──
@@ -572,6 +567,9 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </button>
         </div>
       </div>
+      {saveError && (
+        <p className="text-xs text-danger -mt-4">{saveError}</p>
+      )}
 
       {/* Side-by-side editor+preview only kicks in on genuinely wide desktop
           monitors — lg (1024px) sounds like "not a phone" but plenty of real
@@ -702,7 +700,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Website language <span className="font-normal normal-case">(nav, headings, booking form, gallery)</span></label>
             <div className="flex items-center gap-1.5 flex-wrap">
               {LANGUAGE_OPTIONS.map(opt => (
-                <button key={opt.id} onClick={() => update({ language: opt.id === 'en' ? undefined : opt.id })}
+                // Always the real id, including 'en' — JSON.stringify silently drops
+                // object keys whose value is undefined, so an undefined language on
+                // save produced a request body with no language key at all, and the
+                // server's merge-by-spread couldn't clear a key that was never sent.
+                // translator() in lib/studio/i18n.ts already treats 'en' and
+                // undefined identically, so this is safe for every existing site.
+                <button key={opt.id} onClick={() => update({ language: opt.id })}
                   className={`px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-all ${
                     (site.language ?? 'en') === opt.id ? 'border-accent bg-accent/10 text-text-primary' : 'border-border text-muted hover:border-accent/50'}`}>
                   {opt.nativeLabel}

@@ -9,7 +9,8 @@ const MAX_DESCRIPTION_LENGTH = 300
 const SYSTEM_PROMPT = `You recommend one website template for a photography/videography studio, from a fixed list. Respond in EXACTLY this two-line format, nothing else:
 TEMPLATE_ID: <id>
 REASON: <one short sentence, under 20 words, explaining the fit>
-<id> must be exactly one of the ids given in the list — never invent a new one.`
+<id> must be exactly one of the ids given in the list — never invent a new one.
+If the description does not give you enough real information to confidently pick one (e.g. gibberish, random characters, or unrelated to a studio's style/niche), respond with TEMPLATE_ID: none and a REASON explaining that you need a clearer description — do not guess just to produce an answer.`
 
 export async function POST(req: NextRequest) {
   const auth = await verifyStudioJWT(req)
@@ -48,6 +49,17 @@ export async function POST(req: NextRequest) {
     const reasonMatch = raw.match(/REASON:\s*(.+)/i)
     const candidateId = idMatch?.[1]?.toLowerCase()
 
+    // The model's own explicit "not enough to go on" signal (see
+    // SYSTEM_PROMPT) — distinct from the unrecognized-id case below: this is
+    // an expected, valid outcome (gibberish/unrelated input), not a system
+    // fault, so it's a 200 with a friendly message rather than a 502.
+    if (candidateId === 'none') {
+      return NextResponse.json({
+        success: false,
+        error: reasonMatch?.[1]?.trim() || "Couldn't find a close match — try describing your studio's style in a few more words.",
+      })
+    }
+
     // The whole point of this route: never trust the model's id blindly — only
     // ever hand back one of the real, known template ids.
     const match = WEBSITE_TEMPLATES.find(t => t.id === candidateId)
@@ -63,6 +75,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     console.error('[ai/website-template]', err)
-    return NextResponse.json({ success: false, error: 'Could not get a recommendation — try again' }, { status: 500 })
+    return NextResponse.json({ success: false, error: "Something went wrong on our end while getting a recommendation — please try again in a moment." }, { status: 500 })
   }
 }

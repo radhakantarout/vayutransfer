@@ -91,6 +91,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, text })
   } catch (err) {
     console.error('[ai/website-content]', err)
-    return NextResponse.json({ success: false, error: 'Could not generate a draft — try again' }, { status: 500 })
+    return NextResponse.json({ success: false, error: "Something went wrong on our end while generating a draft — please try again in a moment." }, { status: 500 })
   }
 }
