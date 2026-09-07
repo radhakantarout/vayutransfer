@@ -29,6 +29,35 @@ export interface StorageGrant {
   createdAt: string
 }
 
+export type WatermarkPosition =
+  'top-left' | 'top-center' | 'top-right' |
+  'center-left' | 'center' | 'center-right' |
+  'bottom-left' | 'bottom-center' | 'bottom-right'
+
+// A studio-configured watermark design — text or logo — applied by
+// lambda/vayustudio-watermark on demand (not baked into MediaFile; the
+// Lambda re-resolves whichever preset is selected each time it runs, same
+// as it already re-reads the studio's name fresh on every invocation).
+export interface WatermarkPreset {
+  id: string
+  name: string
+  type: 'text' | 'logo'
+  text: string
+  font: 'sans' | 'serif' | 'script'
+  color: string
+  size: number      // px, roughly
+  opacity: number   // 0-100
+  position: WatermarkPosition
+  tiled: boolean
+  // The one watermark used when a bulk-watermark request doesn't specify a
+  // presetId explicitly. Only one preset in the array should have this set
+  // at a time — enforced by the PUT route, not just client-side.
+  isDefault: boolean
+  // Only present for type: 'logo' — set once the image has actually been
+  // uploaded via the watermark-logo-upload route.
+  logoR2Key?: string
+}
+
 export interface Studio {
   studioId: string
   name: string
@@ -99,6 +128,11 @@ export interface Studio {
     editingRequired: boolean
     aiFaceRecognition: boolean
   }
+  // Undefined/empty on studios that haven't created one yet — bulk-watermark
+  // requests with no explicit presetId fall back to whichever one has
+  // isDefault: true, or fail with a clear "create a watermark first" error
+  // if the array is empty (see the watermark route).
+  watermarkPresets?: WatermarkPreset[]
 }
 
 export interface StudioProject {

@@ -26,16 +26,22 @@ export interface WatermarkAlreadyRunning {
 
 export async function startBulkWatermark(
   targets: WatermarkTarget[],
-  watermarkEnabled: boolean
-): Promise<{ started: WatermarkStarted[]; alreadyRunning: WatermarkAlreadyRunning[]; failed: number }> {
+  watermarkEnabled: boolean,
+  // Which studio watermark design to apply — omitted uses the studio's own
+  // isDefault preset (resolved server-side). Ignored when removing.
+  presetId?: string
+): Promise<{ started: WatermarkStarted[]; alreadyRunning: WatermarkAlreadyRunning[]; failed: number; noPresetMessage?: string }> {
   const results = await Promise.allSettled(targets.map(async (t) => {
     const res = await fetch(`/studio/api/admin/projects/${t.projectId}/watermark`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...(t.fileIds ? { fileIds: t.fileIds } : {}), watermarkEnabled }),
+      body: JSON.stringify({ ...(t.fileIds ? { fileIds: t.fileIds } : {}), watermarkEnabled, presetId }),
     }).then(r => r.json())
     if (!res.success) {
       if (res.error === 'JOB_RUNNING') {
         return { kind: 'alreadyRunning' as const, projectId: t.projectId, jobId: res.data.jobId as string }
+      }
+      if (res.error === 'NO_WATERMARK_PRESET') {
+        return { kind: 'noPreset' as const, message: res.message as string }
       }
       throw new Error(res.message ?? 'FAILED')
     }
@@ -46,13 +52,15 @@ export async function startBulkWatermark(
   const started: WatermarkStarted[] = []
   const alreadyRunning: WatermarkAlreadyRunning[] = []
   let failed = 0
+  let noPresetMessage: string | undefined
   for (const r of results) {
     if (r.status === 'fulfilled') {
       if (r.value.kind === 'started') started.push(r.value)
       else if (r.value.kind === 'alreadyRunning') alreadyRunning.push(r.value)
+      else if (r.value.kind === 'noPreset') noPresetMessage = r.value.message
     } else {
       failed++
     }
   }
-  return { started, alreadyRunning, failed }
+  return { started, alreadyRunning, failed, noPresetMessage }
 }

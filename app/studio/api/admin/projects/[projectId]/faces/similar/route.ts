@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { RekognitionClient, ListFacesCommand, SearchFacesCommand } from '@aws-sdk/client-rekognition'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { accuracyToMatchThreshold, DEFAULT_AI_ACCURACY } from '@/lib/studio/faceAccuracy'
+import {
+  collectionIdForProject, listCollectionFaces, faceCountByFileId,
+  searchByFaceId, filterExclusive, intersectExclusive,
+} from '@/lib/studio/faceSearch'
 import type { StudioProject } from '@/types/studio'
-
-const rek = new RekognitionClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
 // "Select one photo, find everyone else with the same face" — reuses the
 // FaceId(s) Rekognition already computed for this photo at index time (no
@@ -53,29 +54,17 @@ export async function POST(
       typeof accuracyLevel === 'number' ? accuracyLevel : DEFAULT_AI_ACCURACY
     )
 
-    const collectionId = `vayustudio-${projectId}`
+    const collectionId = collectionIdForProject(projectId)
 
     // One paginated scan of the whole collection does double duty: finds
     // every face belonging to the reference photo (facesForPhoto, as
     // before) AND — for free, same data already being paginated through —
-    // counts how many distinct faces exist per photo (faceCountByFileId),
-    // which 'solo' mode needs afterward to know whether a candidate match
-    // is genuinely a solo shot of that person or a group photo they merely
-    // appear in.
-    const facesForPhoto: { FaceId?: string; BoundingBox?: { Width?: number; Height?: number; Left?: number; Top?: number } }[] = []
-    const faceCountByFileId = new Map<string, number>()
-    let nextToken: string | undefined
+    // counts how many distinct faces exist per photo (counts), which 'solo'
+    // mode needs afterward to know whether a candidate match is genuinely a
+    // solo shot of that person or a group photo they merely appear in.
+    let allFaces
     try {
-      do {
-        const listRes = await rek.send(new ListFacesCommand({
-          CollectionId: collectionId, MaxResults: 4096, NextToken: nextToken,
-        }))
-        for (const f of listRes.Faces ?? []) {
-          if (f.ExternalImageId === fileId) facesForPhoto.push(f)
-          if (f.ExternalImageId) faceCountByFileId.set(f.ExternalImageId, (faceCountByFileId.get(f.ExternalImageId) ?? 0) + 1)
-        }
-        nextToken = listRes.NextToken
-      } while (nextToken)
+      allFaces = await listCollectionFaces(collectionId)
     } catch (err: unknown) {
       const name = (err as { name?: string }).name ?? ''
       if (name === 'ResourceNotFoundException') {
@@ -83,6 +72,8 @@ export async function POST(
       }
       throw err
     }
+    const facesForPhoto = allFaces.filter(f => f.externalImageId === fileId)
+    const counts = faceCountByFileId(allFaces)
 
     if (facesForPhoto.length === 0) {
       return NextResponse.json({ success: false, error: 'NOT_INDEXED', message: 'This photo has no indexed face yet.' }, { status: 404 })
@@ -90,8 +81,8 @@ export async function POST(
 
     let targetFaceId: string
     if (facesForPhoto.length === 1) {
-      targetFaceId = facesForPhoto[0].FaceId!
-    } else if (typeof chosenFaceId === 'string' && facesForPhoto.some(f => f.FaceId === chosenFaceId)) {
+      targetFaceId = facesForPhoto[0].faceId
+    } else if (typeof chosenFaceId === 'string' && facesForPhoto.some(f => f.faceId === chosenFaceId)) {
       targetFaceId = chosenFaceId
     } else {
       return NextResponse.json({
@@ -99,54 +90,40 @@ export async function POST(
         data: {
           needsSelection: true,
           faces: facesForPhoto.map(f => ({
-            faceId: f.FaceId,
+            faceId: f.faceId,
             boundingBox: {
-              left: f.BoundingBox?.Left ?? 0,
-              top: f.BoundingBox?.Top ?? 0,
-              width: f.BoundingBox?.Width ?? 0,
-              height: f.BoundingBox?.Height ?? 0,
+              left: f.boundingBox?.Left ?? 0,
+              top: f.boundingBox?.Top ?? 0,
+              width: f.boundingBox?.Width ?? 0,
+              height: f.boundingBox?.Height ?? 0,
             },
           })),
         },
       })
     }
 
-    const searchOne = async (faceId: string) => {
-      const res = await rek.send(new SearchFacesCommand({
-        CollectionId: collectionId,
-        FaceId: faceId,
-        // Admin-controlled via the Accuracy slider (lib/studio/faceAccuracy.ts)
-        // — defaults to 85, tuned from the original 70 to cut down wrong-
-        // person false positives without losing real matches on test data.
-        FaceMatchThreshold: matchThreshold,
-        MaxFaces: 4096,
-      }))
-      return new Set((res.FaceMatches ?? []).map(m => m.Face?.ExternalImageId).filter((id): id is string => !!id))
-    }
-
     // Couple mode: intersect two independent single-face searches within
     // this same project's own collection — no cross-project/multi-event
     // complexity (that was tried for a different feature and reverted for
     // being slow and confusing; this stays scoped to one collection).
-    if (mode === 'couple' && typeof secondFaceId === 'string' && facesForPhoto.some(f => f.FaceId === secondFaceId)) {
-      const [setA, setB] = await Promise.all([searchOne(targetFaceId), searchOne(secondFaceId)])
-      const intersection = new Set(Array.from(setA).filter(id => setB.has(id)))
-      intersection.add(fileId)
-      // "Only these two" — same free faceCountByFileId map solo mode uses,
-      // just checking for exactly 2 (these two people, no one else) instead
-      // of exactly 1. Applies uniformly, including the reference photo
-      // itself, so a 3-person reference shot is excluded too when exclusive.
-      const fileIds = coupleExclusive === true
-        ? Array.from(intersection).filter(id => (faceCountByFileId.get(id) ?? 0) === 2)
-        : Array.from(intersection)
+    if (mode === 'couple' && typeof secondFaceId === 'string' && facesForPhoto.some(f => f.faceId === secondFaceId)) {
+      const [setA, setB] = await Promise.all([
+        searchByFaceId(collectionId, targetFaceId, matchThreshold),
+        searchByFaceId(collectionId, secondFaceId, matchThreshold),
+      ])
+      // The reference photo itself trivially satisfies "both present" —
+      // added before the exclusivity filter so a 3-person reference shot is
+      // still excluded when "Only these two" is on.
+      setA.add(fileId); setB.add(fileId)
+      const fileIds = intersectExclusive(setA, setB, coupleExclusive === true, counts)
       return NextResponse.json({ success: true, data: { fileIds } })
     }
 
-    const matchedIds = await searchOne(targetFaceId)
+    const matchedIds = await searchByFaceId(collectionId, targetFaceId, matchThreshold)
     matchedIds.add(fileId)
 
     const fileIds = mode === 'solo'
-      ? Array.from(matchedIds).filter(id => (faceCountByFileId.get(id) ?? 0) <= 1)
+      ? filterExclusive(matchedIds, counts, 1)
       : Array.from(matchedIds)
 
     return NextResponse.json({ success: true, data: { fileIds } })

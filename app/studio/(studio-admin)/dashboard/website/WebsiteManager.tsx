@@ -1,12 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey } from '@/types/studio'
+import type { StudioWebsite, WebsiteService, WebsiteGalleryPhoto, WebsiteTestimonial, WebsiteGalleryStyle, WebsiteSectionStyle, WebsiteSectionKey, WebsiteTemplateId } from '@/types/studio'
 import { WEBSITE_TEMPLATES as TEMPLATES } from '@/lib/studio/websiteTemplates'
 import { BACKGROUND_PRESET_OPTIONS } from '@/lib/studio/backgroundPresets'
 import { LANGUAGE_OPTIONS } from '@/lib/studio/i18n'
 import { EMPHASIS_OPTIONS, SECTION_BG_SWATCHES } from '@/lib/studio/sectionStyle'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import { useUnsavedChanges } from '@/components/studio/UnsavedChangesContext'
 import ShareWebsiteModal from '@/components/studio/ShareWebsiteModal'
 import LivePreviewPanel from './LivePreviewPanel'
 
@@ -15,12 +16,40 @@ import LivePreviewPanel from './LivePreviewPanel'
 // LivePreviewPanel's isDarkTemplate prop).
 const DARK_TEMPLATE_IDS = new Set(['lumina', 'bold'])
 
+// The admin's own short blurb shown above the public booking form — a few
+// sentences, not an essay. Enforced client-side (maxLength + slice on every
+// keystroke, so pasting a huge block truncates immediately rather than only
+// showing an error) and again server-side (see the website PUT route) as a
+// safety net for anything that bypasses this UI.
+const MAX_BOOKING_INTRO_LENGTH = 500
+
 // Only these 3 templates darken their cover with a built-in overlay whose
 // opacity heroBrightness controls directly (see each template's hero
 // section) — matches their own hardcoded default exactly so the slider
 // starts wherever the template already sits before it's ever touched.
 // Every other template shows its cover as-is always, unaffected by this field.
 const HERO_VISIBILITY_DEFAULTS: Record<string, number> = { lumina: 0.2, ember: 0.85, bold: 0.4 }
+
+// Each template's own hardcoded accent/font color fallback (the exact
+// literal each template file falls back to via `site.themeAccent ?? '...'`
+// when the field is unset) — used to reset styling to "this template's own
+// look" when switching templates below. Deliberately real, concrete values
+// rather than trying to clear the field back to unset: JSON.stringify drops
+// object keys whose value is undefined before the save request is even
+// sent, so an old customization from the previous template would just
+// silently survive the switch (the exact bug already found and fixed once
+// for the language picker — same underlying footgun, avoided here by never
+// producing an undefined value in the first place).
+const TEMPLATE_STYLE_DEFAULTS: Record<WebsiteTemplateId, { accent: string; fontColor: string }> = {
+  lumina:  { accent: '#C9A84C', fontColor: '#F5F0E8' },
+  clarity: { accent: '#1A1A1A', fontColor: '#1A1A1A' },
+  ember:   { accent: '#C4622D', fontColor: '#2C1810' },
+  bold:    { accent: '#FF3B30', fontColor: '#FFFFFF' },
+  bloom:   { accent: '#D4849A', fontColor: '#3D2B2B' },
+  frame:   { accent: '#111111', fontColor: '#111111' },
+  zari:    { accent: '#C6A15B', fontColor: '#4A3F35' },
+  monsoon: { accent: '#5B8FB9', fontColor: '#EAF1F5' },
+}
 
 const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Gold',      color: '#C9A84C' },
@@ -75,6 +104,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { setOpen: setChatOpen } = useChatWidget()
+  const { setHasUnsavedChanges: setSidebarUnsavedFlag } = useUnsavedChanges()
   const [showShareModal, setShowShareModal] = useState(false)
   // Driven by the URL (?tab=...) rather than local state — the persistent
   // dashboard sidebar (app/studio/(studio-admin)/dashboard/layout.tsx) is a
@@ -88,6 +118,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // R2 objects queued for deletion by removeHeroImage/removeGalleryPhoto —
+  // only actually deleted once save() confirms the metadata change that
+  // stops referencing them is persisted (see save() below). Deleting the
+  // object first would risk a broken image on the live site if the record
+  // isn't saved for a while (e.g. LIVE status, where saves are deliberate
+  // rather than auto-debounced).
+  const pendingDeletesRef = useRef<{ url: string; sizeBytes?: number }[]>([])
   const [subdomainInput, setSubdomainInput] = useState('')
   const [subdomainCheck, setSubdomainCheck] = useState<{ available: boolean; message: string } | null>(null)
   const [checkingSlug, setCheckingSlug] = useState(false)
@@ -140,20 +178,73 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
   const updateSectionStyle = (key: WebsiteSectionKey, patch: Partial<WebsiteSectionStyle>) =>
     setSite(s => s ? { ...s, sectionStyles: { ...s.sectionStyles, [key]: { ...s.sectionStyles?.[key], ...patch } } } : s)
 
+  // Switching templates used to leave every color/background/section-style
+  // customization from the PREVIOUS template in place — e.g. a gold accent
+  // tuned for Zari would carry straight over onto Monsoon's deep-blue
+  // palette and clash. Resets those fields to the new template's own
+  // defaults (confirming first if there's actual customization to lose),
+  // while leaving all real content (text, photos, services, contact info,
+  // etc.) completely untouched.
+  const selectTemplate = (id: WebsiteTemplateId) => {
+    if (!site || id === site.templateId) return
+    const hasCustomStyling = !!(
+      site.themeAccent || site.fontColor || site.backgroundPreset ||
+      site.heroBrightness !== undefined ||
+      (site.sectionStyles && Object.keys(site.sectionStyles).length > 0)
+    )
+    if (hasCustomStyling) {
+      const name = TEMPLATES.find(t => t.id === id)?.name ?? 'this template'
+      const proceed = window.confirm(`Switching to ${name} will reset your custom colors, background, and section styling to ${name}'s own defaults. Continue?`)
+      if (!proceed) return
+    }
+    const defaults = TEMPLATE_STYLE_DEFAULTS[id]
+    const heroDefault = HERO_VISIBILITY_DEFAULTS[id]
+    update({
+      templateId: id,
+      themeAccent: defaults.accent,
+      fontColor: defaults.fontColor,
+      backgroundPreset: 'default',
+      sectionStyles: {},
+      ...(heroDefault !== undefined ? { heroBrightness: heroDefault } : {}),
+    })
+  }
+
   const save = async (patch?: Partial<StudioWebsite>) => {
     if (!site) return
-    setSaving(true); setSaved(false)
+    setSaving(true); setSaved(false); setSaveError(null)
     const body = patch ? { ...site, ...patch } : site
-    const res = await fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(r => r.json())
-    setSaving(false)
-    if (res.success) {
+    try {
+      const res = await fetch('/studio/api/admin/website', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(r => r.json())
+      if (!res.success) {
+        setSaveError(res.error ?? 'Could not save changes — please try again')
+        return
+      }
       setSite(res.data)
       lastAutoSavedSnapshot.current = snapshotForCompare(res.data)
       setSaved(true); setTimeout(() => setSaved(false), 2500)
+      // Flush any storage deletions queued by removeHeroImage/removeGalleryPhoto
+      // now that the metadata no longer referencing them is confirmed persisted.
+      const toDelete = pendingDeletesRef.current
+      pendingDeletesRef.current = []
+      toDelete.forEach(({ url, sizeBytes }) => {
+        fetch('/studio/api/admin/website/portfolio-upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, sizeBytes }),
+        }).catch(() => {})
+      })
+    } catch {
+      // Network failure (offline, etc.) — without this catch, the function
+      // exits via the thrown exception and setSaving(false) below never
+      // runs, leaving the Save button permanently stuck on "Saving…" (and
+      // disabled) even after the connection comes back.
+      setSaveError('Could not save — check your connection and try again')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -172,6 +263,38 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     return () => clearTimeout(previewSaveDebounceRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [site])
+
+  // Same comparison the auto-save effect above already uses to decide
+  // whether there's anything worth persisting — reused here to drive the
+  // Save button's enabled state and the unsaved-changes warning below,
+  // rather than tracking a second, separate "dirty" flag that could drift
+  // out of sync with it.
+  const hasUnsavedChanges = !!site && snapshotForCompare(site) !== lastAutoSavedSnapshot.current
+
+  // Warns on an actual browser unload (refresh, close tab, navigate away to
+  // a different URL). Browsers ignore any custom message and show their own
+  // generic "changes you made may not be saved" text — e.returnValue just
+  // needs to be set to trigger that native prompt at all.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasUnsavedChanges])
+
+  // beforeunload above only covers a real browser-level unload — it can't
+  // intercept an in-app client-side route change (e.g. switching to Client
+  // Gallery from the sidebar's product switcher). Publishing this flag into
+  // UnsavedChangesContext lets dashboard/layout.tsx's navigation-away
+  // actions confirm with the admin first. Cleared on unmount so a stale
+  // "true" can never linger and block navigation after this page is gone.
+  useEffect(() => {
+    setSidebarUnsavedFlag(hasUnsavedChanges)
+    return () => setSidebarUnsavedFlag(false)
+  }, [hasUnsavedChanges, setSidebarUnsavedFlag])
 
   const checkSubdomain = useCallback(async (slug: string) => {
     if (slug.length < 3) { setSubdomainCheck(null); return }
@@ -319,13 +442,14 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       }
       if (newPhotos.length > 0) {
         const updatedPhotos = [...site.galleryPhotos, ...newPhotos]
+        // Just update local state — the debounced auto-save effect below
+        // persists it (immediately while DRAFT, or on the next explicit
+        // "Save Changes" click while LIVE). Used to also PUT immediately
+        // here, which wrote straight to the live-readable record with no
+        // review step even while LIVE, and double-saved while DRAFT (this
+        // fetch's response never updated lastAutoSavedSnapshot, so the
+        // debounce effect fired again 800ms later anyway).
         setSite(prev => prev ? { ...prev, galleryPhotos: updatedPhotos } : prev)
-        const saveRes = await fetch('/studio/api/admin/website', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
-        }).then(r => r.json())
-        if (!saveRes.success) throw new Error('Upload succeeded but could not be saved — please try again')
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed — please try again')
@@ -362,13 +486,8 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
         heroPosterUrl,
         heroPosterSizeBytes,
       }
+      // Local state only — see the comment in handlePhotoUpload above for why.
       setSite(prev => prev ? { ...prev, ...patch } : prev)
-      const saveRes = await fetch('/studio/api/admin/website', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...site, ...patch }),
-      }).then(r => r.json())
-      if (!saveRes.success) throw new Error('Cover uploaded but could not be saved — please try again')
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Cover upload failed — please try again')
     } finally {
@@ -379,56 +498,30 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
 
   const removeHeroImage = () => {
     if (!site) return
-    if (site.heroImageUrl) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes }),
-      }).catch(() => {})
-    }
-    if (site.heroPosterUrl) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: site.heroPosterUrl, sizeBytes: site.heroPosterSizeBytes }),
-      }).catch(() => {})
-    }
+    // Queued, not deleted immediately — flushed from inside save() only
+    // once the metadata change that stops referencing these objects is
+    // actually confirmed persisted. Deleting first would risk a broken
+    // image on the live site if the record isn't saved for a while (e.g.
+    // LIVE status, where saves are deliberate rather than auto-debounced).
+    if (site.heroImageUrl) pendingDeletesRef.current.push({ url: site.heroImageUrl, sizeBytes: site.heroImageSizeBytes })
+    if (site.heroPosterUrl) pendingDeletesRef.current.push({ url: site.heroPosterUrl, sizeBytes: site.heroPosterSizeBytes })
     // Empty string (not undefined) so it survives JSON — the API merges by spreading
     // the request body over the existing record, and `undefined` keys are dropped by
     // JSON.stringify before the request is even sent, so the old value would stick.
     const patch = { heroImageUrl: '', heroImageSizeBytes: 0, heroMediaType: 'photo' as const, heroPosterUrl: '', heroPosterSizeBytes: 0 }
     update(patch)
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, ...patch }),
-    }).catch(() => {})
   }
 
   const removeGalleryPhoto = (id: string) => {
     if (!site) return
     const photo = site.galleryPhotos.find(p => p.id === id)
     if (photo) {
-      fetch('/studio/api/admin/website/portfolio-upload', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: photo.url, sizeBytes: photo.sizeBytes }),
-      }).catch(() => {})
-      if (photo.thumbnailUrl) {
-        fetch('/studio/api/admin/website/portfolio-upload', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: photo.thumbnailUrl, sizeBytes: photo.thumbnailSizeBytes }),
-        }).catch(() => {})
-      }
+      // Queued, not deleted immediately — see removeHeroImage's comment above.
+      pendingDeletesRef.current.push({ url: photo.url, sizeBytes: photo.sizeBytes })
+      if (photo.thumbnailUrl) pendingDeletesRef.current.push({ url: photo.thumbnailUrl, sizeBytes: photo.thumbnailSizeBytes })
     }
     const updatedPhotos = site.galleryPhotos.filter(p => p.id !== id)
     update({ galleryPhotos: updatedPhotos })
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, galleryPhotos: updatedPhotos }),
-    }).catch(() => {})
   }
 
   const movePhoto = (id: string, dir: -1 | 1) => {
@@ -440,11 +533,6 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
     if (to < 0 || to >= arr.length) return
     ;[arr[idx], arr[to]] = [arr[to], arr[idx]]
     update({ galleryPhotos: arr })
-    fetch('/studio/api/admin/website', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...site, galleryPhotos: arr }),
-    }).catch(() => {})
   }
 
   // ── AI content drafts (About / Tagline / Hero subtitle / Service description) ──
@@ -566,12 +654,15 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
               ↑ Publish
             </button>
           )}
-          <button onClick={() => save()} disabled={saving}
-            className="px-4 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-full disabled:opacity-60 transition-all whitespace-nowrap">
+          <button onClick={() => save()} disabled={saving || !hasUnsavedChanges}
+            className="px-4 py-1.5 bg-accent text-bg text-[11px] font-bold rounded-full disabled:opacity-60 disabled:cursor-not-allowed transition-all whitespace-nowrap">
             {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
           </button>
         </div>
       </div>
+      {saveError && (
+        <p className="text-xs text-danger -mt-4">{saveError}</p>
+      )}
 
       {/* Side-by-side editor+preview only kicks in on genuinely wide desktop
           monitors — lg (1024px) sounds like "not a phone" but plenty of real
@@ -608,7 +699,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
       {/* ── Template ── */}
       {tab === 'template' && (
         <div className="space-y-4">
-          <SectionHeader title="Template Settings" subtitle="Choose a design. You can switch anytime — your content stays." />
+          <SectionHeader title="Template Settings" subtitle="Choose a design. You can switch anytime — your content stays, colors reset to the new template's own defaults." />
 
           <div className="bg-card border border-border rounded-xl px-3 py-2 space-y-1.5">
             <div className="flex items-center gap-2">
@@ -634,7 +725,7 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             {TEMPLATES.map(t => {
               const isRecommended = templateSuggestion?.templateId === t.id
               return (
-                <button key={t.id} onClick={() => update({ templateId: t.id })}
+                <button key={t.id} onClick={() => selectTemplate(t.id)}
                   className={`relative rounded-lg overflow-hidden border transition-all text-left ${site.templateId === t.id ? 'border-accent scale-[1.02] shadow-md' : isRecommended ? 'border-accent/60 ring-1 ring-accent/30' : 'border-border hover:border-accent/50'}`}>
                   {isRecommended && (
                     <span className="absolute top-1 right-1 z-10 bg-accent text-bg text-[8px] font-bold px-1 py-px rounded-full">✨ AI</span>
@@ -702,7 +793,13 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
             <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Website language <span className="font-normal normal-case">(nav, headings, booking form, gallery)</span></label>
             <div className="flex items-center gap-1.5 flex-wrap">
               {LANGUAGE_OPTIONS.map(opt => (
-                <button key={opt.id} onClick={() => update({ language: opt.id === 'en' ? undefined : opt.id })}
+                // Always the real id, including 'en' — JSON.stringify silently drops
+                // object keys whose value is undefined, so an undefined language on
+                // save produced a request body with no language key at all, and the
+                // server's merge-by-spread couldn't clear a key that was never sent.
+                // translator() in lib/studio/i18n.ts already treats 'en' and
+                // undefined identically, so this is safe for every existing site.
+                <button key={opt.id} onClick={() => update({ language: opt.id })}
                   className={`px-3 py-1.5 rounded-full border-2 text-xs font-medium transition-all ${
                     (site.language ?? 'en') === opt.id ? 'border-accent bg-accent/10 text-text-primary' : 'border-border text-muted hover:border-accent/50'}`}>
                   {opt.nativeLabel}
@@ -1015,8 +1112,12 @@ export default function WebsiteManager({ studioId, studioName }: Props) {
           </div>
           {site.bookingEnabled && (
             <div>
-              <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">Form intro message</label>
-              <textarea value={site.bookingMessage ?? ''} onChange={e => update({ bookingMessage: e.target.value })} rows={3}
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider">Form intro message</label>
+                <span className="text-[10px] text-muted">{(site.bookingMessage ?? '').length}/{MAX_BOOKING_INTRO_LENGTH}</span>
+              </div>
+              <textarea value={site.bookingMessage ?? ''} onChange={e => update({ bookingMessage: e.target.value.slice(0, MAX_BOOKING_INTRO_LENGTH) })} rows={3}
+                maxLength={MAX_BOOKING_INTRO_LENGTH}
                 className="w-full bg-card border border-border rounded-xl px-4 py-3 text-sm text-text-primary outline-none focus:border-accent resize-none"
                 placeholder="Fill in your details and we'll get back to you within 24 hours." />
             </div>

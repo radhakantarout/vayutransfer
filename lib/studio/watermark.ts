@@ -1,6 +1,6 @@
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
-import { studioGetItem, TABLES } from './dynamodb'
-import type { Studio } from '@/types/studio'
+import { TABLES } from './dynamodb'
+import type { WatermarkPreset } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
@@ -14,6 +14,11 @@ interface WatermarkSource {
   // since it isn't AWS-IAM-integrated.
   sourceBackend: 'S3' | 'R2'
   watermarkEnabled: boolean
+  // Required when watermarkEnabled is true — the caller (the watermark
+  // route) resolves this ONCE per bulk request (explicit presetId, or the
+  // studio's isDefault preset) rather than this function re-reading it from
+  // DynamoDB on every single file. Unused when watermarkEnabled is false.
+  preset?: WatermarkPreset
   fileType: string
   // Distinguishes a re-generated preview (e.g. after an edited re-upload)
   // from the original. The Lambda uploads previews with a one-year immutable
@@ -29,7 +34,6 @@ interface WatermarkSource {
 }
 
 export async function invokeStudioWatermarkLambda(source: WatermarkSource): Promise<void> {
-  const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: source.studioId })
   const previewFilename = source.previewKeySuffix ? `${source.fileId}-${source.previewKeySuffix}` : source.fileId
 
   const payload = {
@@ -46,15 +50,18 @@ export async function invokeStudioWatermarkLambda(source: WatermarkSource): Prom
     sourceR2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
     sourceR2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
     sourceKey: source.sourceKey,
-    // Destination preview bucket — always R2, unchanged regardless of source backend.
+    // Destination preview bucket — always R2, unchanged regardless of source
+    // backend. A preset's logoR2Key (if any) lives in this SAME bucket (see
+    // app/studio/api/admin/settings/watermark-logo-upload/route.ts), so the
+    // Lambda can fetch it with these same credentials — no new credentials
+    // to thread through for logo watermarks.
     r2Bucket: process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews',
     r2Key: `studios/${source.studioId}/projects/${source.projectId}/previews/${previewFilename}.jpg`,
     r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-    studioName: studio?.name ?? 'Studio',
-    logoS3Key: studio?.brandingConfig?.logoS3Key ?? null,
     watermarkEnabled: source.watermarkEnabled,
+    preset: source.watermarkEnabled ? source.preset : undefined,
     fileType: source.fileType,
     jobId: source.jobId,
     jobsTable: source.jobId ? TABLES.jobs : undefined,

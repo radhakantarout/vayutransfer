@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import PasswordInput from '@/components/PasswordInput'
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -59,12 +60,11 @@ export default function AdminLoginPage() {
           </div>
           <div>
             <label className="text-sm text-muted block mb-1.5">Password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/60"
+              className="w-full bg-bg border border-border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent/60"
             />
           </div>
 

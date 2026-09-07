@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { Suspense } from 'react'
 import AuthShell from '@/components/studio/AuthShell'
 import GoogleIcon from '@/components/studio/GoogleIcon'
+import PasswordInput from '@/components/PasswordInput'
 
 type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
@@ -336,25 +337,23 @@ function LoginPageInner() {
                 {forgotStep === 'password' && (
                   <form onSubmit={handleSetPassword} className="space-y-3">
                     <div className="space-y-1.5">
-                      <input
-                        type="password"
+                      <PasswordInput
                         value={fpPassword}
                         onChange={(e) => { setFpPassword(e.target.value); setFpError(null) }}
                         required
                         autoFocus
                         placeholder="New password"
-                        className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                        className="w-full bg-bg border border-border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
                       />
                       <PasswordStrength password={fpPassword} />
                     </div>
                     <div className="space-y-1.5">
-                      <input
-                        type="password"
+                      <PasswordInput
                         value={fpConfirm}
                         onChange={(e) => { setFpConfirm(e.target.value); setFpError(null) }}
                         required
                         placeholder="Confirm new password"
-                        className={`w-full bg-bg border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors ${fpConfirm && fpPassword !== fpConfirm ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'}`}
+                        className={`w-full bg-bg border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors ${fpConfirm && fpPassword !== fpConfirm ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'}`}
                       />
                       {fpConfirm && fpPassword !== fpConfirm && (
                         <p className="text-[10px] text-danger font-medium">Passwords do not match</p>
@@ -454,14 +453,13 @@ function LoginPageInner() {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted">Password</label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     autoComplete="current-password"
                     placeholder="••••••••"
-                    className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                    className="w-full bg-bg border border-border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
                   />
                 </div>
 
