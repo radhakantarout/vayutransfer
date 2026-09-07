@@ -45,8 +45,9 @@ const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: 'usage',     label: 'Usage',     icon: <UsageIcon /> },
 ]
 
-// General/Watermark are still UI-only mock; Billing/Usage are wired to the
-// real backend (see lib/studio/quota.ts, app/studio/api/admin/stats).
+// General is still UI-only mock; Billing/Usage/Watermark are wired to the
+// real backend (see lib/studio/quota.ts, app/studio/api/admin/stats,
+// app/studio/api/admin/settings/watermark-presets).
 export default function SettingsModal({ onClose, initialTab = 'general', initialBillingAutoExpand = false }: {
   onClose: () => void
   initialTab?: SettingsTab

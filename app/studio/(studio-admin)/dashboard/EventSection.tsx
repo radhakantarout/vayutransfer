@@ -19,7 +19,7 @@ import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoSc
 import AccuracySlider from '@/components/studio/AccuracySlider'
 import { loadAccuracyLevel, saveAccuracyLevel } from '@/lib/studio/faceAccuracy'
 import JobConfirmDialog from '@/components/studio/JobConfirmDialog'
-import { startBulkWatermark } from '@/lib/studio/watermarkClient'
+import { useWatermarkModal } from '@/components/studio/WatermarkModalContext'
 import type { TrackedJob } from '@/lib/studio/useJobTracker'
 
 // At most this many files upload at once — selecting hundreds/thousands of
@@ -260,7 +260,7 @@ export default function EventSection({
   const [renameSaving, setRenameSaving] = useState(false)
   const [moveCopyTarget, setMoveCopyTarget] = useState<{ mode: 'copy' | 'move'; clientName: string; files: { fileId: string; projectId: string }[] } | null>(null)
   const [settingCoverId, setSettingCoverId] = useState<string | null>(null)
-  const [bulkWatermarking, setBulkWatermarking] = useState(false)
+  const { openWatermarkModal } = useWatermarkModal()
   const [bulkAISorting, setBulkAISorting] = useState(false)
   // Surfaces JOB_RUNNING/failures from the two bulk actions above — these
   // used to be swallowed silently (Promise.all + .catch(() => {})), which
@@ -736,12 +736,16 @@ export default function EventSection({
     if (res.success) window.open(res.data.url, '_blank')
   }
 
-  const toggleWatermark = async (fileId: string, watermarkEnabled: boolean) => {
-    await fetch(`/studio/api/admin/projects/${projectIdOf(fileId)}/files/${fileId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watermarkEnabled }),
-    }).catch(() => {})
-    await loadFiles()
+  // Opens the shared WatermarkModal scoped to a single photo — previously a
+  // bare fire-and-forget PATCH with no confirmation or progress tracking,
+  // now goes through the same apply/remove + preset-picker flow as every
+  // other watermark trigger.
+  const openWatermarkModalForFile = (f: MediaFile) => {
+    openWatermarkModal({
+      label: f.originalFilename,
+      projectIds: [f.projectId],
+      selectedTargets: [{ projectId: f.projectId, fileIds: [f.fileId] }],
+    })
   }
 
   const copyFilename = async (filename: string) => {
@@ -819,12 +823,12 @@ export default function EventSection({
       onClick: () => copyFilename(f.originalFilename),
     },
     {
-      label: f.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark', icon: (
+      label: 'Watermark…', icon: (
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
-      onClick: () => toggleWatermark(f.fileId, !f.watermarkEnabled),
+      onClick: () => openWatermarkModalForFile(f),
     },
     {
       label: 'Rename', icon: (
@@ -906,11 +910,14 @@ export default function EventSection({
     onUpdated()
   }
 
-  // Confirmation state for the two selection-bar triggers below — a click
-  // only opens the dialog; the actual POST + job registration happens once
-  // confirmed, in confirmBulkApplyWatermark / confirmBulkAISort.
-  const [pendingWatermarkConfirm, setPendingWatermarkConfirm] = useState<{ watermarkEnabled: boolean } | null>(null)
-  const [showAISortConfirm, setShowAISortConfirm] = useState(false)
+  // Confirmation state for the selection-bar AI-sort trigger below — 'normal'
+  // shows the usual "this uses AI credits" warning scoped to only the truly
+  // new photos in the selection; 'force' shows a stronger warning for when
+  // every selected photo is already AI-enabled (see openAISortConfirm) and
+  // the admin explicitly wants to redo them anyway. Watermarking's own
+  // confirmation lives inside the shared WatermarkModal (see
+  // openWatermarkModalForSelection).
+  const [aiSortConfirmKind, setAiSortConfirmKind] = useState<'normal' | 'force' | null>(null)
 
   const labelForProject = (pid: string) => {
     const p = activeSourceProjects.find(sp => sp.projectId === pid)
@@ -923,55 +930,27 @@ export default function EventSection({
   // since a merged multi-event grid's selection can span several.
   const jobActiveOnSelection = activeSourceProjects.some(p => hasActiveJob?.(p.projectId))
 
-  // Omitting fileIds targets every eligible file in the project — the
-  // backend route already supports this (used for the header's always-on
-  // Watermark button when nothing is selected; targets just the selection
-  // when something is). Grouped per-project so this stays correct when the
-  // grid is showing merged multi-event photos. Shared with layout.tsx's
-  // sidebar trigger via lib/studio/watermarkClient.ts — this used to be a
-  // second, independently-maintained copy of that same fetch logic.
-  const bulkApplyWatermark = async (watermarkEnabled: boolean) => {
-    setBulkWatermarking(true)
-    const targets = selectedIds.size > 0
-      ? (() => {
-          const byProject = new Map<string, string[]>()
-          selectedIds.forEach(fid => {
-            const pid = projectIdOf(fid)
-            if (!byProject.has(pid)) byProject.set(pid, [])
-            byProject.get(pid)!.push(fid)
-          })
-          return Array.from(byProject.entries()).map(([projectId, fileIds]) => ({ projectId, fileIds }))
-        })()
-      : activeSourceProjects.map(p => ({ projectId: p.projectId }))
-    const { started, alreadyRunning, failed } = await startBulkWatermark(targets, watermarkEnabled)
-    setBulkWatermarking(false)
-    // "Already running" re-attaches to that job's own row in the shared
-    // tracker instead of dead-ending on a plain message — same live
-    // progress + Cancel the admin would've seen without navigating away.
-    if (alreadyRunning.length > 0) {
-      setBulkActionNotice(`Watermarking is already running for ${alreadyRunning.length} of the selected event${alreadyRunning.length !== 1 ? 's' : ''} — showing its progress below.`)
-    } else if (failed > 0) {
-      setBulkActionNotice(`Couldn't start watermarking for ${failed} event${failed !== 1 ? 's' : ''}.`)
-    }
-    started.forEach(s => onJobStarted?.({
-      jobId: s.jobId, jobType: 'WATERMARK', projectId: s.projectId,
-      label: labelForProject(s.projectId), total: s.total,
-    }))
-    alreadyRunning.forEach(a => onJobStarted?.({
-      jobId: a.jobId, jobType: 'WATERMARK', projectId: a.projectId,
-      label: labelForProject(a.projectId), total: 0,
-    }))
-    // No blind timeout here anymore — dashboard/layout.tsx watches the
-    // shared tracker and bumps refreshTrigger the moment the job actually
-    // reaches READY (see its job-completion effect), which is what drives
-    // this component's own loadFiles() via the refreshTrigger prop.
-  }
-
-  const confirmBulkApplyWatermark = () => {
-    if (!pendingWatermarkConfirm) return
-    const { watermarkEnabled } = pendingWatermarkConfirm
-    setPendingWatermarkConfirm(null)
-    bulkApplyWatermark(watermarkEnabled)
+  // Opens the shared WatermarkModal scoped to this selection-bar's own
+  // projects/selection — "all photos" covers every activeSourceProjects
+  // project (so it stays correct when the grid is showing merged
+  // multi-event photos), "selected" is grouped per-project from selectedIds.
+  // The modal itself owns the apply/remove choice, the preset picker, the
+  // warning, and starting + registering the job (via WatermarkModal's own
+  // registerJob prop, wired once in layout.tsx) — this used to be a second,
+  // independently-maintained copy of layout.tsx's own bulk-watermark fetch
+  // logic (lib/studio/watermarkClient.ts).
+  const openWatermarkModalForSelection = () => {
+    const byProject = new Map<string, string[]>()
+    selectedIds.forEach(fid => {
+      const pid = projectIdOf(fid)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push(fid)
+    })
+    openWatermarkModal({
+      label: labelForProject(activeSourceProjects[0]?.projectId ?? ''),
+      projectIds: activeSourceProjects.map(p => p.projectId),
+      selectedTargets: Array.from(byProject.entries()).map(([projectId, fileIds]) => ({ projectId, fileIds })),
+    })
   }
 
   // Selection-bar bulk star toggle — standard "star-all" UX: if every
@@ -985,22 +964,39 @@ export default function EventSection({
     await Promise.all(selectedFiles.map(f => saveCurationStatus(f.fileId, f.curationStatus, next)))
   }
 
+  // AI Sorting's own eligible/already-indexed split for the current
+  // selection — purely client-side (files is already fully loaded, no fetch
+  // needed unlike the sidebar's per-client AISortingModal, which operates on
+  // OTHER projects' data this component never loaded). Mirrors that same
+  // "don't silently accept a no-op indexing run" fix.
+  const selectedAISortFiles = selectedFiles.filter(f => f.fileType === 'IMAGE')
+  const selectedAISortPending = selectedAISortFiles.filter(f => !f.faceIndexed)
+
+  const openAISortConfirm = () => {
+    if (selectedAISortFiles.length === 0) { setBulkActionNotice('No eligible photos in your selection.'); return }
+    setAiSortConfirmKind(selectedAISortPending.length === 0 ? 'force' : 'normal')
+  }
+
   // Runs AI face indexing scoped to just the selected photos — same route
   // the Face Index tab already uses, grouped per-project the same way
-  // bulkApplyWatermark is (a selection can span multiple merged events).
-  const bulkAISort = async () => {
-    setShowAISortConfirm(false)
+  // openWatermarkModalForSelection is (a selection can span multiple merged
+  // events). forceAll=false only sends the not-yet-indexed subset, so a
+  // selection that's already fully AI-enabled can't silently start a job
+  // that finds nothing to do.
+  const bulkAISort = async (forceAll: boolean) => {
+    setAiSortConfirmKind(null)
+    const targetFiles = forceAll ? selectedAISortFiles : selectedAISortPending
+    if (targetFiles.length === 0) return
     setBulkAISorting(true)
     const byProject = new Map<string, string[]>()
-    selectedIds.forEach(fid => {
-      const pid = projectIdOf(fid)
-      if (!byProject.has(pid)) byProject.set(pid, [])
-      byProject.get(pid)!.push(fid)
+    targetFiles.forEach(f => {
+      if (!byProject.has(f.projectId)) byProject.set(f.projectId, [])
+      byProject.get(f.projectId)!.push(f.fileId)
     })
     const results = await Promise.allSettled(Array.from(byProject.entries()).map(async ([pid, fileIds]) => {
       const res = await fetch(`/studio/api/admin/projects/${pid}/faces/index`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileIds }),
+        body: JSON.stringify({ fileIds, ...(forceAll ? { forceAll: true } : {}) }),
       }).then(r => r.json())
       if (!res.success) throw new Error(res.message ?? 'Failed to start')
       return { projectId: pid, jobId: res.data.jobId as string, total: fileIds.length }
@@ -1417,29 +1413,30 @@ export default function EventSection({
         </div>
       )}
 
-      {/* ── Selection-bar bulk-watermark / AI-sorting confirmations — same
-          "temporarily unavailable" warning shown from every trigger point
-          (sidebar, here, AISortingModal) so they all converge on one
-          consistent message. ─────────────────────────────────────────── */}
-      {pendingWatermarkConfirm && (
-        <JobConfirmDialog
-          icon={pendingWatermarkConfirm.watermarkEnabled ? '🖼️' : '✂️'}
-          title={pendingWatermarkConfirm.watermarkEnabled ? 'Apply watermark?' : 'Remove watermark?'}
-          message={`The selected ${selectedIds.size > 0 ? `${selectedIds.size} photo${selectedIds.size !== 1 ? 's' : ''}` : 'photos'} will be temporarily unavailable for other actions (like delete or move) while watermarking is in progress. You'll see live progress in the bottom-right corner and can cancel anytime.`}
-          confirmLabel={pendingWatermarkConfirm.watermarkEnabled ? 'Apply Watermark' : 'Remove Watermark'}
-          onConfirm={confirmBulkApplyWatermark}
-          onCancel={() => setPendingWatermarkConfirm(null)}
-        />
-      )}
-
-      {showAISortConfirm && (
+      {/* ── Selection-bar AI-sorting confirmation — watermarking's own
+          "temporarily unavailable" warning now lives inside the shared
+          WatermarkModal (rendered once from layout.tsx) instead of a
+          separate dialog here. ─────────────────────────────────────────── */}
+      {aiSortConfirmKind === 'normal' && (
         <JobConfirmDialog
           icon="✨"
           title="Start AI sorting?"
-          message="This scans the selected photos for faces so guests can find themselves by selfie — it uses a bit of your AI search balance per photo, charged as it runs. The photos will be temporarily unavailable for other actions until it finishes, and you'll see live progress with a cancel option in the bottom-right corner."
-          confirmLabel="Start AI Sorting"
-          onConfirm={bulkAISort}
-          onCancel={() => setShowAISortConfirm(false)}
+          message={`This scans ${selectedAISortPending.length} new photo${selectedAISortPending.length !== 1 ? 's' : ''} in your selection for faces so guests can find themselves by selfie${selectedAISortFiles.length !== selectedAISortPending.length ? ` (${selectedAISortFiles.length - selectedAISortPending.length} already AI-enabled ${selectedAISortFiles.length - selectedAISortPending.length !== 1 ? 'are' : 'is'} skipped)` : ''} — it uses a bit of your AI search balance per photo, charged as it runs. The photos will be temporarily unavailable for other actions until it finishes, and you'll see live progress with a cancel option in the bottom-right corner.`}
+          confirmLabel={`Index ${selectedAISortPending.length} New Photo${selectedAISortPending.length !== 1 ? 's' : ''}`}
+          onConfirm={() => bulkAISort(false)}
+          onCancel={() => setAiSortConfirmKind(null)}
+        />
+      )}
+
+      {aiSortConfirmKind === 'force' && (
+        <JobConfirmDialog
+          icon="⚠️"
+          danger
+          title="Re-index already-enabled photos?"
+          message={`All ${selectedAISortFiles.length} selected photo${selectedAISortFiles.length !== 1 ? 's' : ''} ${selectedAISortFiles.length !== 1 ? 'are' : 'is'} already AI-enabled. Re-indexing scans them again from scratch and charges AI search credits a second time for every one of them — only do this if something actually looks wrong with the current results.`}
+          confirmLabel="Re-index Anyway"
+          onConfirm={() => bulkAISort(true)}
+          onCancel={() => setAiSortConfirmKind(null)}
         />
       )}
 
@@ -1689,13 +1686,13 @@ export default function EventSection({
                   }
                   actions={[
                     {
-                      label: currentPreviewPhoto.watermarkEnabled ? 'Remove Watermark' : 'Apply Watermark',
+                      label: 'Watermark…',
                       icon: (
                         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                       ),
-                      onClick: () => toggleWatermark(currentPreviewPhoto.fileId, !currentPreviewPhoto.watermarkEnabled),
+                      onClick: () => openWatermarkModalForFile(currentPreviewPhoto),
                     },
                     {
                       label: 'Copy filename',
@@ -2096,7 +2093,7 @@ export default function EventSection({
 
                   {/* AI Sorting / Search — selection only */}
                   <Tooltip label={bulkAISorting ? 'Starting AI Sorting…' : 'AI Sorting / Search'}>
-                    <button onClick={() => setShowAISortConfirm(true)}
+                    <button onClick={openAISortConfirm}
                       className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
                       {bulkAISorting
                         ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -2127,29 +2124,16 @@ export default function EventSection({
                     </button>
                   </Tooltip>
 
-                  {/* Watermark — selection only, own dropdown for apply/remove */}
-                  <PhotoActionsMenu
-                    align="right"
-                    trigger={
-                      <Tooltip label="Watermark selected">
-                        <span className="w-6 h-6 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors cursor-pointer">
-                          {bulkWatermarking
-                            ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>}
-                        </span>
-                      </Tooltip>
-                    }
-                    actions={[
-                      { label: 'Apply Watermark',
-                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-                        onClick: () => setPendingWatermarkConfirm({ watermarkEnabled: true }) },
-                      { label: 'Remove Watermark',
-                        icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
-                        onClick: () => setPendingWatermarkConfirm({ watermarkEnabled: false }) },
-                    ]}
-                  />
+                  {/* Watermark — opens the shared modal (apply/remove ×
+                      all/selected all live there now) */}
+                  <Tooltip label="Watermark…">
+                    <button onClick={openWatermarkModalForSelection}
+                      className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-lg text-white/85 hover:text-white hover:bg-white/15 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </button>
+                  </Tooltip>
 
                   {/* Delete — selection only, disabled while a background job
                       (watermark/AI sorting) is running on this event, so the

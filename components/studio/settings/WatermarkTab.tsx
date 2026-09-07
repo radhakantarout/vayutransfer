@@ -1,30 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { WatermarkPreset as Watermark, WatermarkPosition as Position } from '@/types/studio'
 
-type WatermarkType = 'text' | 'logo'
-type Position = 'top-left' | 'top-center' | 'top-right' | 'center-left' | 'center' | 'center-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'
+type WatermarkType = Watermark['type']
 
-interface Watermark {
-  id: string
-  name: string
-  type: WatermarkType
-  text: string
-  font: 'sans' | 'serif' | 'script'
-  color: string
-  size: number       // px, roughly
-  opacity: number     // 0-100
-  position: Position
-  tiled: boolean
-  // The one watermark auto-applied to new projects unless overridden.
-  isDefault: boolean
-}
-
-const SAMPLE_WATERMARKS: Watermark[] = [
-  { id: 'w1', name: 'Studio Signature', type: 'text', text: 'Rk Studio', font: 'script', color: '#ffffff', size: 28, opacity: 70, position: 'bottom-right', tiled: false, isDefault: true },
-  { id: 'w2', name: 'Copyright Tile',   type: 'text', text: '© RK STUDIO', font: 'sans',   color: '#ffffff', size: 16, opacity: 25, position: 'center',       tiled: true,  isDefault: false },
-  { id: 'w3', name: 'Logo Corner',      type: 'logo', text: 'LOGO',       font: 'sans',   color: '#ffffff', size: 48, opacity: 85, position: 'bottom-left',  tiled: false, isDefault: false },
-]
+const PREVIEW_BASE = (process.env.NEXT_PUBLIC_STUDIO_PREVIEW_URL ?? 'https://previews.vayustudios.com').replace(/\/$/, '')
+const logoUrl = (r2Key: string) => `${PREVIEW_BASE}/${r2Key}`
 
 function StarIcon({ filled = false }: { filled?: boolean }) {
   return (
@@ -52,32 +34,44 @@ const POSITION_CLASS: Record<Position, string> = {
   'bottom-right': 'items-end justify-end',
 }
 
-// Renders the mock "sample photo" with a watermark overlaid exactly the way
-// the real Lambda-based watermarking pipeline would (see project memory on
-// watermark_lambda) — pure CSS here since this pass is UI-only, no image
-// processing.
+// Renders the mock "sample photo" with a watermark overlaid approximately
+// the way the real Lambda-based pipeline renders it (lambda/vayustudio-
+// watermark/index.js) — pure CSS/img here, not real image processing, so
+// treat this as "close enough to judge the design," not pixel-exact.
 function WatermarkPreview({ wm, className = '' }: { wm: Watermark; className?: string }) {
-  const label = wm.type === 'logo' ? wm.text || 'LOGO' : wm.text || 'Watermark'
+  const label = wm.text || 'Watermark'
   return (
     <div className={`relative overflow-hidden rounded-xl bg-gradient-to-br from-accent/30 via-border to-accent/10 ${className}`}>
       {wm.tiled ? (
         <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
           <div className="grid grid-cols-3 gap-8 rotate-[-28deg] scale-150">
             {Array.from({ length: 9 }).map((_, i) => (
-              <span key={i} className={`whitespace-nowrap ${FONT_CLASS[wm.font]}`}
-                style={{ color: wm.color, opacity: wm.opacity / 100, fontSize: Math.max(10, wm.size * 0.5) }}>
-                {label}
-              </span>
+              wm.type === 'logo' && wm.logoR2Key ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={i} src={logoUrl(wm.logoR2Key)} alt="" className="object-contain"
+                  style={{ width: wm.size, opacity: wm.opacity / 100 }} />
+              ) : (
+                <span key={i} className={`whitespace-nowrap ${FONT_CLASS[wm.font]}`}
+                  style={{ color: wm.color, opacity: wm.opacity / 100, fontSize: Math.max(10, wm.size * 0.5) }}>
+                  {label}
+                </span>
+              )
             ))}
           </div>
         </div>
       ) : (
         <div className={`absolute inset-0 flex p-3 ${POSITION_CLASS[wm.position]}`}>
           {wm.type === 'logo' ? (
-            <div className="rounded-lg bg-white/90 flex items-center justify-center font-black text-accent"
-              style={{ width: wm.size, height: wm.size * 0.6, opacity: wm.opacity / 100, fontSize: wm.size * 0.28 }}>
-              {label}
-            </div>
+            wm.logoR2Key ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logoUrl(wm.logoR2Key)} alt="" className="object-contain"
+                style={{ width: wm.size, opacity: wm.opacity / 100 }} />
+            ) : (
+              <div className="rounded-lg bg-white/90 flex items-center justify-center font-black text-accent"
+                style={{ width: wm.size, height: wm.size * 0.6, opacity: wm.opacity / 100, fontSize: wm.size * 0.28 }}>
+                LOGO
+              </div>
+            )
           ) : (
             <span className={`whitespace-nowrap ${FONT_CLASS[wm.font]}`}
               style={{ color: wm.color, opacity: wm.opacity / 100, fontSize: wm.size }}>
@@ -139,7 +133,31 @@ const POSITIONS: Position[] = ['top-left', 'top-center', 'top-right', 'center-le
 
 function WatermarkEditor({ initial, onSave, onCancel }: { initial: Watermark; onSave: (wm: Watermark) => void; onCancel: () => void }) {
   const [wm, setWm] = useState<Watermark>(initial)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const set = <K extends keyof Watermark>(key: K, value: Watermark[K]) => setWm(prev => ({ ...prev, [key]: value }))
+
+  const handleLogoFile = async (file: File | undefined) => {
+    if (!file) return
+    setUploading(true); setUploadError(null)
+    try {
+      const initRes = await fetch('/studio/api/admin/settings/watermark-logo-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type, sizeBytes: file.size }),
+      }).then(r => r.json())
+      if (!initRes.success) throw new Error(initRes.error ?? 'Could not prepare upload')
+
+      const putRes = await fetch(initRes.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file })
+      if (!putRes.ok) throw new Error('Upload to storage failed — please try again')
+
+      set('logoR2Key', initRes.r2Key)
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Logo upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -197,13 +215,22 @@ function WatermarkEditor({ initial, onSave, onCancel }: { initial: Watermark; on
         ) : (
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted">Logo image</label>
+            {wm.logoR2Key && (
+              <div className="flex items-center gap-2 bg-bg border border-border rounded-xl px-3 py-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logoUrl(wm.logoR2Key)} alt="" className="w-8 h-8 object-contain rounded bg-white/50" />
+                <span className="text-xs text-muted flex-1 truncate">Logo uploaded</span>
+              </div>
+            )}
             <label className="flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-border rounded-xl py-6 cursor-pointer hover:border-accent/50 transition-colors">
               <svg className="w-6 h-6 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
               </svg>
-              <span className="text-xs text-muted">Click to upload PNG (transparent background works best)</span>
-              <input type="file" accept="image/png" className="hidden" onChange={e => set('text', e.target.files?.[0]?.name.slice(0, 12).toUpperCase() ?? 'LOGO')} />
+              <span className="text-xs text-muted">{uploading ? 'Uploading…' : wm.logoR2Key ? 'Click to replace (PNG, transparent background works best)' : 'Click to upload PNG (transparent background works best)'}</span>
+              <input type="file" accept="image/*" className="hidden" disabled={uploading}
+                onChange={e => handleLogoFile(e.target.files?.[0])} />
             </label>
+            {uploadError && <p className="text-[10px] text-danger font-medium">{uploadError}</p>}
           </div>
         )}
 
@@ -250,8 +277,9 @@ function WatermarkEditor({ initial, onSave, onCancel }: { initial: Watermark; on
             className="flex-1 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted hover:text-text-primary hover:bg-border/40 transition-colors">
             Cancel
           </button>
-          <button onClick={() => onSave(wm)}
-            className="flex-1 py-2.5 rounded-xl bg-accent text-bg text-sm font-bold hover:bg-accent/90 transition-colors">
+          <button onClick={() => onSave(wm)} disabled={uploading || (wm.type === 'logo' && !wm.logoR2Key)}
+            title={wm.type === 'logo' && !wm.logoR2Key ? 'Upload a logo image first' : undefined}
+            className="flex-1 py-2.5 rounded-xl bg-accent text-bg text-sm font-bold hover:bg-accent/90 disabled:opacity-60 transition-colors">
             Save watermark
           </button>
         </div>
@@ -261,25 +289,61 @@ function WatermarkEditor({ initial, onSave, onCancel }: { initial: Watermark; on
       <div className="space-y-2">
         <label className="text-xs font-semibold text-muted uppercase tracking-wider">Live preview</label>
         <WatermarkPreview wm={wm} className="aspect-[4/3] w-full" />
-        <p className="text-[11px] text-muted text-center">Sample photo — real preview uses your own uploaded photos once wired up</p>
+        <p className="text-[11px] text-muted text-center">Sample photo — approximates the real Lambda-rendered result, not pixel-exact.</p>
       </div>
     </div>
   )
 }
 
 function blankWatermark(): Watermark {
-  return { id: `w${Date.now()}`, name: 'New Watermark', type: 'text', text: '© Your Studio', font: 'sans', color: '#ffffff', size: 24, opacity: 70, position: 'bottom-right', tiled: false, isDefault: false }
+  return {
+    id: crypto.randomUUID(), name: 'New Watermark', type: 'text', text: '© Your Studio',
+    font: 'sans', color: '#ffffff', size: 24, opacity: 70, position: 'bottom-right', tiled: false, isDefault: false,
+  }
 }
 
-// UI-only mockup — sample watermarks + editor, no persistence/upload yet.
 export default function WatermarkTab() {
-  const [watermarks, setWatermarks] = useState<Watermark[]>(SAMPLE_WATERMARKS)
+  const [watermarks, setWatermarks] = useState<Watermark[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [editing, setEditing] = useState<Watermark | null>(null)
+
+  useEffect(() => {
+    fetch('/studio/api/admin/settings/watermark-presets')
+      .then(r => r.json())
+      .then(res => { if (res.success) setWatermarks(res.data) })
+      .finally(() => setLoading(false))
+  }, [])
+
+  // Single funnel for every mutation (toggle default, add, edit, delete) —
+  // optimistic local update + persist, mirroring the try/catch/finally +
+  // error-surfacing pattern in WebsiteManager.tsx's save() this session, so
+  // a failed save is visible instead of silently not sticking (which is
+  // exactly the bug this whole feature used to have, back when it was a
+  // UI-only mockup with no persistence at all).
+  const persist = async (next: Watermark[]) => {
+    setWatermarks(next)
+    setSaving(true); setSaveError(null)
+    try {
+      const res = await fetch('/studio/api/admin/settings/watermark-presets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ watermarkPresets: next }),
+      }).then(r => r.json())
+      if (!res.success) { setSaveError(res.error ?? 'Could not save — please try again'); return }
+      setWatermarks(res.data)
+    } catch {
+      setSaveError('Could not save — check your connection and try again')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // Only one watermark can be the default at a time — setting one clears
   // the others; clicking the current default again clears it to none.
   const toggleDefault = (id: string) => {
-    setWatermarks(prev => prev.map(w => ({ ...w, isDefault: w.id === id ? !w.isDefault : false })))
+    persist(watermarks.map(w => ({ ...w, isDefault: w.id === id ? !w.isDefault : false })))
   }
 
   if (editing) {
@@ -288,23 +352,31 @@ export default function WatermarkTab() {
         initial={editing}
         onCancel={() => setEditing(null)}
         onSave={(wm) => {
-          setWatermarks(prev => prev.some(w => w.id === wm.id) ? prev.map(w => w.id === wm.id ? wm : w) : [...prev, wm])
+          persist(watermarks.some(w => w.id === wm.id) ? watermarks.map(w => w.id === wm.id ? wm : w) : [...watermarks, wm])
           setEditing(null)
         }}
       />
     )
   }
 
+  if (loading) {
+    return <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+  }
+
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted max-w-lg">
-        Create text or logo watermarks and preview exactly how they'll look before applying them to a gallery. You can build as many as you like and pick one per project later.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted max-w-lg">
+          Create text or logo watermarks and preview exactly how they'll look before applying them to a gallery. Mark one as default to have it pre-selected whenever you apply a watermark.
+        </p>
+        {saving && <span className="text-[10px] text-muted flex-shrink-0">Saving…</span>}
+      </div>
+      {saveError && <p className="text-xs text-danger">{saveError}</p>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {watermarks.map(wm => (
           <WatermarkCard key={wm.id} wm={wm}
             onEdit={() => setEditing(wm)}
-            onDelete={() => setWatermarks(prev => prev.filter(w => w.id !== wm.id))}
+            onDelete={() => persist(watermarks.filter(w => w.id !== wm.id))}
             onToggleDefault={() => toggleDefault(wm.id)}
           />
         ))}

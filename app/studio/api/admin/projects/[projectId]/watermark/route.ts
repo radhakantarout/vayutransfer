@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioQueryByIndex, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioQueryByPK, studioQueryByIndex, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
 import { runWithConcurrencyLimit } from '@/lib/studio/clientUpload'
-import type { MediaFile, StudioJob } from '@/types/studio'
+import type { MediaFile, StudioJob, Studio } from '@/types/studio'
 
 // Caps how many per-file Lambda invokes are in flight at once — mirrors the
 // same class of fix as the client-side bulk-upload concurrency cap. Without
@@ -33,9 +33,26 @@ export async function POST(
     const { projectId } = params
     const studioId = auth.studioId!
     const body = await req.json().catch(() => ({}))
-    const { fileIds, watermarkEnabled } = body as { fileIds?: string[]; watermarkEnabled?: boolean }
+    const { fileIds, watermarkEnabled, presetId } = body as { fileIds?: string[]; watermarkEnabled?: boolean; presetId?: string }
     if (typeof watermarkEnabled !== 'boolean') {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    }
+
+    // Resolved ONCE for the whole batch (not re-fetched per file) — explicit
+    // presetId from the caller, or the studio's own isDefault preset. Only
+    // needed when actually applying a watermark; removing one doesn't care
+    // which design was last used.
+    let preset: import('@/types/studio').WatermarkPreset | undefined
+    if (watermarkEnabled) {
+      const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      const presets = studio?.watermarkPresets ?? []
+      preset = presetId ? presets.find(p => p.id === presetId) : presets.find(p => p.isDefault)
+      if (!preset) {
+        return NextResponse.json({
+          success: false, error: 'NO_WATERMARK_PRESET',
+          message: presetId ? 'That watermark no longer exists' : 'Create a watermark first in Settings → Watermark',
+        }, { status: 400 })
+      }
     }
 
     const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
@@ -80,7 +97,7 @@ export async function POST(
     const job: StudioJob = {
       jobId, jobType: 'WATERMARK', status: 'PROCESSING',
       projectId, studioId,
-      inputPayload: { triggeredBy: auth.userId, watermarkEnabled },
+      inputPayload: { triggeredBy: auth.userId, watermarkEnabled, presetId: preset?.id },
       outputPayload: { processed: 0, total: eligible.length },
       createdAt: now, ttl,
     }
@@ -102,6 +119,7 @@ export async function POST(
           sourceKey: f.r2Key ?? f.s3Key!,
           sourceBackend: f.r2Key ? 'R2' : 'S3',
           watermarkEnabled,
+          preset,
           fileType: f.fileType,
           previewKeySuffix: `wm-${Date.now()}`,
           jobId,

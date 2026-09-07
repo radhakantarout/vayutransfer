@@ -26,7 +26,8 @@ import { useExpandedGrid } from '@/components/studio/ExpandedGridContext'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
 import { useUnsavedChanges } from '@/components/studio/UnsavedChangesContext'
 import { useJobTracker, type TrackedJob } from '@/lib/studio/useJobTracker'
-import { startBulkWatermark } from '@/lib/studio/watermarkClient'
+import { useWatermarkModal } from '@/components/studio/WatermarkModalContext'
+import WatermarkModal from '@/components/studio/WatermarkModal'
 import BulkJobProgressToast from '@/components/studio/BulkJobProgressToast'
 import JobConfirmDialog from '@/components/studio/JobConfirmDialog'
 
@@ -241,7 +242,7 @@ function readStudioUiCookie(): { role?: string; name?: string; email?: string } 
 function ClientBranch({
   clientName, projects, coverUrl, selectedIds, onToggle, onAddEvent, onEditEvent,
   onDeleteEvents, onQuickShare, onAISort, onEditClient, onCancelSchedule, onReorder,
-  onBulkWatermark, bulkWatermarking, selectedPhotoCount,
+  onOpenWatermarkModal, selectedPhotoCount,
 }: {
   clientName: string
   projects: StudioProject[]
@@ -256,8 +257,7 @@ function ClientBranch({
   onEditClient: (projects: StudioProject[]) => void
   onCancelSchedule: (p: StudioProject) => void
   onReorder: (orderedProjectIds: string[]) => void
-  onBulkWatermark: (watermarkEnabled: boolean) => void
-  bulkWatermarking: boolean
+  onOpenWatermarkModal: () => void
   selectedPhotoCount: number
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
@@ -356,25 +356,13 @@ function ClientBranch({
           same treatment as "+ Add more events" on the My Projects cards */}
       <div className="flex items-center gap-4 px-1 mb-2">
         {anyEventOpen && (
-          <PhotoActionsMenu
-            align="left"
-            trigger={
-              <span className={`flex items-center gap-1 text-[11px] font-bold cursor-pointer transition-colors flex-shrink-0 ${bulkWatermarking ? 'text-accent/50' : 'text-accent hover:text-accent/80'}`}>
-                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {bulkWatermarking ? 'Watermarking…' : 'Watermark'}
-              </span>
-            }
-            actions={[
-              { label: selectedPhotoCount > 0 ? `Apply to ${selectedPhotoCount} selected` : 'Apply to all photos',
-                icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
-                onClick: () => onBulkWatermark(true) },
-              { label: selectedPhotoCount > 0 ? `Remove from ${selectedPhotoCount} selected` : 'Remove from all photos',
-                icon: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>,
-                onClick: () => onBulkWatermark(false) },
-            ]}
-          />
+          <button onClick={onOpenWatermarkModal}
+            className="flex items-center gap-1 text-[11px] font-bold cursor-pointer transition-colors flex-shrink-0 text-accent hover:text-accent/80">
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {selectedPhotoCount > 0 ? `Watermark (${selectedPhotoCount} selected)…` : 'Watermark…'}
+          </button>
         )}
         <button onClick={() => onAddEvent(clientName)}
           className="text-[11px] font-bold text-accent hover:text-accent/80 transition-colors flex-shrink-0">
@@ -552,12 +540,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [currentActiveTab, setCurrentActiveTab] = useState<ActiveTab>('photos')
   // Cross-event photo selection: projectId → Set<fileId>
   const [photoSelections, setPhotoSelections] = useState<Map<string, Set<string>>>(new Map())
-  const [bulkWatermarking, setBulkWatermarking] = useState(false)
   // Persistent background-job tracker (watermark + AI sorting progress),
   // instantiated exactly once here so it survives navigating between
   // events/tabs — see lib/studio/useJobTracker.ts.
   const jobTracker = useJobTracker()
-  const [pendingWatermarkConfirm, setPendingWatermarkConfirm] = useState<{ watermarkEnabled: boolean } | null>(null)
+  const { openWatermarkModal } = useWatermarkModal()
   // AI-sorting cancel needs one extra confirmation step (already-charged
   // credits can't be un-spent) that plain watermark cancel doesn't — see
   // handleToastCancelRequest below.
@@ -895,52 +882,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Moved here from EventSection's header — same routes, just triggered from
   // the sidebar's project card now instead of an always-visible toolbar
-  // button (one less button cluttering the gallery header). Targets whatever
-  // photos are selected in the grid, or every photo across the currently
-  // open events when nothing's selected.
-  //
-  // Two-step: the sidebar menu click only opens a confirmation (so a stray
-  // click can't kick off a run nobody meant to start); the actual POST +
-  // job registration happens in confirmBulkWatermark below.
-  const handleBulkWatermark = (watermarkEnabled: boolean) => setPendingWatermarkConfirm({ watermarkEnabled })
-
-  const confirmBulkWatermark = async () => {
-    if (!pendingWatermarkConfirm) return
-    const { watermarkEnabled } = pendingWatermarkConfirm
-    setPendingWatermarkConfirm(null)
-    setBulkWatermarking(true)
-    const targets = totalPhotoSelected > 0
-      ? Array.from(photoSelections.entries()).map(([pid, ids]) => ({ projectId: pid, fileIds: Array.from(ids) }))
-      : selectedProjects.map(p => ({ projectId: p.projectId }))
-    const { started, alreadyRunning, failed } = await startBulkWatermark(targets, watermarkEnabled)
-    setBulkWatermarking(false)
-    // JOB_RUNNING/failures used to be swallowed silently here — surfaced
-    // now so a stuck run-lock (or a real failure) is visible instead of
-    // looking like nothing happened. For "already running", re-attach to
-    // that job's own row in the tracker instead of dead-ending on a plain
-    // message — the admin gets the same live progress + Cancel they'd have
-    // seen had they not navigated away in the first place.
-    if (alreadyRunning.length > 0) {
-      setToast(`Watermarking is already running for ${alreadyRunning.length} of the selected event${alreadyRunning.length !== 1 ? 's' : ''} — showing its progress below.`)
-    } else if (failed > 0) {
-      setToast(`Couldn't start watermarking for ${failed} event${failed !== 1 ? 's' : ''}.`)
-    }
-    const labelFor = (projectId: string) => {
-      const proj = projects.find(p => p.projectId === projectId)
-      return proj ? (proj.eventType ?? '').replace(/_/g, ' ') || proj.clientName : 'Watermarking'
-    }
-    started.forEach(s => jobTracker.registerJob({
-      jobId: s.jobId, jobType: 'WATERMARK', projectId: s.projectId,
-      label: labelFor(s.projectId), total: s.total,
-    }))
-    alreadyRunning.forEach(a => jobTracker.registerJob({
-      jobId: a.jobId, jobType: 'WATERMARK', projectId: a.projectId,
-      label: labelFor(a.projectId), total: 0,
-    }))
-    // Actual reload now happens off the job-completion watcher below, not a
-    // blind timeout — a fixed 3s guess is exactly what let some photos'
-    // updated watermark status get missed whenever a batch legitimately
-    // took longer than that to finish.
+  // button. Opens the shared WatermarkModal (WatermarkModalContext) scoped
+  // to this specific client's own projects/selection — the modal itself
+  // handles the apply/remove × all/selected choice, the preset picker, the
+  // warning, and starting the job, replacing what used to be a 2-item
+  // dropdown + a separate JobConfirmDialog here.
+  const openWatermarkModalForClient = (clientProjects: StudioProject[]) => {
+    const clientProjectIds = new Set(clientProjects.map(p => p.projectId))
+    const relevantSelections = Array.from(photoSelections.entries()).filter(([pid]) => clientProjectIds.has(pid))
+    openWatermarkModal({
+      label: clientProjects[0]?.clientName ?? 'Watermark',
+      projectIds: clientProjects.map(p => p.projectId),
+      selectedTargets: relevantSelections.length > 0
+        ? relevantSelections.map(([pid, ids]) => ({ projectId: pid, fileIds: Array.from(ids) }))
+        : undefined,
+    })
   }
 
   // AI-sorting cancel needs an extra "already charged" acknowledgment;
@@ -1259,8 +1215,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       onEditClient={setEditClientModalProjects}
                       onCancelSchedule={handleCancelSchedule}
                       onReorder={handleReorderEvents}
-                      onBulkWatermark={handleBulkWatermark}
-                      bulkWatermarking={bulkWatermarking}
+                      onOpenWatermarkModal={() => openWatermarkModalForClient(clientProjects.filter(p => !p.isPlaceholder))}
                       selectedPhotoCount={totalPhotoSelected}
                     />
                   ))
@@ -1301,23 +1256,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Bookings mode has no tree yet either — unchanged from before. */}
         {activeProduct === 'bookings' && <div className="flex-1" />}
 
-        {/* Pinned bottom group — Settings / Storage / AI-usage. Profile now
-            lives in the top header row instead, next to the brand name.
-            One divider separating it from the scrollable area above; no
-            lines splitting the items apart, just spacing between them. */}
+        {/* Pinned bottom group — Storage / AI-usage. Settings moved into the
+            profile menu (ProfileMenu.tsx) so it's reachable from one place
+            regardless of sidebar collapsed/expanded state; Profile itself
+            lives in the top header row, next to the brand name. */}
         <div className="border-t border-border flex-shrink-0 px-2 py-1 space-y-1">
-          {/* Opens as a popup on top of whatever page the admin is already
-              on (e.g. mid-way through an event gallery) instead of
-              navigating away and losing that context. */}
-          <button onClick={() => openSettings('general')}
-            className="w-full flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-medium text-muted hover:text-text-primary hover:bg-border/50 transition-colors">
-            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            Settings
-          </button>
-
           {stats && (
             <div className="px-2.5 py-1 rounded-lg bg-border/25">
               <div className="flex items-center justify-between mb-0.5">
@@ -1669,16 +1612,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onDismiss={jobTracker.dismiss}
       />
 
-      {pendingWatermarkConfirm && (
-        <JobConfirmDialog
-          icon={pendingWatermarkConfirm.watermarkEnabled ? '🖼️' : '✂️'}
-          title={pendingWatermarkConfirm.watermarkEnabled ? 'Apply watermark?' : 'Remove watermark?'}
-          message={`The selected ${totalPhotoSelected > 0 ? `${totalPhotoSelected} photo${totalPhotoSelected !== 1 ? 's' : ''}` : 'photos'} will be temporarily unavailable for other actions (like delete or move) while watermarking is in progress. You'll see live progress in the bottom-right corner and can cancel anytime.`}
-          confirmLabel={pendingWatermarkConfirm.watermarkEnabled ? 'Apply Watermark' : 'Remove Watermark'}
-          onConfirm={confirmBulkWatermark}
-          onCancel={() => setPendingWatermarkConfirm(null)}
-        />
-      )}
+      <WatermarkModal onOpenSettings={openSettings} registerJob={jobTracker.registerJob} />
 
       {pendingCancelJob && (
         <JobConfirmDialog
