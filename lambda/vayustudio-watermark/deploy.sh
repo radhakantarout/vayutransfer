@@ -14,19 +14,20 @@ fi
 R2_ENDPOINT_VAL="${STUDIO_R2_ENDPOINT:-}"
 R2_KEY_VAL="${R2_ACCESS_KEY_ID:-}"
 R2_SECRET_VAL="${R2_SECRET_ACCESS_KEY:-}"
-# Default keyed off FUNCTION_NAME, not a hardcoded test URL — a real
-# production incident happened here: deploying to the bare "vayustudio-
-# watermark" (production) function with no NEXT_PUBLIC_STUDIO_PREVIEW_URL
-# in .env.local silently fell back to the test domain and overwrote
-# production's PREVIEW_BASE_URL, since update-function-configuration
-# REPLACES the whole env set. Now the fallback matches whichever function
-# is actually being deployed.
+# Keyed off FUNCTION_NAME, and NOT sourced from .env.local for production —
+# a real incident happened twice here: .env.local's NEXT_PUBLIC_STUDIO_
+# PREVIEW_URL is the TEST domain (that's what local dev needs to point at),
+# so the old "${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-$DEFAULT}" fallback always
+# picked the test value the moment .env.local defined it at all — which it
+# always does — silently overwriting production's PREVIEW_BASE_URL every
+# single production deploy, since update-function-configuration REPLACES
+# the whole env set. Production now hardcodes its own URL unconditionally;
+# only a -test deploy honors the .env.local override.
 if [[ "$FUNCTION_NAME" == *-test ]]; then
-  DEFAULT_PREVIEW_URL="https://previews-test.test.vayutransfer.com"
+  PREVIEW_URL_VAL="${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-https://previews-test.test.vayutransfer.com}"
 else
-  DEFAULT_PREVIEW_URL="https://previews.vayustudios.com"
+  PREVIEW_URL_VAL="https://previews.vayustudios.com"
 fi
-PREVIEW_URL_VAL="${NEXT_PUBLIC_STUDIO_PREVIEW_URL:-$DEFAULT_PREVIEW_URL}"
 S3_BUCKET_VAL="${STUDIO_S3_BUCKET:-vayutransfer-studio-originals}"
 # Must match whichever environment FUNCTION_NAME targets — the bulk-job
 # progress counter (StudioJob rows) lives in this table. Left unset (or
