@@ -12,7 +12,6 @@ import MoveCopyPhotoModal from '@/components/studio/MoveCopyPhotoModal'
 import StartSortingModal, { type FindSimilarResult } from '@/components/studio/StartSortingModal'
 import QuickShareModal from '@/components/studio/QuickShareModal'
 import UploadModal from '@/components/studio/UploadModal'
-import RawTransfersTab from '@/components/studio/transfers/RawTransfersTab'
 import PhotoScopeIcon from '@/components/studio/PhotoScopeIcon'
 import Tooltip from '@/components/studio/Tooltip'
 import { PHOTO_SCOPE_LABEL, PHOTO_SCOPE_ORDER, resolveScopeFileIds, type PhotoScope } from '@/lib/studio/photoScope'
@@ -136,7 +135,7 @@ function sortFiles(files: MediaFile[], mode: SortMode): MediaFile[] {
 }
 
 type DeleteMode = 'selected' | 'all' | null
-export type ActiveTab  = 'photos' | 'faces' | 'selections' | 'transfers'
+export type ActiveTab  = 'photos' | 'faces' | 'selections'
 
 interface FaceStatus {
   totalPhotos: number; indexedPhotos: number; pendingPhotos: number
@@ -287,7 +286,6 @@ export default function EventSection({
     if (initialTab) return initialTab
     if (pathname.endsWith('/faces'))      return 'faces'
     if (pathname.endsWith('/selections')) return 'selections'
-    if (pathname.endsWith('/transfers'))  return 'transfers'
     return 'photos'
   })
   // Reports on mount too (not just switches) so the parent's persisted
@@ -341,10 +339,6 @@ export default function EventSection({
   const [editUploadStates, setEditUploadStates] = useState<Map<string, EditUploadState>>(new Map())
   const editFileInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
   const needsEditingRef   = useRef<HTMLDivElement>(null)
-
-  // ── Raw Transfers tab ──────────────────────────────────────
-  // All state/data-fetching for this tab now lives in RawTransfersTab.tsx —
-  // see its render below.
 
   // ── Admin photo preview (lightbox) ─────────────────────────
   // 'selected' = the floating-pill "Preview" flow (only currently-selected
@@ -1860,7 +1854,7 @@ export default function EventSection({
                 onClick: () => { switchTab('photos'); toggleFilterScope(scope) },
               }))}
             />
-            {(['faces', 'selections', 'transfers'] as ActiveTab[]).map(tab => (
+            {(['faces', 'selections'] as ActiveTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => switchTab(tab)}
@@ -1873,7 +1867,7 @@ export default function EventSection({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.344.344a.75.75 0 01-.53.22H9.75a.75.75 0 01-.53-.22l-.344-.344z" />
                   </svg>
                 )}
-                {tab === 'faces' ? 'AI Face' : tab === 'selections' ? 'Selections' : 'Raw Transfers'}
+                {tab === 'faces' ? 'AI Face' : 'Selections'}
               </button>
             ))}
           </div>
@@ -2828,11 +2822,6 @@ export default function EventSection({
               </>
             )}
           </div>
-        )}
-
-        {/* ── Raw Transfers tab ─────────────────────────────────── */}
-        {activeTab === 'transfers' && (
-          <RawTransfersTab project={project} activeSourceProjects={activeSourceProjects} />
         )}
 
       </div>{/* end card */}

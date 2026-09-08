@@ -55,7 +55,7 @@ export const STATUS_META: Record<DerivedStatus, { label: string; className: stri
   UPLOADING:      { label: 'Uploading…',     className: 'text-accent bg-accent/10 border-accent/20' },
 }
 
-// Shared between TransferActionBar (where a send is kicked off) and
+// Shared between RawTransferSend (where a send is kicked off) and
 // TransferDetailPanel (which shows the same live tracker if the admin has
 // that specific transfer's detail panel open while it's the one uploading).
 // transferId is undefined only in the brief window between clicking Send

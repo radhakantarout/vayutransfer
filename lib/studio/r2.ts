@@ -55,6 +55,13 @@ export function getStudioR2TransferKey(studioId: string, projectId: string, tran
   return `studios/${studioId}/projects/${projectId}/transfers/${transferId}/${filename}`
 }
 
+// One level deeper than getStudioR2TransferKey — a batch transfer's own
+// child files, each keyed by their own fileId under the parent transferId so
+// files with the same name (different folders) never collide.
+export function getStudioR2TransferFileKey(studioId: string, projectId: string, transferId: string, fileId: string, filename: string) {
+  return `studios/${studioId}/projects/${projectId}/transfers/${transferId}/${fileId}/${filename}`
+}
+
 export async function initiateStudioR2MultipartUpload(r2Key: string, contentType: string): Promise<string> {
   const res = await studioR2.send(new CreateMultipartUploadCommand({
     Bucket: STUDIO_R2_ORIGINAL_BUCKET,

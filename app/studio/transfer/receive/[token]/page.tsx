@@ -129,9 +129,9 @@ export default function TransferReceivePage() {
                 ${dragOver ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/50'}`}
             >
               <div className="text-sm text-muted">Drag and drop, or click to choose a file</div>
-              <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+              <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
             </div>
-            <div className="text-xs text-muted">Secure link · No login required</div>
+            <div className="text-xs text-muted">Photos and videos only · Secure link · No login required</div>
           </>
         )}
 

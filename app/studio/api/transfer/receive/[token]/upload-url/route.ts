@@ -33,6 +33,15 @@ export async function POST(
     if (partCount < 1 || partCount > 10000) {
       return NextResponse.json({ success: false, error: 'INVALID_PART_COUNT' }, { status: 400 })
     }
+    // Raw Transfer is images/video only. This is the one direction where the
+    // server check is the *only* enforcement — there's no VayuStudios admin
+    // UI in front of this anonymous uploader to steer their file picker at all.
+    if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+      return NextResponse.json({
+        success: false, error: 'INVALID_FILE_TYPE',
+        message: 'Only photos and videos can be sent here.',
+      }, { status: 400 })
+    }
 
     // The uploader here is anonymous (no JWT) — gate against the *studio's*
     // quota, not theirs. A studio that's out of storage shouldn't be able

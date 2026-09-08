@@ -4,11 +4,10 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
 import { initiateStudioR2MultipartUpload, getStudioR2PartPresignedUrls, getStudioR2TransferKey } from '@/lib/studio/r2'
 import { syncBillingCycle, checkStorageAvailable } from '@/lib/studio/quota'
-import { transferLinkExpirySeconds, DEFAULT_TRANSFER_EXPIRY_DAYS } from '@/lib/studio/transferConfig'
+import { DEFAULT_TRANSFER_EXPIRY_DAYS, TRANSFER_EXTEND_DAY_OPTIONS } from '@/lib/studio/transferConfig'
 import type { StudioProject, StudioTransfer, Studio } from '@/types/studio'
 
 const studioUrl = () => process.env.NEXT_PUBLIC_STUDIO_URL ?? 'https://studio.vayutransfer.com'
-const expirySeconds = transferLinkExpirySeconds
 
 // GET — list all transfers (both directions) for the tab
 export async function GET(
@@ -57,14 +56,21 @@ export async function POST(
     }
 
     const body = await req.json()
-    const { direction, note } = body
+    const { direction, note, expiryDays: requestedExpiryDays } = body
     if (direction !== 'SEND' && direction !== 'RECEIVE') {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
+    // Optional initial expiry choice — same allowed set the Extend popover
+    // already offers (3/7/15 days), just picked once up front instead of
+    // always starting at the env-configured default and needing an
+    // immediate Extend to get anywhere else.
+    const expiryDays: number = (TRANSFER_EXTEND_DAY_OPTIONS as readonly number[]).includes(requestedExpiryDays)
+      ? requestedExpiryDays
+      : DEFAULT_TRANSFER_EXPIRY_DAYS
 
     const transferId = randomUUID()
     const shareToken = randomBytes(32).toString('hex')
-    const shareExpiresAt = new Date(Date.now() + expirySeconds() * 1000).toISOString()
+    const shareExpiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
     const now = new Date().toISOString()
 
     if (direction === 'SEND') {
@@ -74,6 +80,16 @@ export async function POST(
       }
       if (partCount < 1 || partCount > 10000) {
         return NextResponse.json({ success: false, error: 'INVALID_PART_COUNT' }, { status: 400 })
+      }
+      // Raw Transfer is images/video only — unlike VayuTransfer, which is a
+      // general-purpose file product. The client's <input accept> already
+      // steers the picker, but that's trivially bypassable, so this is the
+      // check that actually matters.
+      if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+        return NextResponse.json({
+          success: false, error: 'INVALID_FILE_TYPE',
+          message: 'Raw Transfer only accepts photos and videos.',
+        }, { status: 400 })
       }
 
       let studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
@@ -98,7 +114,7 @@ export async function POST(
         filename, mimeType, sizeBytes, r2Key,
         status: 'UPLOADING',
         shareToken, shareExpiresAt,
-        expiryDays: DEFAULT_TRANSFER_EXPIRY_DAYS,
+        expiryDays,
         downloadCount: 0,
         importedToGallery: false,
         note,
@@ -122,7 +138,7 @@ export async function POST(
       projectId, transferId, studioId, direction: 'RECEIVE',
       status: 'PENDING',
       shareToken, shareExpiresAt,
-      expiryDays: DEFAULT_TRANSFER_EXPIRY_DAYS,
+      expiryDays,
       downloadCount: 0,
       importedToGallery: false,
       note,

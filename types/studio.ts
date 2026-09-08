@@ -336,6 +336,34 @@ export interface StudioTransfer {
   activeUploadId?: string
   lastProgressCheckAt?: string
   lastProgressUploadedBytes?: number
+  // SEND-direction, multi-file batches only — unset means this record's own
+  // scalar filename/mimeType/sizeBytes/r2Key fields above are authoritative
+  // (today's single-file shape, untouched). Set means "batch" — the real
+  // per-file data lives in TABLES.transferFiles, keyed by this transferId as
+  // their own PK. Always go through lib/studio/transferBatch.ts#getTransferFiles
+  // rather than branching on this field directly — same convention as
+  // VayuTransfer's own Transfer.fileCount.
+  fileCount?: number
+}
+
+export type TransferFileStatus = 'UPLOADING' | 'UPLOADED' | 'FAILED'
+
+// One file within a SEND batch transfer (StudioTransfer.fileCount set).
+// Never created for a single-file SEND or for any RECEIVE transfer — those
+// keep using StudioTransfer's own scalar fields directly.
+export interface StudioTransferFile {
+  transferId: string   // PK — the parent batch's own transferId
+  fileId: string        // SK
+  filename: string
+  relativePath: string
+  mimeType: string
+  sizeBytes: number
+  r2Key: string
+  status: TransferFileStatus
+  uploadId?: string
+  downloadCount: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Selection {

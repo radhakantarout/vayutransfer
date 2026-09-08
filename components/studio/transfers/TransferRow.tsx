@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { StudioTransfer } from '@/types/studio'
+import type { StudioProject, StudioTransfer } from '@/types/studio'
 import PhotoActionsMenu from '@/components/studio/PhotoActionsMenu'
 import Tooltip from '@/components/studio/Tooltip'
 import TransferDestinationPicker from './TransferDestinationPicker'
@@ -17,15 +17,16 @@ type Popover = 'extend' | 'reshare' | 'delete' | 'download' | null
 
 interface Props {
   transfer: StudioTransfer
-  projectId: string
-  clientName: string
-  clientEmail: string
-  clientPhone: string
+  // The transfer's own event/client — resolved once by the parent (studio-
+  // wide list means every row can belong to a different one) rather than
+  // assumed fixed for the whole list, the way the old single-event tab did.
+  project: StudioProject
   onChanged: () => void
   onOpenDetail: () => void
 }
 
-export default function TransferRow({ transfer: t, projectId, clientName, clientEmail, clientPhone, onChanged, onOpenDetail }: Props) {
+export default function TransferRow({ transfer: t, project, onChanged, onOpenDetail }: Props) {
+  const { projectId, clientName, clientEmail, clientPhone } = project
   const [popover, setPopover] = useState<Popover>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -94,7 +95,10 @@ export default function TransferRow({ transfer: t, projectId, clientName, client
 
   const overflowActions = [
     { label: 'Move to event', icon: <MoveIcon className="w-3.5 h-3.5" />, onClick: () => setPicker('move') },
-    ...(t.status === 'READY'
+    // Copy byte-duplicates a single r2Key — not yet supported for a batch
+    // transfer (no single r2Key to copy), so it's hidden there rather than
+    // shown and failing every time.
+    ...(t.status === 'READY' && !t.fileCount
       ? [{ label: 'Copy to event', icon: <CopyToIcon className="w-3.5 h-3.5" />, onClick: () => setPicker('copy') }]
       : []),
     ...(!t.importedToGallery
@@ -127,7 +131,10 @@ export default function TransferRow({ transfer: t, projectId, clientName, client
               )}
             </div>
             <div className="text-sm font-semibold text-text-primary mt-1 truncate max-w-[240px]">
-              {t.filename ?? (t.direction === 'RECEIVE' ? 'Waiting for upload…' : '—')}
+              {t.fileCount ? `${t.fileCount} files` : t.filename ?? (t.direction === 'RECEIVE' ? 'Waiting for upload…' : '—')}
+            </div>
+            <div className="text-[11px] text-muted truncate max-w-[240px]">
+              {clientName} · {(project.eventType ?? '').replace(/_/g, ' ')}
             </div>
             <div className="flex items-center gap-2 text-[11px] text-muted mt-0.5 flex-wrap">
               <span>{fmtBytes(t.sizeBytes)}</span>
