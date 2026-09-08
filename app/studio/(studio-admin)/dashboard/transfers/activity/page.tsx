@@ -1,0 +1,26 @@
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { jwtVerify } from 'jose'
+import RawTransferActivity from '@/components/studio/transfers/RawTransferActivity'
+
+async function getAuth() {
+  try {
+    const token = (await cookies()).get('studio_token')?.value
+    if (!token) return null
+    const secret = new TextEncoder().encode(process.env.STUDIO_JWT_SECRET!)
+    const { payload } = await jwtVerify(token, secret)
+    return payload as { userId: string; role: string; studioId?: string }
+  } catch { return null }
+}
+
+export default async function TransfersActivityPage() {
+  const auth = await getAuth()
+  if (!auth || !['ADMIN', 'OWNER'].includes(auth.role)) redirect('/studio/login')
+  if (!auth.studioId) redirect('/studio/login')
+
+  return (
+    <div className="p-6">
+      <RawTransferActivity />
+    </div>
+  )
+}

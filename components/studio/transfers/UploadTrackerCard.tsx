@@ -2,7 +2,7 @@
 
 // The live "in-progress upload" tracker — icon, bytes/speed/ETA, percent
 // bar, and a cancel button with a warning confirm. Shared between
-// TransferActionBar (where a send is kicked off) and TransferDetailPanel
+// RawTransferSend (where a send is kicked off) and TransferDetailPanel
 // (shown there too if the admin has that specific transfer's detail panel
 // open while it's the one actively uploading).
 

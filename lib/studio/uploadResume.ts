@@ -12,6 +12,10 @@ export interface UploadResumeEntry {
   filename: string
   size: number
   lastModified: number
+  // Set only when fileId is a batch transfer's own child file id rather
+  // than a standalone transferId/MediaFile fileId — lets the caller know
+  // which nested route to resume against (Raw Transfer batch children only).
+  batchTransferId?: string
 }
 
 function resumeKey(projectId: string, filename: string, size: number, lastModified: number): string {

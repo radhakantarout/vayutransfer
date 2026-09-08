@@ -1,40 +1,32 @@
 'use client'
 
-// Slide-in detail panel — rendered as a sibling flex column by RawTransfersTab
-// (which shrinks the list to make room, never covers it). Same action set as
-// the row, but always visible here rather than hover-gated, since this is
-// the "I clicked in for detail" context.
+// Slide-in detail panel — rendered as a sibling flex column by
+// RawTransferManager (which shrinks the list to make room, never covers
+// it). Same action set as the row, but always visible here rather than
+// hover-gated, since this is the "I clicked in for detail" context.
 
-import { useState } from 'react'
-import type { StudioTransfer } from '@/types/studio'
+import { useEffect, useState } from 'react'
+import type { StudioProject, StudioTransfer, StudioTransferFile } from '@/types/studio'
 import TransferPreview from './TransferPreview'
 import TransferDestinationPicker from './TransferDestinationPicker'
 import TransferExtendPopover from './TransferExtendPopover'
 import TransferResharePopover from './TransferResharePopover'
 import TransferDeleteConfirm from './TransferDeleteConfirm'
-import UploadTrackerCard from './UploadTrackerCard'
 import ReceiveProgressCard from './ReceiveProgressCard'
 import { CopyLinkIcon, ReshareIcon, ExtendIcon, MoveIcon, CopyToIcon, DeleteIcon, ImportIcon, CloseIcon } from './TransferIcons'
-import { fmtBytes, fmtExact, fmtRelative, derivedStatus, STATUS_META, type SendProgress } from './transferUtils'
+import { fmtBytes, fmtExact, fmtRelative, derivedStatus, STATUS_META } from './transferUtils'
 
 type Popover = 'extend' | 'reshare' | 'delete' | null
 
 interface Props {
   transfer: StudioTransfer
-  projectId: string
-  clientName: string
-  clientEmail: string
-  clientPhone: string
+  project: StudioProject
   onClose: () => void
   onChanged: () => void
-  // Set only when this specific transfer is the one actively being uploaded
-  // in this browser session right now (matched by transferId in the parent)
-  // — shows the same live tracker here as the action bar, per request.
-  sendProgress?: SendProgress | null
-  onCancelSend?: () => void
 }
 
-export default function TransferDetailPanel({ transfer: t, projectId, clientName, clientEmail, clientPhone, onClose, onChanged, sendProgress, onCancelSend }: Props) {
+export default function TransferDetailPanel({ transfer: t, project, onClose, onChanged }: Props) {
+  const { projectId, clientName, clientEmail, clientPhone } = project
   const [popover, setPopover] = useState<Popover>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -45,6 +37,14 @@ export default function TransferDetailPanel({ transfer: t, projectId, clientName
   const meta = STATUS_META[status]
   const canShare = t.status === 'READY' || (t.direction === 'RECEIVE' && t.status === 'PENDING')
   const isExpired = status === 'EXPIRED'
+
+  const [batchFiles, setBatchFiles] = useState<StudioTransferFile[] | null>(null)
+  useEffect(() => {
+    if (!t.fileCount) { setBatchFiles(null); return }
+    fetch(`/studio/api/admin/projects/${projectId}/transfers/${t.transferId}/files`).then(r => r.json())
+      .then(res => { if (res.success) setBatchFiles(res.data) })
+      .catch(() => {})
+  }, [t.fileCount, t.transferId, projectId])
 
   const api = (path: string, init?: RequestInit) =>
     fetch(`/studio/api/admin/projects/${projectId}/transfers/${t.transferId}${path}`, init).then(r => r.json())
@@ -112,10 +112,13 @@ export default function TransferDetailPanel({ transfer: t, projectId, clientName
       </div>
 
       <div className="p-4 space-y-4">
-        {sendProgress ? (
-          <UploadTrackerCard sendProgress={sendProgress} onCancelSend={onCancelSend ?? (() => {})} />
-        ) : t.direction === 'RECEIVE' && t.status === 'UPLOADING' ? (
+        {t.direction === 'RECEIVE' && t.status === 'UPLOADING' ? (
           <ReceiveProgressCard transfer={t} projectId={projectId} onChanged={onChanged} />
+        ) : t.fileCount ? (
+          <div className="aspect-video bg-bg border border-border rounded-xl flex flex-col items-center justify-center gap-2 text-muted">
+            <span className="text-2xl">📁</span>
+            <p className="text-xs">{t.fileCount} files</p>
+          </div>
         ) : (
           <TransferPreview transfer={t} projectId={projectId} />
         )}
@@ -134,15 +137,38 @@ export default function TransferDetailPanel({ transfer: t, projectId, clientName
           {t.importedToGallery && <span className="text-[10px] font-bold text-success">✓ In gallery</span>}
         </div>
 
-        <div className="text-sm font-semibold text-text-primary break-all">{t.filename ?? 'Waiting for upload…'}</div>
+        <div className="text-sm font-semibold text-text-primary break-all">
+          {t.fileCount ? `${t.fileCount} files` : t.filename ?? 'Waiting for upload…'}
+        </div>
+        <div className="text-xs text-muted -mt-2">{clientName} · {(project.eventType ?? '').replace(/_/g, ' ')}</div>
 
         <dl className="text-xs space-y-1.5">
           <div className="flex justify-between"><dt className="text-muted">Size</dt><dd className="text-text-primary font-medium">{fmtBytes(t.sizeBytes)}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted">Type</dt><dd className="text-text-primary font-medium">{t.mimeType ?? '—'}</dd></div>
+          {!t.fileCount && (
+            <div className="flex justify-between"><dt className="text-muted">Type</dt><dd className="text-text-primary font-medium">{t.mimeType ?? '—'}</dd></div>
+          )}
           <div className="flex justify-between"><dt className="text-muted">Created</dt><dd className="text-text-primary font-medium" title={fmtExact(t.createdAt)}>{fmtRelative(t.createdAt)}</dd></div>
           <div className="flex justify-between"><dt className="text-muted">Expiry</dt><dd className="text-text-primary font-medium" title={fmtExact(t.shareExpiresAt)}>{fmtExact(t.shareExpiresAt)}</dd></div>
           {t.note && <div className="flex justify-between gap-2"><dt className="text-muted flex-shrink-0">Note</dt><dd className="text-text-primary font-medium italic text-right">"{t.note}"</dd></div>}
         </dl>
+
+        {t.fileCount && (
+          <div className="border-t border-border pt-3">
+            <div className="text-xs font-bold text-text-primary mb-1.5">Files</div>
+            {batchFiles === null ? (
+              <div className="flex justify-center py-3"><div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+            ) : (
+              <div className="space-y-1 max-h-[180px] overflow-y-auto">
+                {batchFiles.map(f => (
+                  <div key={f.fileId} className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="text-text-primary truncate">{f.relativePath}</span>
+                    <span className="text-muted flex-shrink-0">{fmtBytes(f.sizeBytes)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {t.direction === 'SEND' && (
           <div className="border-t border-border pt-3">
@@ -207,7 +233,7 @@ export default function TransferDetailPanel({ transfer: t, projectId, clientName
             className="w-full flex items-center gap-2 text-xs font-semibold text-text-primary border border-border rounded-lg px-3 py-2 hover:bg-border/40 transition-colors">
             <MoveIcon className="w-3.5 h-3.5" />Move to event
           </button>
-          {t.status === 'READY' && (
+          {t.status === 'READY' && !t.fileCount && (
             <button onClick={() => setPicker('copy')}
               className="w-full flex items-center gap-2 text-xs font-semibold text-text-primary border border-border rounded-lg px-3 py-2 hover:bg-border/40 transition-colors">
               <CopyToIcon className="w-3.5 h-3.5" />Copy to event

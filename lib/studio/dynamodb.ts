@@ -22,6 +22,10 @@ const TABLES = {
   faces:      process.env.DYNAMO_STUDIO_FACES_TABLE      ?? 'vayustudio-faces',
   jobs:       process.env.DYNAMO_STUDIO_JOBS_TABLE       ?? 'vayustudio-jobs',
   transfers:  process.env.DYNAMO_STUDIO_TRANSFERS_TABLE  ?? 'vayustudio-transfers',
+  // Child rows for a SEND batch transfer (StudioTransfer.fileCount set) —
+  // PK transferId (the parent's own id), SK fileId. Empty/unused for every
+  // single-file transfer and all of RECEIVE.
+  transferFiles: process.env.DYNAMO_STUDIO_TRANSFER_FILES_TABLE ?? 'vayustudio-transfer-files',
   websites:   process.env.DYNAMO_STUDIO_WEBSITES_TABLE   ?? 'vayustudio-websites',
   bookings:   process.env.DYNAMO_STUDIO_BOOKINGS_TABLE   ?? 'vayustudio-bookings',
   // Billing — deliberately separate tables from VayuTransfer's vayu-transactions,
@@ -119,7 +123,8 @@ export async function studioQueryByPK<T>(
   table: string,
   pkName: string,
   pkValue: string,
-  skCondition?: { expression: string; values: Record<string, unknown> }
+  skCondition?: { expression: string; values: Record<string, unknown> },
+  consistentRead = false
 ): Promise<T[]> {
   const keyCondition = skCondition
     ? `${pkName} = :pk AND ${skCondition.expression}`
@@ -133,6 +138,7 @@ export async function studioQueryByPK<T>(
     TableName: table,
     KeyConditionExpression: keyCondition,
     ExpressionAttributeValues: marshall(expressionValues),
+    ...(consistentRead ? { ConsistentRead: true } : {}),
   }))
   return (res.Items ?? []).map((i) => unmarshall(i) as T)
 }

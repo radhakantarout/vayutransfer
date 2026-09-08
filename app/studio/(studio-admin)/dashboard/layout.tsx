@@ -30,6 +30,7 @@ import { useWatermarkModal } from '@/components/studio/WatermarkModalContext'
 import WatermarkModal from '@/components/studio/WatermarkModal'
 import BulkJobProgressToast from '@/components/studio/BulkJobProgressToast'
 import JobConfirmDialog from '@/components/studio/JobConfirmDialog'
+import { SendIcon as TransferSendIcon, ReceiveIcon as TransferReceiveIcon } from '@/components/studio/transfers/TransferIcons'
 
 interface NotificationItem {
   jobId: string
@@ -140,6 +141,29 @@ function BookingIcon() {
     </svg>
   )
 }
+function TransferIcon() {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 7.5l-3 3m0 0l3 3m-3-3h13.5M16.5 16.5l3-3m0 0l-3-3m3 3H6" />
+    </svg>
+  )
+}
+// ── Raw Transfer sub-nav icons (Send/Request reuse the shared set already
+// used inside the feature itself — see components/studio/transfers/TransferIcons.tsx) ──
+function TransferManageIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
+    </svg>
+  )
+}
+function TransferActivityIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+    </svg>
+  )
+}
 // ── Website-builder sidebar section icons (My Website mode) ──────────────
 function TemplateIcon() {
   return (
@@ -215,6 +239,20 @@ const WEBSITE_SECTIONS: { id: string; label: string; icon: React.ReactNode }[] =
   { id: 'booking',      label: 'Booking',       icon: <BookingIcon /> },
   { id: 'domain',       label: 'Domain',        icon: <DomainIcon /> },
 ]
+
+// Raw Transfer's own sub-nav — real routes (not the ?tab= pattern above),
+// since these are genuinely different pages/data, matching how VayuTransfer
+// itself structures Send/Request/My Transfers/Activity as separate routes.
+const TRANSFER_SECTIONS: { id: string; label: string; icon: React.ReactNode; href: string }[] = [
+  { id: 'send',     label: 'Send',         icon: <TransferSendIcon className="w-4 h-4" />,    href: '/studio/dashboard/transfers' },
+  { id: 'request',  label: 'Request',      icon: <TransferReceiveIcon className="w-4 h-4" />, href: '/studio/dashboard/transfers/request' },
+  { id: 'manage',   label: 'My Transfers', icon: <TransferManageIcon />,                       href: '/studio/dashboard/transfers/manage' },
+  { id: 'activity', label: 'Activity',     icon: <TransferActivityIcon />,                     href: '/studio/dashboard/transfers/activity' },
+]
+// 'send' is also the section's own root path, so it needs an exact match —
+// otherwise it would stay highlighted while viewing any of the other three.
+const isTransferSectionActive = (pathname: string, section: typeof TRANSFER_SECTIONS[number]) =>
+  section.id === 'send' ? pathname === section.href : pathname.startsWith(section.href)
 
 function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
@@ -968,16 +1006,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Which product is active — drives the sidebar's simplified shape (the
   // Projects tree only makes sense in Gallery mode; Settings/Storage/AI-usage/
   // profile stay visible in every mode).
-  const activeProduct: 'gallery' | 'website' | 'bookings' = pathname.startsWith('/studio/dashboard/website')
+  const activeProduct: 'gallery' | 'website' | 'bookings' | 'transfers' = pathname.startsWith('/studio/dashboard/website')
     ? 'website'
     : pathname.startsWith('/studio/dashboard/bookings')
       ? 'bookings'
-      : 'gallery'
+      : pathname.startsWith('/studio/dashboard/transfers')
+        ? 'transfers'
+        : 'gallery'
   const PRODUCT_LABEL: Record<typeof activeProduct, string> = {
-    gallery: 'Client Gallery', website: 'My Website', bookings: 'My Booking',
+    gallery: 'Client Gallery', website: 'My Website', bookings: 'My Booking', transfers: 'Raw Transfer',
   }
   const PRODUCT_ICON: Record<typeof activeProduct, React.ReactNode> = {
-    gallery: <GalleryIcon />, website: <WebsiteIcon />, bookings: <BookingIcon />,
+    gallery: <GalleryIcon />, website: <WebsiteIcon />, bookings: <BookingIcon />, transfers: <TransferIcon />,
   }
 
   if (!authChecked) {
@@ -1110,6 +1150,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
                 { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/website') } },
                 { label: 'My Booking', icon: <BookingIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/bookings') } },
+                { label: 'Raw Transfer', icon: <TransferIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/transfers') } },
               ]}
             />
             {activeProduct === 'gallery' && (
@@ -1256,6 +1297,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Bookings mode has no tree yet either — unchanged from before. */}
         {activeProduct === 'bookings' && <div className="flex-1" />}
 
+        {/* Raw Transfer's own 4-destination sub-nav — real routes, same
+            visual treatment as the Website section list above. */}
+        {activeProduct === 'transfers' && (
+          <div className="hidden md:flex flex-1 min-h-0 overflow-y-auto flex-col px-2 pt-2 pb-3 space-y-0.5">
+            {TRANSFER_SECTIONS.map((section) => (
+              <button key={section.id}
+                onClick={() => router.push(section.href)}
+                className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-colors text-left ${
+                  isTransferSectionActive(pathname, section) ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                }`}>
+                <span className="w-4 h-4 flex-shrink-0">{section.icon}</span>
+                {section.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Pinned bottom group — Storage / AI-usage. Settings moved into the
             profile menu (ProfileMenu.tsx) so it's reachable from one place
             regardless of sidebar collapsed/expanded state; Profile itself
@@ -1369,6 +1427,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 { label: 'Client Gallery', icon: <GalleryIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); setSidebarView('projects'); router.push('/studio/dashboard/projects') } },
                 { label: 'My Website', icon: <WebsiteIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/website') } },
                 { label: 'My Booking', icon: <BookingIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/bookings') } },
+                { label: 'Raw Transfer', icon: <TransferIcon />, onClick: () => { if (!confirmLeaveIfUnsaved()) return; clearSelection(); router.push('/studio/dashboard/transfers') } },
               ]}
             />
 
@@ -1428,6 +1487,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </button>
               )
             })}
+
+            {/* Raw Transfer sub-nav, icon-only — same 4 destinations as the
+                expanded sidebar's transfer nav above. */}
+            {activeProduct === 'transfers' && TRANSFER_SECTIONS.map((section) => (
+              <button key={section.id} onClick={() => router.push(section.href)} title={section.label}
+                className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-colors ${
+                  isTransferSectionActive(pathname, section) ? 'bg-accent/10 text-accent' : 'text-muted hover:text-text-primary hover:bg-border/50'
+                }`}>
+                <span className="w-3.5 h-3.5">{section.icon}</span>
+              </button>
+            ))}
 
             {/* Focused client's events — short 3-letter chips, still
                 clickable/multi-selectable, same selectedIds/toggleSelect as
