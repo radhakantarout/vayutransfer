@@ -11,7 +11,8 @@
     "backfill:storage-backend": "node --env-file=.env.local scripts/backfill-storage-backend.mjs",
     "backfill:transfer-storage-backend": "node --env-file=.env.local scripts/backfill-transfer-storage-backend.mjs",
     "migrate:s3-to-r2": "node --env-file=.env.local scripts/migrate-s3-to-r2.mjs",
-    "list:incomplete-multipart-uploads": "node --env-file=.env.local scripts/list-incomplete-multipart-uploads.mjs"
+    "list:incomplete-multipart-uploads": "node --env-file=.env.local scripts/list-incomplete-multipart-uploads.mjs",
+    "verify:reel-pricing": "node scripts/verify-reel-pricing.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
@@ -28,6 +29,7 @@
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^3.0.3",
     "googleapis": "^174.0.1",
+    "jose": "^4.15.9",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "next": "14.2.0",

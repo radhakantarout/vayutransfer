@@ -6,6 +6,9 @@ import type { StudioProject, MediaFile, Selection, StudioFace } from '@/types/st
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
+import ReelMvpModal from '@/components/studio/ReelMvpModal'
+import ReelHistoryModal from '@/components/studio/ReelHistoryModal'
+import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS } from '@/constants/videoProviders'
 
 interface GalleryFile extends MediaFile {
   isSelected: boolean
@@ -231,6 +234,8 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
   const [countdown, setCountdown]               = useState('')
   const [showSelectionPreview, setShowSelectionPreview] = useState(false)
   const [selectionPreviewIdx, setSelectionPreviewIdx]   = useState(0)
+  const [showReelModal, setShowReelModal]               = useState(false)
+  const [showReelHistory, setShowReelHistory]           = useState(false)
   const [openMenu, setOpenMenu]                 = useState<string | null>(null)
   const touchStartX                             = useRef<number>(0)
   // Same floating glass zoom bar (2-10 columns) the studio admin's own
@@ -569,6 +574,14 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* My Reels — always visible, independent of current selection */}
+            <button
+              onClick={() => setShowReelHistory(true)}
+              title="View your AI-generated reels"
+              className="flex items-center gap-1.5 text-xs font-semibold border border-border text-muted rounded-full px-3 py-1.5 hover:bg-border/40 hover:text-text-primary transition-colors"
+            >
+              🎬 My Reels
+            </button>
             {/* Find My Photos */}
             <button
               onClick={() => setShowSelfie(true)}
@@ -958,6 +971,15 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </button>
+              {selectedCount >= MIN_REEL_PHOTOS && (
+                <button
+                  onClick={() => setShowReelModal(true)}
+                  title="Create an AI-animated video reel from your loved photos"
+                  className="flex-shrink-0 flex items-center gap-1 text-xs font-bold text-accent bg-accent/10 border border-accent/30 rounded-xl px-2.5 py-2 hover:bg-accent/20 transition-colors whitespace-nowrap"
+                >
+                  ✨ Reel
+                </button>
+              )}
               <div className="w-px h-6 bg-border/60 flex-shrink-0" />
               {!submitted ? (
                 <button onClick={() => setShowSubmit(true)} className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">Submit →</button>
@@ -1069,6 +1091,25 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
             </div>
           )}
         </div>
+      )}
+
+      {/* ── AI Reel — fast-minimal-demo modal (design doc Phase 1 MVP path) ── */}
+      {showReelModal && (
+        <ReelMvpModal
+          token={token}
+          projectId={projectId}
+          photoIds={selectedPhotos.slice(0, MAX_REEL_PHOTOS).map((f) => f.fileId)}
+          onClose={() => setShowReelModal(false)}
+        />
+      )}
+
+      {/* ── My Reels — history view ─────────────────────────── */}
+      {showReelHistory && (
+        <ReelHistoryModal
+          token={token}
+          projectId={projectId}
+          onClose={() => setShowReelHistory(false)}
+        />
       )}
     </div>
   )

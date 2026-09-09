@@ -1,0 +1,14 @@
+{
+  "name": "vayustudio-reelgen",
+  "version": "0.2.0",
+  "private": true,
+  "description": "AI Reel Generator pipeline — Kling image-to-video per photo, ffmpeg concat, upload to R2. MVP: Kling-only (no FFmpeg Ken Burns fallback, no transitions/music yet).",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.658.0",
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/lib-dynamodb": "^3.658.0",
+    "@aws-sdk/lib-storage": "^3.658.0",
+    "@aws-sdk/s3-request-presigner": "^3.658.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0"
+  }
+}

@@ -49,14 +49,16 @@ export async function POST(req: NextRequest) {
       ? { type: 'storage_topup', gb: pendingTxn.gbPurchased, amountPaise: pendingTxn.amountPaise }
       : pendingTxn.type === 'ai_search_topup'
         ? { type: 'ai_search_topup', credits: pendingTxn.creditsPurchased ?? 0, amountPaise: pendingTxn.amountPaise }
-        : {
-            type: 'plan_change',
-            planId: pendingTxn.planId ?? 'pro',
-            storageGB: pendingTxn.gbPurchased,
-            aiCreditsPerMonth: pendingTxn.creditsPurchased ?? 0,
-            billingCycle: pendingTxn.billingCycle ?? 'monthly',
-            amountPaise: pendingTxn.amountPaise,
-          }
+        : pendingTxn.type === 'reel_credit_topup'
+          ? { type: 'reel_credit_topup', credits: pendingTxn.creditsPurchased ?? 0, amountPaise: pendingTxn.amountPaise }
+          : {
+              type: 'plan_change',
+              planId: pendingTxn.planId ?? 'pro',
+              storageGB: pendingTxn.gbPurchased,
+              aiCreditsPerMonth: pendingTxn.creditsPurchased ?? 0,
+              billingCycle: pendingTxn.billingCycle ?? 'monthly',
+              amountPaise: pendingTxn.amountPaise,
+            }
 
     await applyTopup(auth.studioId, txnId, input, razorpayOrderId, razorpayPaymentId)
 
