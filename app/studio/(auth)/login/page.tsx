@@ -8,7 +8,7 @@ import AuthShell from '@/components/studio/AuthShell'
 import GoogleIcon from '@/components/studio/GoogleIcon'
 import PasswordInput from '@/components/PasswordInput'
 
-type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
+type Role        = 'ADMIN' | 'MOMENTS'
 type ForgotStep  = 'email' | 'otp' | 'password'
 
 function validatePassword(pw: string): string | null {
@@ -42,10 +42,9 @@ function PasswordStrength({ password }: { password: string }) {
   )
 }
 
-const ROLES: { value: Role; label: string; description: string }[] = [
-  { value: 'ADMIN',  label: 'Studio Admin',  description: 'Manage projects & galleries' },
-  { value: 'PRINT',  label: 'Print Admin',   description: 'Access print download links'  },
-  { value: 'CLIENT', label: 'Customer',      description: 'View your photo gallery'       },
+const ROLES: { value: Role; label: string; description: string; emoji: string }[] = [
+  { value: 'ADMIN',   label: 'Studio Admin',   description: 'Manage projects & galleries', emoji: '📸' },
+  { value: 'MOMENTS', label: 'Individual User', description: 'Your own photo & video moments', emoji: '✨' },
 ]
 
 const ROLE_REDIRECT: Record<string, string> = {
@@ -386,57 +385,66 @@ function LoginPageInner() {
             {/* Role selector */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted text-center uppercase tracking-wider">Sign in as</p>
-              <div className="grid grid-cols-3 gap-2">
-                {ROLES.map(({ value, label, description }) => (
+              <div className="grid grid-cols-2 gap-3">
+                {ROLES.map(({ value, label, description, emoji }) => (
                   <button
                     key={value}
                     type="button"
                     onClick={() => { setRole(value); setLoginError(null) }}
-                    className={`flex flex-col items-center gap-1 px-2 py-3 rounded-xl border text-center transition-colors ${
+                    className={`relative overflow-hidden flex flex-col items-center gap-1 px-3 py-4 rounded-2xl border text-center transition-colors ${
                       role === value
-                        ? 'bg-accent/10 border-accent/50 text-accent'
+                        ? value === 'MOMENTS'
+                          ? 'border-transparent text-white animate-reel-glow'
+                          : 'bg-accent/10 border-accent/50 text-accent'
                         : 'border-border text-muted hover:border-accent/20 hover:text-text-primary'
                     }`}
+                    style={role === value && value === 'MOMENTS' ? { background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' } : undefined}
                   >
-                    <span className="text-sm font-semibold leading-tight">{label}</span>
-                    <span className="text-[10px] leading-tight opacity-70">{description}</span>
+                    <span className={`text-xl ${role === value && value === 'MOMENTS' ? 'animate-reel-float' : ''}`}>{emoji}</span>
+                    <span className="text-sm font-bold leading-tight">{label}</span>
+                    <span className={`text-[10px] leading-tight ${role === value && value === 'MOMENTS' ? 'text-white/85' : 'opacity-70'}`}>{description}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            {role === 'CLIENT' ? (
-              <div className="bg-card border border-border rounded-2xl p-6 text-center space-y-3">
-                <div className="text-2xl">📸</div>
-                <p className="text-sm font-semibold text-text-primary">Looking for your gallery?</p>
-                <p className="text-sm text-muted leading-relaxed">
-                  Your photographer sent you a unique link by email or WhatsApp. Open that link to access your photos — no separate login needed.
-                </p>
-                <p className="text-xs text-muted pt-1">
-                  Can&apos;t find the link?{' '}
-                  <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">
-                    Contact support
-                  </a>
-                </p>
+            {role === 'MOMENTS' ? (
+              <div className="relative overflow-hidden bg-card border border-border rounded-2xl p-6 text-center space-y-4">
+                <div
+                  className="inline-flex w-12 h-12 rounded-2xl items-center justify-center text-2xl animate-reel-float"
+                  style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
+                >
+                  ✨
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-sm font-bold text-text-primary">Your own gallery, in seconds</p>
+                  <p className="text-sm text-muted leading-relaxed">
+                    Create an event, invite the people who matter, and share photos & videos together — likes, comments, and even AI-made Reels.
+                  </p>
+                </div>
+                <a
+                  href={`/studio/api/auth/google?intent=moments${nextParam ? `&next=${encodeURIComponent(nextParam)}` : ''}`}
+                  className="flex items-center justify-center gap-2.5 w-full bg-bg border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors"
+                >
+                  <GoogleIcon />
+                  Continue with Google
+                </a>
+                <p className="text-[11px] text-muted">Free to start — no card needed.</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {role === 'ADMIN' && (
-                  <>
-                    <a
-                      href={googleHref}
-                      className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors"
-                    >
-                      <GoogleIcon />
-                      Continue with Google
-                    </a>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-border" />
-                      <span className="text-xs text-muted whitespace-nowrap">Or use your email</span>
-                      <div className="flex-1 h-px bg-border" />
-                    </div>
-                  </>
-                )}
+                <a
+                  href={googleHref}
+                  className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors"
+                >
+                  <GoogleIcon />
+                  Continue with Google
+                </a>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="text-xs text-muted whitespace-nowrap">Or use your email</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
               <form onSubmit={handleLogin} className="bg-card border border-border rounded-2xl p-6 space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted">Email</label>

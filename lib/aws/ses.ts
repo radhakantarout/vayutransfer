@@ -1099,3 +1099,48 @@ export async function sendSignupOtpEmail(email: string, otp: string): Promise<vo
     },
   }))
 }
+
+// VayuStudios Moments (Phase 3) — notifies a gallery admin that someone
+// requested to join via their invite link, when autoApproveMembers is off.
+// Same ad-hoc-per-route SES pattern as every other VayuStudios email in this
+// file (sendOwnerStudioCreatedEmail etc.) — no separate lib/studio/ses.ts,
+// VayuStudios has never needed one, just its own templated functions here.
+export async function sendGalleryJoinRequestEmail(
+  to: string,
+  hostName: string,
+  requesterName: string,
+  eventName: string,
+  projectId: string
+): Promise<void> {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Join Request</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:480px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:20px;font-weight:800;color:#00C6FF;margin-bottom:4px;">Vayu<span style="color:#E0EAF8;">Studios</span> <span style="color:#5A7090;font-weight:600;">Moments</span></div>
+    <p style="color:#5A7090;font-size:13px;margin:0 0 28px;">Hi ${hostName},</p>
+    <h2 style="font-size:17px;font-weight:700;margin:0 0 12px;color:#E0EAF8;">${requesterName} wants to join "${eventName}"</h2>
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.6;margin:0 0 24px;">
+      Open your gallery to approve or decline this request — they won't be able to see any photos until you do.
+    </p>
+    <a href="${process.env.NEXTAUTH_URL ?? 'https://vayustudios.com'}/studio/moments/${projectId}"
+       style="display:inline-block;background:linear-gradient(135deg,#f97316,#ec4899,#8b5cf6);color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:12px;">
+      Review request →
+    </a>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios Moments <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: `${requesterName} wants to join "${eventName}"` },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `${requesterName} wants to join "${eventName}". Review it here: ${process.env.NEXTAUTH_URL ?? 'https://vayustudios.com'}/studio/moments/${projectId}`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}

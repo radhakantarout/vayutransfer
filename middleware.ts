@@ -124,6 +124,20 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // VayuStudios Moments — a Moments session is always role CLIENT (see
+  // moments-onboard/route.ts); this guard is what makes the identity
+  // separation from Studio Admin structural rather than just conventional.
+  // /studio/api/moments/join/* is exempt — its GET must work for someone who
+  // hasn't signed in yet (they're about to, via the invite link's own flow),
+  // and its POST does its own auth check so it can return a distinct
+  // "sign in first" signal instead of a bare 403.
+  if (path.startsWith('/studio/api/moments/') && !path.startsWith('/studio/api/moments/join/')) {
+    const auth = await verifyStudioJWT(request)
+    if (!auth || auth.role !== 'CLIENT') {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+  }
+
   // ── VayuTransfer platform-admin API auth guard ───────────────────────────
   // Own JWT/cookie, fully separate from the studio guards above — see
   // lib/adminAuth.ts. /api/admin/auth/* (login/logout/me) stays open since

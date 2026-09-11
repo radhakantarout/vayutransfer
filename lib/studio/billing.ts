@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from './dynamodb'
 import { GB, FREE_AI_SEARCH_CREDITS } from '@/constants/studioPricing'
+import { FREE_TRIAL_REEL_CREDITS } from '@/constants/videoProviders'
 import type { Studio, StudioTransaction, StudioTxnType } from '@/types/studio'
 
 // Idempotent — mirrors lib/wallet.ts#creditWallet's proven txnId-status-check
@@ -178,4 +179,33 @@ export async function refundReelCredits(studioId: string, credits: number): Prom
     'ADD reelCreditsBalance :credits SET updatedAt = :now',
     { ':credits': credits, ':now': new Date().toISOString() }
   )
+}
+
+// Lazily grants the one-time free trial reel credits the first time ANY
+// studio (real photography studio or a VayuStudios Moments personal Studio —
+// same row shape) tries to generate a reel — call this right after loading
+// the Studio and before checkReelCreditsAvailable in every reel-creation
+// route (client gallery, guest selfie search, Moments), mirroring the
+// established lazy-backfill idiom already used for billing-cycle fields
+// (syncBillingCycle) rather than a one-off migration script. Returns the
+// studio object with its balance already reflecting the grant so the
+// caller's immediately-following credit check doesn't need a second read.
+export async function grantFreeTrialReelCreditsIfNeeded(studio: Studio): Promise<Studio> {
+  if (studio.reelCreditsFreeTrialUsed) return studio
+  try {
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId: studio.studioId },
+      'ADD reelCreditsBalance :credits SET reelCreditsFreeTrialUsed = :used, updatedAt = :now',
+      { ':credits': FREE_TRIAL_REEL_CREDITS, ':used': true, ':now': new Date().toISOString(), ':notUsed': false },
+      undefined,
+      'attribute_not_exists(reelCreditsFreeTrialUsed) OR reelCreditsFreeTrialUsed = :notUsed'
+    )
+  } catch {
+    // Already granted (concurrent request lost the race) or a transient
+    // error — either way, never grant twice, and never block reel creation
+    // over a free-credit bonus failing to apply.
+    return studio
+  }
+  return { ...studio, reelCreditsBalance: (studio.reelCreditsBalance ?? 0) + FREE_TRIAL_REEL_CREDITS, reelCreditsFreeTrialUsed: true }
 }

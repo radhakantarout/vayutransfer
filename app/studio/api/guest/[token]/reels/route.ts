@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto'
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
-import { deductReelCredits, refundReelCredits } from '@/lib/studio/billing'
+import { deductReelCredits, refundReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
@@ -95,8 +95,9 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible for AI Reel generation yet.' }, { status: 400 })
     }
 
-    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+    let studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+    studio = await grantFreeTrialReelCreditsIfNeeded(studio)
 
     const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
     const { creditsRequired } = computeReelCost(photos.length, durationSec)

@@ -5,13 +5,18 @@ import type { MediaFile } from '@/types/studio'
 
 type Stage = 'IDLE' | 'CAPTURING' | 'UPLOADING' | 'RESULTS' | 'NO_MATCH' | 'NO_FACE' | 'ERROR'
 
-interface Props {
-  token: string
-  onClose: () => void
-  onResults: (photos: MediaFile[]) => void
-}
+// Shared by Client Gallery and VayuStudios Moments — only the API path
+// differs. Moments has no share-token (cookie-authenticated, same pattern
+// as ReelMvpModal's 'moments' source).
+type Props =
+  | { source?: 'client'; token: string; onClose: () => void; onResults: (photos: MediaFile[]) => void }
+  | { source: 'moments'; projectId: string; onClose: () => void; onResults: (photos: MediaFile[]) => void }
 
-export default function SelfieSearchModal({ token, onClose, onResults }: Props): React.ReactElement {
+export default function SelfieSearchModal(props: Props): React.ReactElement {
+  const { onClose, onResults } = props
+  const searchUrl = props.source === 'moments'
+    ? `/studio/api/moments/events/${props.projectId}/selfie-search`
+    : `/studio/api/client/gallery/${props.token}/selfie-search`
   const [stage, setStage]           = useState<Stage>('IDLE')
   const [errorMsg, setErrorMsg]     = useState('')
   const [resultCount, setResultCount] = useState(0)
@@ -70,7 +75,7 @@ export default function SelfieSearchModal({ token, onClose, onResults }: Props):
     try {
       const form = new FormData()
       form.append('selfie', new File([blob], 'selfie.jpg', { type: mimeType }))
-      const res = await fetch(`/studio/api/client/gallery/${token}/selfie-search`, {
+      const res = await fetch(searchUrl, {
         method: 'POST', body: form,
       }).then(r => r.json())
 

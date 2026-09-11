@@ -14,6 +14,14 @@ export interface StudioUser {
   passwordHash?: string
   linkedStudioId?: string
   linkedProjectIds?: string[]
+  // VayuStudios Moments — the personal Studio (billing/quota owner) this
+  // person's own individual galleries live under. Deliberately separate from
+  // linkedStudioId (which means "the real photography studio this ADMIN
+  // runs") so the same CLIENT-role identity can be a client of N real
+  // studios *and* have one personal Studio of their own, without the two
+  // concepts colliding. Set on first Moments signup; a CLIENT user created
+  // only via a photographer's gallery link never has this.
+  personalStudioId?: string
   status: StudioStatus
   lastLoginAt: string
   createdAt: string
@@ -126,6 +134,13 @@ export interface Studio {
   dataRetentionGraceDays: number
   storageOverageStartedAt?: string
   storageReminderCount?: number
+  // True only for a person's own personal Studio created via VayuStudios
+  // Moments individual signup — never true for a real photography studio.
+  // Drives the (separate, time-based) 19-day retention window instead of
+  // the storage-overage grace period above, and must never be treated as
+  // eligible for Studio Admin capabilities even though it's the same Studio
+  // type — its owning StudioUser row has role CLIENT, never ADMIN/OWNER.
+  isIndividual?: boolean
   projectCount: number
   status: StudioStatus
   createdAt: string
@@ -205,8 +220,99 @@ export interface StudioProject {
   // the default (updatedAt) order" — only populated once the admin actually
   // reorders that client's events for the first time.
   eventOrder?: number
+  // True only for a VayuStudios Moments event (created via /studio/moments/new
+  // under a personal Studio) — never true for a real studio's client event.
+  // Distinguishes Moments galleries for the (not yet built) time-based 19-day
+  // retention sweep, and lets a shared component render the lighter Moments
+  // UI instead of studio-admin's full EventSection when it needs to branch.
+  isIndividualGallery?: boolean
+  // ── VayuStudios Moments membership (Phase 3) ──────────────────────────
+  // The invite link deliberately REUSES clientShareToken/clientShareExpiresAt
+  // (and its existing clientShareToken-index GSI) instead of a new field —
+  // same "random token resolves to a project via a GSI" shape a real
+  // studio's client-gallery link already uses, just for a different purpose
+  // on isIndividualGallery projects. Never confused with real client access:
+  // the join route only ever matches isIndividualGallery === true rows.
+  autoApproveMembers?: boolean
+  // Members default to view/like/comment only — an admin explicitly turns
+  // these on. Conservative default for allowMemberReels specifically since
+  // every reel costs real Kling money.
+  allowMemberDownloads?: boolean
+  allowMemberReels?: boolean
+  // Simple sliding-window join-request rate limit (design doc decision #4:
+  // "max 50 join requests per link per hour") — reset whenever the window
+  // has elapsed, incremented per request otherwise. Nothing fancier exists
+  // to reuse for this, so this is intentionally the cheapest correct thing.
+  joinRequestCount?: number
+  joinRequestWindowStart?: string
   createdAt: string
   updatedAt: string
+}
+
+export type GalleryMemberRole = 'ADMIN' | 'MEMBER'
+export type GalleryMemberStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+// PK projectId, SK userId. The project's own creator gets an ADMIN/APPROVED
+// row created automatically at event-creation time (see moments/events
+// POST) — this is what makes "is this caller allowed to administer this
+// gallery" a single, uniform check (role==='ADMIN' && status==='APPROVED')
+// instead of two different code paths for "the owner" vs. "a promoted admin".
+export interface GalleryMember {
+  projectId: string
+  userId: string
+  // Denormalized from the project's own StudioProject.studioId — the
+  // projects table's PK is studioId (SK projectId), so a non-owner member
+  // (whose OWN studioId is their unrelated personal Studio) has no other way
+  // to resolve the actual project row from just a projectId. Avoids needing
+  // a new GSI on the projects table for this.
+  studioId: string
+  role: GalleryMemberRole
+  status: GalleryMemberStatus
+  name?: string
+  email?: string
+  createdAt: string
+  updatedAt: string
+  respondedAt?: string
+}
+
+// PK fileId, SK userId — existence of a row means "this user likes this
+// file". MediaFile.likeCount (below) is the atomic aggregate everything
+// else reads; this table exists only to answer "did *I* like this" and to
+// make toggling idempotent (can't like the same photo twice).
+export interface GalleryLike {
+  fileId: string
+  userId: string
+  // Denormalized from the liker's GalleryMember.name at like-time (same
+  // reasoning as GalleryComment.name below) — lets "liked by X, Y" render
+  // without an extra join back to the members table.
+  name?: string
+  createdAt: string
+}
+
+// PK fileId, SK commentId. Flat per-photo list, newest-first — no reply
+// threading in this pass (design doc's own scope note: v1 ships the
+// simplest thing that lets people actually comment, not a full thread UI).
+export interface GalleryComment {
+  fileId: string
+  commentId: string
+  projectId: string
+  userId: string
+  name?: string
+  text: string
+  createdAt: string
+}
+
+// PK projectId, SK messageId. One flat group chat per gallery (not per
+// photo) — messageId is `${timestampMs}_${randomUUID()}` specifically so
+// the table's own natural key sort order IS chronological order, without
+// needing a GSI or a separate createdAt sort key.
+export interface GalleryMessage {
+  projectId: string
+  messageId: string
+  userId: string
+  name?: string
+  text: string
+  createdAt: string
 }
 
 export type CurationStatus = 'STARRED' | 'FAVORITE' | 'FINAL'
@@ -252,6 +358,11 @@ export interface MediaFile {
   // from the client's own loved/selected state (Selection.isSelected).
   // Ordered: STARRED -> FAVORITE -> FINAL. Never shown to clients.
   curationStatus?: CurationStatus
+  // VayuStudios Moments (Phase 4) — atomic aggregates kept in sync by the
+  // like-toggle/comment-create routes' ADD updates. Absent/undefined means 0,
+  // same convention as every other optional counter in this file.
+  likeCount?: number
+  commentCount?: number
 }
 
 export interface StudioFace {
@@ -296,7 +407,7 @@ export interface StudioJob {
 // abstraction + pricing engine + credit topup — no pipeline logic yet (that's
 // the reelgen Lambda, still a hello-world shell as of Phase 0).
 
-export type ReelSource = 'CLIENT_GALLERY' | 'GUEST_SELFIE_SEARCH'
+export type ReelSource = 'CLIENT_GALLERY' | 'GUEST_SELFIE_SEARCH' | 'MOMENTS'
 export type ReelStyle = 'CINEMATIC' | 'ROMANTIC' | 'BOLLYWOOD' | 'LUXURY' | 'MEMORIES' | 'PHOTOGRAPHERS_CHOICE'
 export type ReelAspectRatio = '9:16' | '4:5' | '16:9'
 export type ReelResolution = '720p' | '1080p'

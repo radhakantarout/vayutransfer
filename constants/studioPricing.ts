@@ -61,6 +61,25 @@ export const ANNUAL_MONTHS_CHARGED = 10
 export const DEFAULT_RETENTION_GRACE_DAYS = 25
 export const RETENTION_GRACE_DAY_OPTIONS = [15, 25, 45] as const
 
+// VayuStudios Moments (individual/personal galleries) — a separate, purely
+// time-based retention window from `createdAt`, independent of the
+// storage-overage grace period above (which triggers off usage, not time).
+// Same Free quota as a real studio (FREE_STORAGE_GB/FREE_AI_SEARCH_CREDITS
+// above), bounded instead by this short fixed window since these accounts
+// have no conversion-to-paid expectation baked into the free-tier economics.
+export const MOMENTS_RETENTION_DAYS = 19
+
+// Invite link — same "generate with a default duration, extend in fixed
+// increments" policy as the studio-admin client-gallery share-link
+// (app/studio/api/admin/projects/[projectId]/share-link/route.ts's
+// POST/PATCH), reusing the identical extend-day options for one consistent
+// mental model across both admin surfaces. The one Moments-specific rule:
+// extending can never push the invite past the gallery's own 19-day
+// retention window — there's no point in a join link outliving the gallery
+// it points at.
+export const MOMENTS_INVITE_DEFAULT_DAYS = 9
+export const MOMENTS_INVITE_EXTEND_DAY_OPTIONS = [1, 3, 7] as const
+
 export function formatPaiseAsRupees(paise: number): string {
   return `₹${(paise / 100).toLocaleString('en-IN')}`
 }

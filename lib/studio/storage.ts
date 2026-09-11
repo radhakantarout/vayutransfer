@@ -51,8 +51,14 @@ export async function getMediaDownloadUrl(
 // (the Lambda re-runs and overwrites this same preview on every edit re-
 // upload). Only fall back to a raw signed view of the current file — from
 // whichever backend it's actually on — when no preview exists yet at all.
+// VIDEO files never get a Lambda-written preview (the watermark Lambda
+// no-ops on non-image files) so this fallback is the ONLY way a video is
+// ever viewable — previously this returned `undefined` unconditionally for
+// non-IMAGE files (harmless while nothing rendered `<video>` anywhere in the
+// app, but a real bug once VayuStudios Moments' gallery grid started trying
+// to play videos: every uploaded video appeared "broken" with no playable
+// source at all).
 export async function getMediaPreviewUrl(file: StorageFile): Promise<string | undefined> {
-  if (file.fileType !== 'IMAGE') return file.r2PreviewUrl
   if (file.r2PreviewUrl) return file.r2PreviewUrl
   const { key, backend } = resolveCurrent(file)
   try {

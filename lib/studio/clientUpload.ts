@@ -132,3 +132,25 @@ export async function uploadFileInChunks(
 
   return parts
 }
+
+// Shared progress-display formatting — kept here (not per-page) so any
+// upload surface adopting the richer progress UI (bytes/speed/ETA, first
+// built for VayuStudios Moments) renders it identically.
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+export function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || !Number.isFinite(bytesPerSec)) return ''
+  return `${formatBytes(bytesPerSec)}/s`
+}
+
+export function formatEta(secondsRemaining: number): string {
+  if (!Number.isFinite(secondsRemaining) || secondsRemaining <= 0) return ''
+  if (secondsRemaining < 60) return `${Math.ceil(secondsRemaining)}s left`
+  const mins = Math.ceil(secondsRemaining / 60)
+  return `${mins}m left`
+}

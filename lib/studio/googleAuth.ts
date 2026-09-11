@@ -12,7 +12,15 @@ function signupSecret() {
   return new TextEncoder().encode((process.env.STUDIO_JWT_SECRET ?? 'fallback') + '_google_signup')
 }
 
-const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'))
+// timeoutDuration bumped from jose's 5s default — a cold module (every dev
+// hot-reload, or a real Lambda/Vercel cold start) has an empty key cache, so
+// the very next login has to do a live fetch of Google's certs first; on a
+// slow first connection that can exceed 5s and fail with a generic
+// OAUTH_FAILED even though the login itself was fine (retrying then works
+// instantly since the keys are cached after the first successful fetch).
+const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'), {
+  timeoutDuration: 15000,
+})
 
 export function googleCallbackUrl(origin: string): string {
   return `${origin}/studio/api/auth/google/callback`
@@ -30,18 +38,20 @@ export function getGoogleAuthUrl(origin: string, state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
-export async function signOAuthState(next?: string): Promise<string> {
-  return new SignJWT({ next: next ?? null })
+export type GoogleAuthIntent = 'admin' | 'moments'
+
+export async function signOAuthState(next?: string, intent: GoogleAuthIntent = 'admin'): Promise<string> {
+  return new SignJWT({ next: next ?? null, intent })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')
     .sign(stateSecret())
 }
 
-export async function verifyOAuthState(state: string): Promise<{ next?: string | null } | null> {
+export async function verifyOAuthState(state: string): Promise<{ next?: string | null; intent: GoogleAuthIntent } | null> {
   try {
     const { payload } = await jwtVerify(state, stateSecret())
-    return payload as { next?: string | null }
+    return { next: payload.next as string | null | undefined, intent: (payload.intent as GoogleAuthIntent) ?? 'admin' }
   } catch {
     return null
   }

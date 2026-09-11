@@ -35,6 +35,22 @@ const TABLES = {
   // AI Reel Generator — PK reelId, GSI projectId-createdAt-index (for the
   // "My Reels" list). Test table provisioned 2026-09-09, production not yet.
   reels: process.env.DYNAMO_STUDIO_REELS_TABLE ?? 'vayustudio-reels',
+  // VayuStudios Moments (Phase 3/4) — NOT YET PROVISIONED in AWS as of
+  // 2026-09-11 (code written ahead of infra, same pattern as every other
+  // new table this session — needs explicit go-ahead before creation).
+  // galleryMembers: PK projectId, SK userId, GSI userId-index (for a future
+  //   "galleries I'm a member of" list).
+  // galleryLikes: PK fileId, SK userId, GSI userId-index (so "did I like
+  //   this" doesn't need N GetItems per gallery view).
+  // galleryComments: PK fileId, SK commentId — no GSI needed yet.
+  galleryMembers:  process.env.DYNAMO_STUDIO_GALLERY_MEMBERS_TABLE  ?? 'vayustudio-gallery-members',
+  galleryLikes:    process.env.DYNAMO_STUDIO_GALLERY_LIKES_TABLE    ?? 'vayustudio-gallery-likes',
+  galleryComments: process.env.DYNAMO_STUDIO_GALLERY_COMMENTS_TABLE ?? 'vayustudio-gallery-comments',
+  // One flat group chat per gallery — PK projectId, SK messageId (a
+  // timestamp-prefixed id, so the table's own key order is chronological,
+  // no GSI needed). Polled every few seconds, not push-based (see design
+  // doc discussion — WebSocket infra was scoped out for this pass).
+  galleryMessages: process.env.DYNAMO_STUDIO_GALLERY_MESSAGES_TABLE ?? 'vayustudio-gallery-messages',
 } as const
 
 export { TABLES }

@@ -102,24 +102,32 @@ function StyleCard({ style, selected, onClick, reducedMotion }: { style: ReelSty
   )
 }
 
-// Shared by both Client Gallery and Guest Selfie Search — only the auth
-// context and API paths differ (design doc: "components must work in both
-// surfaces, only authorization/data source should differ"). Guest mode
-// requires searchSessionId, the trust-boundary token proving these
-// photoIds actually came from THIS guest's own selfie search (see
+// Shared by Client Gallery, Guest Selfie Search, and VayuStudios Moments —
+// only the auth context and API paths differ (design doc: "components must
+// work in both surfaces, only authorization/data source should differ").
+// Guest mode requires searchSessionId, the trust-boundary token proving
+// these photoIds actually came from THIS guest's own selfie search (see
 // app/studio/api/guest/[token]/search/route.ts's session-persistence fix).
+// Moments has no share-token at all — the caller is already authenticated
+// via the studio_token cookie (role CLIENT, owner of their own personal
+// Studio), same as every other /studio/api/moments/* route.
 type ReelMvpModalProps =
   | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void }
   | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void }
+  | { source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void }
 
 export default function ReelMvpModal(props: ReelMvpModalProps) {
   const { photoIds, onClose } = props
   const createUrl = props.source === 'client'
     ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels`
-    : `/studio/api/guest/${props.token}/reels`
+    : props.source === 'moments'
+      ? `/studio/api/moments/events/${props.projectId}/reels`
+      : `/studio/api/guest/${props.token}/reels`
   const statusUrl = (reelId: string) => props.source === 'client'
     ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels/${reelId}/status`
-    : `/studio/api/guest/${props.token}/reels/${reelId}/status`
+    : props.source === 'moments'
+      ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/status`
+      : `/studio/api/guest/${props.token}/reels/${reelId}/status`
   const [stage, setStage] = useState<Stage>('template')
   const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
@@ -166,7 +174,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     const trimmedPrompt = customPrompt.trim() || undefined
     const body = props.source === 'guest'
       ? { photoIds, templateId, style, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, customPrompt: trimmedPrompt }
+      : { photoIds, templateId, style, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
