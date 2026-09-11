@@ -286,7 +286,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 className="mt-0.5 w-4 h-4 flex-shrink-0 accent-accent rounded"
               />
               <span className="text-[11px] text-muted leading-relaxed">
-                I understand these {photoIds.length} photos will be sent to Kling, a third-party AI video service, to create this reel — this is separate from where the studio stores your originals.
+                I understand these {photoIds.length} photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.
               </span>
             </label>
 
