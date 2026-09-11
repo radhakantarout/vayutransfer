@@ -108,6 +108,16 @@ export interface Studio {
   // still reset every 30 days even though they only pay once a year.
   billingPeriodStart?: string
   billingPeriodEnd?: string
+  // AI Reel credits — a simple prepaid balance, NOT a cycle-reset pool like
+  // aiSearchCreditsTotal/Used above. Purchased in packs (constants/
+  // videoProviders.ts), never expires, decrements on spend, refundable if a
+  // job times out/fails before completion. Available on every plan
+  // (Free included) — see the design doc's resolved decision #3. Undefined
+  // is equivalent to 0.
+  reelCreditsBalance?: number
+  // One free trial credit per studio, lifetime — not per billing cycle.
+  // Prevents the free-trial grant from being re-claimed after spend/refund.
+  reelCreditsFreeTrialUsed?: boolean
   // When the studio next needs to manually pay to keep its Pro/Custom plan
   // (no real recurring auto-debit exists yet — see lib/studio/quota.ts).
   // 30 days out for monthly, 365 for annual, set at plan-change time.
@@ -259,7 +269,7 @@ export interface StudioFace {
   updatedAt: string
 }
 
-export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK'
+export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL'
 // CANCELLED is only ever set by an explicit cancel request (never by a
 // Lambda on its own) — see lib/studio/jobs.ts and the two cancel routes.
 export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED'
@@ -278,6 +288,104 @@ export interface StudioJob {
   createdAt: string
   completedAt?: string
   ttl?: number
+}
+
+// ── AI Reel Generator ────────────────────────────────────────────────────────
+// See "VayuStudios AI Reel Generator - Design Document.md" (repo root) for
+// the full architecture. Phase 1 backend skeleton: types + provider
+// abstraction + pricing engine + credit topup — no pipeline logic yet (that's
+// the reelgen Lambda, still a hello-world shell as of Phase 0).
+
+export type ReelSource = 'CLIENT_GALLERY' | 'GUEST_SELFIE_SEARCH'
+export type ReelStyle = 'CINEMATIC' | 'ROMANTIC' | 'BOLLYWOOD' | 'LUXURY' | 'MEMORIES' | 'PHOTOGRAPHERS_CHOICE'
+export type ReelAspectRatio = '9:16' | '4:5' | '16:9'
+export type ReelResolution = '720p' | '1080p'
+// Finer-grained than JobStatus (which only tracks the envelope) — this is
+// the user-facing generation stage shown in ReelGenerationScreen.
+export type ReelStatus =
+  | 'created' | 'analyzing' | 'planning' | 'queued' | 'generating' | 'assembling'
+  | 'processing' | 'completed' | 'failed' | 'expired'
+export type ReelStoryRole =
+  | 'opening' | 'portrait' | 'couple' | 'ceremony' | 'family' | 'detail' | 'candid' | 'hero' | 'closing'
+export type ReelMotion =
+  | 'slow_push_in' | 'slow_pull_out' | 'left_to_right' | 'right_to_left' | 'orbit' | 'parallax'
+  | 'portrait_focus' | 'couple_reveal' | 'group_zoom_out' | 'detail_push' | 'cinematic_pan'
+
+export interface ReelPhotoAnalysis {
+  photoId: string
+  category: string
+  faces: number
+  qualityScore: number
+  compositionScore: number
+  orientation: 'portrait' | 'landscape' | 'square'
+  recommendedMotion: ReelMotion
+  // Gate used by the hybrid-generation step (design doc §8 risk 2) — kept
+  // conservative: low face-count + high quality/composition only. Anything
+  // false falls back to FFmpeg-only motion rather than risking a distorted
+  // AI-animated face on a wedding photo.
+  aiVideoRecommended: boolean
+}
+
+export interface ReelStoryStep {
+  photoId: string
+  role: ReelStoryRole
+  motion: ReelMotion
+  aiGenerationRequired: boolean
+}
+
+export interface ReelStoryPlan {
+  sequence: ReelStoryStep[]
+}
+
+// Table: TABLES.reels ('vayustudio-reels'), PK reelId, GSI
+// projectId-createdAt-index (for the "My Reels" list query). Outlives the
+// driving StudioJob's own TTL since reel history needs to persist.
+export interface StudioReel {
+  reelId: string
+  jobId: string              // FK back to the StudioJob driving generation
+  studioId: string
+  projectId: string
+  source: ReelSource
+  // Decoded server-side from the guest's own JWT at creation time, stamped
+  // here for audit — never trust a client-supplied projectId for guest reels
+  // (see design doc §5's trust-boundary discussion).
+  guestJwtProjectId?: string
+  photoIds: string[]
+  analysis?: ReelPhotoAnalysis[]
+  storyPlan?: ReelStoryPlan
+  style: ReelStyle
+  // Platform-friendly label ('instagram_reel'|'youtube_shorts'|'facebook',
+  // constants/videoProviders.ts#REEL_TEMPLATES) — stored separately from
+  // aspectRatio since two templates (Instagram Reels, YouTube Shorts) share
+  // the same 9:16 ratio and aspectRatio alone can't tell them apart again
+  // later for display (e.g. "My Reels" history).
+  templateId?: string
+  aspectRatio: ReelAspectRatio
+  resolution: ReelResolution
+  durationSec: number
+  status: ReelStatus
+  provider?: 'kling'          // internal only — never sent to the frontend
+  providerJobIds?: string[]   // one per hero clip, for cancel/retry
+  // The durable pointer — R2 key, not a URL. A presigned download URL must
+  // be minted fresh on every read (getStudioR2SignedDownloadUrl, same
+  // pattern as every other download in this codebase) rather than ever
+  // stored, since a reel's history needs to stay accessible far longer than
+  // any presigned URL's expiry window.
+  outputR2Key?: string
+  thumbnailR2Key?: string
+  // Ephemeral only — never trust a stale value read back from storage as
+  // still valid. Kept solely for very-short-lived internal bookkeeping.
+  outputUrl?: string
+  thumbnailUrl?: string
+  estimatedCostPaise?: number
+  actualCostPaise?: number
+  creditsCharged?: number
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  expiresAt?: string
+  errorCode?: string
+  errorMessage?: string
 }
 
 // ── Raw File Transfer ────────────────────────────────────────────────────────
@@ -558,22 +666,26 @@ export interface Booking {
 // Downloads are never metered under the R2 (zero-egress-fee) pricing model —
 // 'download_topup' intentionally removed. 'plan_change' covers Free→Pro,
 // Pro storage/AI/billingCycle adjustments, and manual cycle renewal — all
-// reuse the same Razorpay order→verify pipeline as top-ups.
-export type StudioTxnType = 'storage_topup' | 'ai_search_topup' | 'plan_change'
+// reuse the same Razorpay order→verify pipeline as top-ups. 'reel_credit_topup'
+// is pack-based (constants/videoProviders.ts), unlike the linear-rate
+// storage/AI top-ups — see packageId's comment below.
+export type StudioTxnType = 'storage_topup' | 'ai_search_topup' | 'plan_change' | 'reel_credit_topup'
 export type StudioTxnStatus = 'pending' | 'success' | 'failed'
 
 export interface StudioTransaction {
   txnId: string
   studioId: string
   type: StudioTxnType
-  // Descriptive label (e.g. "custom_150gb", "plan_pro_100gb_500ai") — no
-  // longer a lookup key into a fixed catalog since amounts are now
-  // computed from a linear rate, not chosen from a package list.
+  // Descriptive label — e.g. "custom_150gb", "plan_pro_100gb_500ai" (no
+  // longer a lookup key for those, since amounts are computed from a linear
+  // rate). For reel_credit_topup specifically, this IS a real lookup key —
+  // one of REEL_CREDIT_PACKS' ids in constants/videoProviders.ts — since
+  // reel credits are sold as fixed packs, not an arbitrary linear amount.
   packageId: string
   amountPaise: number
   gbPurchased: number
   months?: number            // set for storage_topup only
-  creditsPurchased?: number  // set for ai_search_topup only
+  creditsPurchased?: number  // set for ai_search_topup and reel_credit_topup
   // set for plan_change only — the plan/cycle this transaction moved the
   // studio to, so a receipt or audit trail can show what actually changed.
   planId?: 'free' | 'pro' | 'custom'

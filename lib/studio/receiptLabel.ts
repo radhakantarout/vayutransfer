@@ -8,6 +8,7 @@ import type { StudioTransaction } from '@/types/studio'
 export function formatTxnLabel(txn: StudioTransaction): string {
   if (txn.type === 'storage_topup') return `${txn.gbPurchased} GB storage top-up`
   if (txn.type === 'ai_search_topup') return `${txn.creditsPurchased ?? 0} AI search top-up`
+  if (txn.type === 'reel_credit_topup') return `${txn.creditsPurchased ?? 0} AI Reel credit top-up`
   if (txn.planId === 'free') return 'Free plan'
   return `Pro plan (${txn.gbPurchased} GB, ${txn.creditsPurchased ?? 0} AI searches/mo, ${txn.billingCycle ?? 'monthly'})`
 }

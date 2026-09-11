@@ -29,7 +29,12 @@ interface PlanChangeInput {
   billingCycle: 'monthly' | 'annual'
   amountPaise: number
 }
-export type ApplyTopupInput = StorageTopupInput | AiSearchTopupInput | PlanChangeInput
+interface ReelCreditTopupInput {
+  type: 'reel_credit_topup'
+  credits: number
+  amountPaise: number
+}
+export type ApplyTopupInput = StorageTopupInput | AiSearchTopupInput | PlanChangeInput | ReelCreditTopupInput
 
 export async function applyTopup(
   studioId: string,
@@ -91,6 +96,26 @@ export async function applyTopup(
     return
   }
 
+  if (input.type === 'reel_credit_topup') {
+    // Simple prepaid balance, never expires — unlike ai_search_topup above,
+    // this is not scoped to a billing cycle and does not reset (design doc
+    // §7). Additive: if_not_exists handles a studio that's never had a
+    // reel-credit purchase before.
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId },
+      'SET reelCreditsBalance = if_not_exists(reelCreditsBalance, :zero) + :credits, updatedAt = :now',
+      { ':zero': 0, ':credits': input.credits, ':now': now }
+    )
+    const txn: StudioTransaction = {
+      txnId, studioId, type: 'reel_credit_topup', packageId: `reel_${input.credits}credits`,
+      amountPaise: input.amountPaise, gbPurchased: 0, creditsPurchased: input.credits,
+      razorpayOrderId, razorpayPaymentId, status: 'success', createdAt: now,
+    }
+    await studioPutItem(TABLES.transactions, txn as unknown as Record<string, unknown>)
+    return
+  }
+
   // plan_change — Free→Pro, adjusting Pro's chosen storage/AI/billingCycle,
   // or a manual cycle renewal at the same plan. Deliberately does not touch
   // billingPeriodStart/billingPeriodEnd — the 30-day window keeps rolling on
@@ -123,4 +148,34 @@ export async function applyTopup(
     razorpayOrderId, razorpayPaymentId, status: 'success', createdAt: now,
   }
   await studioPutItem(TABLES.transactions, txn as unknown as Record<string, unknown>)
+}
+
+// Spend-side reel-credit ledger (separate from the purchase-side applyTopup
+// above). Conditional write guards against going negative — mirrors
+// VayuTransfer's own "wallet never goes negative" rule (CLAUDE.md) even
+// though nothing in the studio codebase required it before reel credits.
+// Call only after checkReelCreditsAvailable (lib/studio/quota.ts) has
+// already gated the request; this is the actual charge, not the check.
+export async function deductReelCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD reelCreditsBalance :negCredits SET updatedAt = :now',
+    { ':negCredits': -credits, ':now': new Date().toISOString(), ':minCredits': credits },
+    undefined,
+    'reelCreditsBalance >= :minCredits'
+  )
+}
+
+// Refund path for a job that times out or fails after credits were already
+// deducted (design doc §4.3's cron-sweep timeout handling, and ordinary
+// generation failure). Additive — safe even if the studio has since spent
+// down to zero on something else.
+export async function refundReelCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD reelCreditsBalance :credits SET updatedAt = :now',
+    { ':credits': credits, ':now': new Date().toISOString() }
+  )
 }

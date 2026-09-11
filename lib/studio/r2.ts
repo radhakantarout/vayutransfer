@@ -62,6 +62,13 @@ export function getStudioR2TransferFileKey(studioId: string, projectId: string, 
   return `studios/${studioId}/projects/${projectId}/transfers/${transferId}/${fileId}/${filename}`
 }
 
+// AI Reel Generator — final assembled video. NOT project-scoped like the
+// keys above (a reel can draw photos from one project, but the reel itself
+// is the unit of ownership) — see design doc §4.4's storage layout.
+export function getStudioR2ReelKey(studioId: string, reelId: string) {
+  return `studios/${studioId}/ai-reels/${reelId}/final.mp4`
+}
+
 export async function initiateStudioR2MultipartUpload(r2Key: string, contentType: string): Promise<string> {
   const res = await studioR2.send(new CreateMultipartUploadCommand({
     Bucket: STUDIO_R2_ORIGINAL_BUCKET,

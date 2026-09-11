@@ -32,6 +32,9 @@ const TABLES = {
   // never shared/imported across the two products.
   transactions: process.env.DYNAMO_STUDIO_TRANSACTIONS_TABLE ?? 'vayustudio-transactions',
   usage:        process.env.DYNAMO_STUDIO_USAGE_TABLE        ?? 'vayustudio-usage',
+  // AI Reel Generator — PK reelId, GSI projectId-createdAt-index (for the
+  // "My Reels" list). Test table provisioned 2026-09-09, production not yet.
+  reels: process.env.DYNAMO_STUDIO_REELS_TABLE ?? 'vayustudio-reels',
 } as const
 
 export { TABLES }

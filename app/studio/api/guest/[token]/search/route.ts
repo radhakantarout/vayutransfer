@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
+import { randomUUID } from 'crypto'
 import { RekognitionClient, SearchFacesByImageCommand } from '@aws-sdk/client-rekognition'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, BatchGetCommand } from '@aws-sdk/lib-dynamodb'
-import { TABLES } from '@/lib/studio/dynamodb'
+import { TABLES, studioPutItem } from '@/lib/studio/dynamodb'
 import { getMediaDownloadUrl, getMediaPreviewUrl } from '@/lib/studio/storage'
-import type { MediaFile } from '@/types/studio'
+import type { MediaFile, StudioJob } from '@/types/studio'
 
 const rek = new RekognitionClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 const ddb = DynamoDBDocumentClient.from(
@@ -25,12 +26,14 @@ export async function POST(
   try {
     // Validate guest JWT
     let projectId: string
+    let studioId: string
     try {
       const { payload } = await jwtVerify(params.token, getSecret())
       if (payload.type !== 'GUEST_QR') {
         return NextResponse.json({ success: false, error: 'INVALID_TOKEN' }, { status: 401 })
       }
       projectId = payload.projectId as string
+      studioId = payload.studioId as string
     } catch (err: unknown) {
       const name = (err as { name?: string }).name ?? ''
       if (name === 'JWTExpired') {
@@ -122,9 +125,31 @@ export async function POST(
       })
     )
 
+    // Trust-boundary fix (design doc §5): a guest's search results were
+    // previously only ever returned in this response, never persisted —
+    // meaning nothing stopped a guest from later claiming an arbitrary
+    // fileId (from the whole project, not just their own matches) belonged
+    // to their own search. Persisting the matched set here, keyed by a
+    // fresh session id, lets any later action (AI Reel creation) validate
+    // "is this photoId actually one MY search matched" instead of trusting
+    // the client. Reuses the existing (previously-unused-by-this-flow)
+    // SELFIE_SEARCH jobType on the shared jobs table rather than a new one.
+    // 2h TTL — long enough to browse results and decide, short enough that
+    // this isn't a lingering biometric-adjacent record.
+    const searchSessionId = randomUUID()
+    const now = new Date().toISOString()
+    const sessionJob: StudioJob = {
+      jobId: searchSessionId, jobType: 'SELFIE_SEARCH', status: 'READY',
+      projectId, studioId,
+      outputPayload: { matchedFileIds: readyFiles.map((f) => f.fileId) },
+      createdAt: now, completedAt: now,
+      ttl: Math.floor(Date.now() / 1000) + 2 * 60 * 60,
+    }
+    await studioPutItem(TABLES.jobs, sessionJob as unknown as Record<string, unknown>)
+
     return NextResponse.json({
       success: true,
-      data: { totalPhotos: photos.length, photos },
+      data: { totalPhotos: photos.length, photos, searchSessionId },
     })
   } catch (err) {
     console.error('[guest search POST]', err)

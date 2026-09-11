@@ -98,6 +98,18 @@ export function checkAiCreditsAvailable(studio: Studio, count: number): { ok: bo
   return { ok: usedCredits + count <= quotaCredits, usedCredits, quotaCredits, usedPct: aiUsagePct(studio) }
 }
 
+// Reel credits are a simple prepaid balance (Studio.reelCreditsBalance) —
+// NOT a cycle-reset pool like AI-search credits above, so this deliberately
+// doesn't read planAiCredits-style plan defaults. See design doc §7.
+export function reelCreditsBalance(studio: Studio): number {
+  return studio.reelCreditsBalance ?? 0
+}
+
+export function checkReelCreditsAvailable(studio: Studio, creditsRequired: number): { ok: boolean; balance: number; required: number } {
+  const balance = reelCreditsBalance(studio)
+  return { ok: balance >= creditsRequired, balance, required: creditsRequired }
+}
+
 // Shared green/orange/red banding used by every usage bar in the UI —
 // <70% green, 70-80% orange, >80% red.
 export type UsageBand = 'green' | 'orange' | 'red'
