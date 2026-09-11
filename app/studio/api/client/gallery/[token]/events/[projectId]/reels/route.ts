@@ -8,7 +8,7 @@ import { checkReelCreditsAvailable } from '@/lib/studio/quota'
 import { deductReelCredits } from '@/lib/studio/billing'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
-  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS,
+  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { StudioProject, MediaFile, Studio, StudioJob, StudioReel, ReelStyle } from '@/types/studio'
 
@@ -111,9 +111,14 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style } = await req.json().catch(() => ({})) as { photoIds?: string[]; templateId?: string; style?: string }
-    if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS || photoIds.length > MAX_REEL_PHOTOS) {
-      return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: `Select between ${MIN_REEL_PHOTOS} and ${MAX_REEL_PHOTOS} photos.` }, { status: 400 })
+    const { photoIds, templateId, style, customPrompt } = await req.json().catch(() => ({})) as {
+      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string
+    }
+    if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS) {
+      return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: 'Select at least 1 photo.' }, { status: 400 })
+    }
+    if (photoIds.length > MAX_REEL_PHOTOS) {
+      return NextResponse.json({ success: false, error: 'TOO_MANY_PHOTOS', message: `You can select up to ${MAX_REEL_PHOTOS} photos per reel.` }, { status: 400 })
     }
 
     const template = getReelTemplate(templateId ?? DEFAULT_REEL_TEMPLATE)
@@ -121,6 +126,9 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'INVALID_TEMPLATE' }, { status: 400 })
     }
     const reelStyle = (REEL_STYLES as readonly string[]).includes(style ?? '') ? (style as ReelStyle) : 'CINEMATIC'
+    // Never trust client-side truncation — re-cap server-side regardless of
+    // what the modal already limited the textarea to.
+    const sanitizedPrompt = typeof customPrompt === 'string' ? customPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
 
     // Never trust client-supplied fileIds beyond using them as a filter —
     // re-derive the authoritative set from this project's own real files
@@ -201,7 +209,9 @@ export async function POST(
         jobId, reelId, studioId: entry.studioId, projectId,
         photos, durationSec, resolution: DEFAULT_REEL_RESOLUTION,
         style: reelStyle,
-        stylePromptFragment: REEL_STYLE_META[reelStyle].promptFragment,
+        stylePromptFragment: sanitizedPrompt
+          ? `${sanitizedPrompt}, ${REEL_STYLE_META[reelStyle].promptFragment}`
+          : REEL_STYLE_META[reelStyle].promptFragment,
         targetDimensions: REEL_ASPECT_RATIO_DIMENSIONS[template.aspectRatio],
         r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
         r2Endpoint: process.env.STUDIO_R2_ENDPOINT,

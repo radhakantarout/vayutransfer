@@ -25,10 +25,13 @@ export const VIDEO_PROVIDER_CONFIG = {
 export type VideoProviderName = keyof typeof VIDEO_PROVIDER_CONFIG
 
 // ── Reel configuration defaults ─────────────────────────────────────────
-export const MIN_REEL_PHOTOS = 5
-export const RECOMMENDED_REEL_PHOTOS_MIN = 8
-export const RECOMMENDED_REEL_PHOTOS_MAX = 15
-export const MAX_REEL_PHOTOS = 30
+// No real minimum beyond "a reel needs at least one photo" — the earlier
+// 5-photo minimum was removed per explicit request (2026-09-11). Capped at
+// 10 (down from 30) — every photo becomes a full Kling clip today (no
+// hybrid FFmpeg mix yet, see design doc backlog item #3), so 10 keeps both
+// cost and generation time bounded until that lands.
+export const MIN_REEL_PHOTOS = 1
+export const MAX_REEL_PHOTOS = 10
 
 export const REEL_STYLES = ['CINEMATIC', 'ROMANTIC', 'BOLLYWOOD', 'LUXURY', 'MEMORIES', 'PHOTOGRAPHERS_CHOICE'] as const
 export const DEFAULT_REEL_STYLE = 'CINEMATIC'
@@ -52,40 +55,58 @@ export const DEFAULT_REEL_STYLE = 'CINEMATIC'
 // can't recur no matter which files the content glob covers.
 // `energy` (1-5) drives the small gamified intensity-meter shown on each
 // card — flavor only, not used anywhere in the pipeline.
+// `promptHints` — curated example phrases shown as tappable chips on the
+// optional custom-prompt step. NOT a real LLM-driven recommendation engine
+// (that would need an actual model call, out of scope for now) — just
+// hand-picked examples per style so a user with no idea what to type has
+// somewhere to start. Tapping a chip fills the textarea, it's still
+// editable afterward.
 export const REEL_STYLE_META: Record<(typeof REEL_STYLES)[number], {
-  label: string; description: string; colors: [string, string, string]; icon: string; energy: number; promptFragment: string
+  label: string; description: string; colors: [string, string, string]; icon: string; energy: number
+  promptFragment: string; promptHints: string[]
 }> = {
   CINEMATIC: {
     label: 'Cinematic', description: 'Film-grade motion, dramatic light',
     colors: ['#334155', '#1e293b', '#000000'], icon: '🎬', energy: 3,
     promptFragment: 'cinematic film look, dramatic natural lighting, smooth deliberate camera movement',
+    promptHints: ['Slow-motion walk together', 'Golden hour silhouette', 'Dramatic entrance moment'],
   },
   ROMANTIC: {
     label: 'Romantic', description: 'Soft, dreamy, tender',
     colors: ['#fda4af', '#fb7185', '#e11d48'], icon: '💕', energy: 2,
     promptFragment: 'soft romantic mood, warm gentle lighting, tender intimate motion',
+    promptHints: ['Gentle forehead touch', 'Soft breeze in hair', 'Loving gaze into each other\'s eyes'],
   },
   BOLLYWOOD: {
     label: 'Bollywood', description: 'Vibrant, high-energy',
     colors: ['#fbbf24', '#f97316', '#dc2626'], icon: '🎉', energy: 5,
     promptFragment: 'vibrant energetic mood, rich warm golden tones, lively expressive motion',
+    promptHints: ['Joyful twirl and dance', 'Confetti celebration burst', 'Energetic group cheer'],
   },
   LUXURY: {
     label: 'Luxury', description: 'Elegant gold, glamour',
     colors: ['#ca8a04', '#a16207', '#422006'], icon: '👑', energy: 2,
     promptFragment: 'elegant luxurious mood, refined slow motion, soft golden glow',
+    promptHints: ['Graceful hand reveal', 'Elegant slow turn', 'Sparkling jewellery close-up'],
   },
   MEMORIES: {
     label: 'Storytelling', description: 'Nostalgic narrative flow',
     colors: ['#2dd4bf', '#0891b2', '#164e63'], icon: '📖', energy: 2,
     promptFragment: 'nostalgic storytelling mood, gentle drifting motion, warm timeless tone',
+    promptHints: ['Looking back over the shoulder', 'Quiet reflective moment', 'Hands joined together'],
   },
   PHOTOGRAPHERS_CHOICE: {
     label: 'Emotional', description: 'Raw, heartfelt, natural',
     colors: ['#c084fc', '#7c3aed', '#312e81'], icon: '🤍', energy: 3,
     promptFragment: 'raw authentic emotional mood, subtle natural motion, heartfelt intimacy',
+    promptHints: ['Genuine laughter moment', 'Tearful happy embrace', 'Candid unposed smile'],
   },
 }
+
+// Optional free-text creative direction, appended to the auto-generated
+// style prompt before it reaches Kling. Capped short — this augments the
+// preservation/style instructions, it isn't meant to replace them.
+export const MAX_CUSTOM_PROMPT_LENGTH = 150
 
 export const REEL_ASPECT_RATIOS = ['9:16', '4:5', '16:9'] as const
 export const DEFAULT_REEL_ASPECT_RATIO = '9:16'

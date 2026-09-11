@@ -236,6 +236,13 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
   const [selectionPreviewIdx, setSelectionPreviewIdx]   = useState(0)
   const [showReelModal, setShowReelModal]               = useState(false)
   const [showReelHistory, setShowReelHistory]           = useState(false)
+  // Reel photo picking is its own dedicated selection, independent of the
+  // "loved" heart selection above — matches the Guest Selfie Search flow's
+  // pattern exactly (a standalone "Reel it" entry point, not gated behind
+  // whatever's already loved), per explicit request.
+  const [reelSelectMode, setReelSelectMode]     = useState(false)
+  const [reelSelectedIds, setReelSelectedIds]   = useState<Set<string>>(new Set())
+  const [reelLimitMsg, setReelLimitMsg]         = useState<string | null>(null)
   const [openMenu, setOpenMenu]                 = useState<string | null>(null)
   const touchStartX                             = useRef<number>(0)
   // Same floating glass zoom bar (2-10 columns) the studio admin's own
@@ -352,6 +359,23 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
           : { ...f, isSelected: true }
       })
     )
+  }
+
+  const toggleReelSelect = (fileId: string) => {
+    setReelSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(fileId)) {
+        next.delete(fileId)
+        return next
+      }
+      if (next.size >= MAX_REEL_PHOTOS) {
+        setReelLimitMsg(`You can pick up to ${MAX_REEL_PHOTOS} photos for a reel.`)
+        setTimeout(() => setReelLimitMsg(null), 2500)
+        return prev
+      }
+      next.add(fileId)
+      return next
+    })
   }
 
   const setEditing = (fileId: string, value: boolean) => {
@@ -573,7 +597,29 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-shrink-0 overflow-x-auto scrollbar-hide max-w-[62vw] sm:max-w-none">
+            {reelSelectMode ? (
+              <>
+                <span className="text-xs font-semibold text-text-primary whitespace-nowrap">
+                  {reelSelectedIds.size}/{MAX_REEL_PHOTOS} picked
+                </span>
+                <button
+                  onClick={() => { setReelSelectMode(false); setReelSelectedIds(new Set()) }}
+                  className="text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+            <>
+            {/* Reel it — standalone entry point, independent of the loved
+                selection, matching the Guest Selfie Search flow exactly */}
+            <button
+              onClick={() => { setReelSelectMode(true); setReelSelectedIds(new Set()) }}
+              className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 transition-opacity rounded-full px-3 py-1.5"
+            >
+              🎬 Reel it
+            </button>
             {/* My Reels — always visible, independent of current selection */}
             <button
               onClick={() => setShowReelHistory(true)}
@@ -621,8 +667,17 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                 </span>
               )}
             </button>
+            </>
+            )}
           </div>
         </div>
+
+        {/* Transient "you hit the cap" message while picking reel photos */}
+        {reelLimitMsg && (
+          <div className="max-w-6xl mx-auto px-4 pb-2 -mt-1">
+            <p className="text-[11px] text-amber-500 font-semibold text-center">{reelLimitMsg}</p>
+          </div>
+        )}
       </div>
 
       {/* ── Selfie search modal ─────────────────────────────── */}
@@ -797,11 +852,13 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
               <div key={f.fileId} className={`relative ${openMenu === f.fileId ? 'z-20' : 'z-0'}`}>
                 <div
                   className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none transition-all duration-150
-                    ${f.isSelected
-                      ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-bg shadow-md shadow-rose-600/20'
-                      : 'ring-1 ring-border hover:ring-2 hover:ring-border'}`}
-                  onClick={() => toggleSelect(f.fileId)}
-                  onDoubleClick={(e) => openLightbox(idx, e)}
+                    ${reelSelectMode
+                      ? (reelSelectedIds.has(f.fileId) ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border hover:ring-2 hover:ring-border')
+                      : f.isSelected
+                        ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-bg shadow-md shadow-rose-600/20'
+                        : 'ring-1 ring-border hover:ring-2 hover:ring-border'}`}
+                  onClick={() => reelSelectMode ? toggleReelSelect(f.fileId) : toggleSelect(f.fileId)}
+                  onDoubleClick={(e) => !reelSelectMode && openLightbox(idx, e)}
                 >
                   {f.r2PreviewUrl ? (
                     <>
@@ -838,10 +895,25 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                       {f.originalFilename}
                     </div>
                   )}
-                  {f.isSelected && <div className="absolute inset-0 bg-black/15 pointer-events-none" />}
-                  <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}>
-                    <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
-                  </div>
+                  {reelSelectMode ? (
+                    <div className={`absolute inset-0 flex items-center justify-center transition-colors pointer-events-none ${reelSelectedIds.has(f.fileId) ? 'bg-accent/25' : 'bg-black/10'}`}>
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all
+                        ${reelSelectedIds.has(f.fileId) ? 'bg-accent border-accent scale-100' : 'border-white/80 scale-90 bg-black/20'}`}>
+                        {reelSelectedIds.has(f.fileId) && (
+                          <svg className="w-3.5 h-3.5 text-bg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {f.isSelected && <div className="absolute inset-0 bg-black/15 pointer-events-none" />}
+                      <div className={`absolute inset-0 flex items-center justify-center transition-all duration-200 pointer-events-none ${f.isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}>
+                        <HeartIcon filled className="w-14 h-14 text-rose-600/60 drop-shadow-lg" />
+                      </div>
+                    </>
+                  )}
                   {f.editedS3Key ? (
                     <div className="absolute top-1.5 left-1.5 bg-success text-bg text-[9px] font-extrabold px-1.5 py-0.5 rounded-full pointer-events-none uppercase tracking-wide">Edited</div>
                   ) : f.editingRequired && (
@@ -854,7 +926,7 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                   >⤢</button>
                 </div>
 
-                {f.isSelected && (
+                {f.isSelected && !reelSelectMode && (
                   <button
                     data-photomenu
                     onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === f.fileId ? null : f.fileId) }}
@@ -929,7 +1001,7 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
 
       {/* ── Floating selection bar — only when the draft actually differs from
           what was last submitted, so it doesn't linger with nothing new to save ── */}
-      {isDirty && selectedCount > 0 && (
+      {!reelSelectMode && isDirty && selectedCount > 0 && (
         <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center" onClick={e => e.stopPropagation()}>
           <div className="bg-card/80 backdrop-blur-xl border border-border/70 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             {project?.selectionMax !== undefined && project.selectionMax > 0 && (() => {
@@ -971,15 +1043,6 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </button>
-              {selectedCount >= MIN_REEL_PHOTOS && (
-                <button
-                  onClick={() => setShowReelModal(true)}
-                  title="Create an AI-animated video reel from your loved photos"
-                  className="flex-shrink-0 flex items-center gap-1 text-xs font-bold text-accent bg-accent/10 border border-accent/30 rounded-xl px-2.5 py-2 hover:bg-accent/20 transition-colors whitespace-nowrap"
-                >
-                  ✨ Reel
-                </button>
-              )}
               <div className="w-px h-6 bg-border/60 flex-shrink-0" />
               {!submitted ? (
                 <button onClick={() => setShowSubmit(true)} className="bg-accent text-bg font-bold px-4 py-2 rounded-xl hover:bg-accent/90 active:scale-[0.97] transition-all text-sm whitespace-nowrap flex-shrink-0">Submit →</button>
@@ -1093,13 +1156,27 @@ function EventGalleryView({ token, projectId }: { token: string; projectId: stri
         </div>
       )}
 
+      {/* ── Floating "create reel" bar — only while actively picking, mirrors
+          the Guest Selfie Search flow's equivalent exactly ── */}
+      {reelSelectMode && reelSelectedIds.size >= MIN_REEL_PHOTOS && (
+        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
+          <button
+            onClick={() => setShowReelModal(true)}
+            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold px-6 py-3.5 rounded-2xl shadow-2xl active:scale-[0.97] transition-all"
+          >
+            ✨ Create Reel ({reelSelectedIds.size})
+          </button>
+        </div>
+      )}
+
       {/* ── AI Reel — fast-minimal-demo modal (design doc Phase 1 MVP path) ── */}
       {showReelModal && (
         <ReelMvpModal
+          source="client"
           token={token}
           projectId={projectId}
-          photoIds={selectedPhotos.slice(0, MAX_REEL_PHOTOS).map((f) => f.fileId)}
-          onClose={() => setShowReelModal(false)}
+          photoIds={Array.from(reelSelectedIds)}
+          onClose={() => { setShowReelModal(false); setReelSelectMode(false); setReelSelectedIds(new Set()) }}
         />
       )}
 

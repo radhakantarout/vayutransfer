@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
+import ReelMvpModal from '@/components/studio/ReelMvpModal'
+import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS } from '@/constants/videoProviders'
 
 interface GuestPhoto {
   fileId:      string
@@ -45,6 +47,13 @@ export default function GuestPage() {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
   const [downloadChoicePhoto, setDownloadChoicePhoto] = useState<GuestPhoto | null>(null)
   const [errorMsg, setErrorMsg]     = useState('')
+  // Trust-boundary token (design doc §5) — proves to the reel-creation route
+  // that a photoId actually came from THIS search, not an arbitrary guess.
+  const [searchSessionId, setSearchSessionId] = useState<string | null>(null)
+  const [reelSelectMode, setReelSelectMode] = useState(false)
+  const [reelSelectedIds, setReelSelectedIds] = useState<Set<string>>(new Set())
+  const [reelLimitMsg, setReelLimitMsg] = useState<string | null>(null)
+  const [showReelModal, setShowReelModal] = useState(false)
 
   const videoRef     = useRef<HTMLVideoElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
@@ -122,11 +131,14 @@ export default function GuestPage() {
         setStage('ERROR'); setErrorMsg('Something went wrong. Please try again.'); return
       }
 
-      const { error, photos: found } = res.data
+      const { error, photos: found, searchSessionId: sessionId } = res.data
       if (error === 'NO_FACE_DETECTED') { setStage('NO_FACE'); return }
       if (!found?.length) { setStage('NO_MATCH'); return }
 
       setPhotos(found)
+      setSearchSessionId(sessionId ?? null)
+      setReelSelectMode(false)
+      setReelSelectedIds(new Set())
       setStage('RESULTS')
     } catch {
       setStage('ERROR')
@@ -152,7 +164,26 @@ export default function GuestPage() {
   }
 
   const reset = () => {
-    stopCamera(); setPhotos([]); setLightboxIdx(null); setErrorMsg(''); setStage('IDLE')
+    stopCamera(); setPhotos([]); setLightboxIdx(null); setErrorMsg('')
+    setSearchSessionId(null); setReelSelectMode(false); setReelSelectedIds(new Set())
+    setStage('IDLE')
+  }
+
+  const toggleReelSelect = (fileId: string) => {
+    setReelSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(fileId)) {
+        next.delete(fileId)
+        return next
+      }
+      if (next.size >= MAX_REEL_PHOTOS) {
+        setReelLimitMsg(`You can pick up to ${MAX_REEL_PHOTOS} photos for a reel.`)
+        setTimeout(() => setReelLimitMsg(null), 2500)
+        return prev
+      }
+      next.add(fileId)
+      return next
+    })
   }
 
   const lightboxPhotos: LightboxPhoto[] = photos.map(p => ({ fileId: p.fileId, previewUrl: p.previewUrl, filename: p.filename }))
@@ -359,50 +390,106 @@ export default function GuestPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-text-primary">✨ {photos.length} photos found</h2>
-                <p className="text-xs text-muted mt-0.5">Tap any photo to view and download</p>
+                <p className="text-xs text-muted mt-0.5">
+                  {reelSelectMode ? `Tap photos to pick for your reel (${reelSelectedIds.size}/${MAX_REEL_PHOTOS})` : 'Tap any photo to view and download'}
+                </p>
+                {reelLimitMsg && <p className="text-[11px] text-amber-500 font-semibold mt-1">{reelLimitMsg}</p>}
               </div>
-              <button
-                onClick={reset}
-                className="flex-shrink-0 text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
-              >
-                New search
-              </button>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {!reelSelectMode && photos.length >= MIN_REEL_PHOTOS && searchSessionId && (
+                  <button
+                    onClick={() => setReelSelectMode(true)}
+                    className="text-xs font-bold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 transition-opacity px-3 py-1.5 rounded-xl"
+                  >
+                    ✨ Make a Reel
+                  </button>
+                )}
+                <button
+                  onClick={reelSelectMode ? () => { setReelSelectMode(false); setReelSelectedIds(new Set()) } : reset}
+                  className="text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
+                >
+                  {reelSelectMode ? 'Cancel' : 'New search'}
+                </button>
+              </div>
             </div>
 
             {/* Photo grid */}
             <div className="grid grid-cols-3 gap-1">
-              {photos.map((photo, idx) => (
-                <button
-                  key={photo.fileId}
-                  onClick={() => setLightboxIdx(idx)}
-                  className="relative aspect-square bg-border/30 rounded-xl overflow-hidden group active:scale-[0.95] transition-transform"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photo.previewUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                    draggable={false}
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 group-active:bg-black/30 transition-colors flex items-center justify-center">
-                    <div className="opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity">
-                      <svg className="w-6 h-6 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                    </div>
-                  </div>
-                </button>
-              ))}
+              {photos.map((photo, idx) => {
+                const isSelected = reelSelectedIds.has(photo.fileId)
+                return (
+                  <button
+                    key={photo.fileId}
+                    onClick={() => reelSelectMode ? toggleReelSelect(photo.fileId) : setLightboxIdx(idx)}
+                    className={`relative aspect-square bg-border/30 rounded-xl overflow-hidden group active:scale-[0.95] transition-transform
+                      ${isSelected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : ''}`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photo.previewUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      draggable={false}
+                    />
+                    {reelSelectMode ? (
+                      <div className={`absolute inset-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-accent/25' : 'bg-black/10'}`}>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all
+                          ${isSelected ? 'bg-accent border-accent scale-100' : 'border-white/80 scale-90 bg-black/20'}`}>
+                          {isSelected && (
+                            <svg className="w-3.5 h-3.5 text-bg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 group-active:bg-black/30 transition-colors flex items-center justify-center">
+                        <div className="opacity-0 group-hover:opacity-100 group-active:opacity-100 transition-opacity">
+                          <svg className="w-6 h-6 text-white drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
-            <p className="text-[11px] text-muted/50 text-center pb-2">
-              Tap any photo to view and download
-            </p>
+            {!reelSelectMode && (
+              <p className="text-[11px] text-muted/50 text-center pb-2">
+                Tap any photo to view and download
+              </p>
+            )}
           </div>
         )}
       </div>
+
+      {/* ── Floating "create reel" bar — only while actively picking ── */}
+      {reelSelectMode && reelSelectedIds.size >= MIN_REEL_PHOTOS && (
+        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
+          <button
+            onClick={() => setShowReelModal(true)}
+            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold px-6 py-3.5 rounded-2xl shadow-2xl active:scale-[0.97] transition-all"
+          >
+            ✨ Create Reel ({reelSelectedIds.size})
+          </button>
+        </div>
+      )}
+
+      {/* ── AI Reel generation — guest mode, gated by the search-session
+          trust-boundary token (searchSessionId) ── */}
+      {showReelModal && searchSessionId && (
+        <ReelMvpModal
+          source="guest"
+          token={token}
+          searchSessionId={searchSessionId}
+          photoIds={Array.from(reelSelectedIds)}
+          onClose={() => { setShowReelModal(false); setReelSelectMode(false); setReelSelectedIds(new Set()) }}
+        />
+      )}
     </div>
   )
 }

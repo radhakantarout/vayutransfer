@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
-  REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE,
+  REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { ReelStyle } from '@/types/studio'
 
@@ -16,7 +16,7 @@ import type { ReelStyle } from '@/types/studio'
 // AIReelButton/ReelPhotoSelector/ReelGenerationScreen/ReelPreview split —
 // that's a later refactor once this UX is validated, not a correctness gap.
 
-type Stage = 'template' | 'style' | 'confirm' | 'generating' | 'completed' | 'failed'
+type Stage = 'template' | 'style' | 'prompt' | 'confirm' | 'generating' | 'completed' | 'failed'
 const GENERATING_MESSAGES = ['Selecting your best moments…', 'Bringing your story to life…', 'Adding cinematic touches…', 'Almost there…']
 
 function aspectClass(ratio: string) {
@@ -102,17 +102,29 @@ function StyleCard({ style, selected, onClick, reducedMotion }: { style: ReelSty
   )
 }
 
-export default function ReelMvpModal({
-  token, projectId, photoIds, onClose,
-}: {
-  token: string
-  projectId: string
-  photoIds: string[]
-  onClose: () => void
-}) {
+// Shared by both Client Gallery and Guest Selfie Search — only the auth
+// context and API paths differ (design doc: "components must work in both
+// surfaces, only authorization/data source should differ"). Guest mode
+// requires searchSessionId, the trust-boundary token proving these
+// photoIds actually came from THIS guest's own selfie search (see
+// app/studio/api/guest/[token]/search/route.ts's session-persistence fix).
+type ReelMvpModalProps =
+  | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void }
+  | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void }
+
+export default function ReelMvpModal(props: ReelMvpModalProps) {
+  const { photoIds, onClose } = props
+  const createUrl = props.source === 'client'
+    ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels`
+    : `/studio/api/guest/${props.token}/reels`
+  const statusUrl = (reelId: string) => props.source === 'client'
+    ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels/${reelId}/status`
+    : `/studio/api/guest/${props.token}/reels/${reelId}/status`
   const [stage, setStage] = useState<Stage>('template')
   const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
+  const [customPrompt, setCustomPrompt] = useState('')
+  const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reelId, setReelId] = useState<string | null>(null)
   const [creditsCharged, setCreditsCharged] = useState<number | null>(null)
@@ -134,7 +146,7 @@ export default function ReelMvpModal({
 
   const poll = (id: string) => {
     pollRef.current = setTimeout(async () => {
-      const res = await fetch(`/studio/api/client/gallery/${token}/events/${projectId}/reels/${id}/status`).then((r) => r.json()).catch(() => null)
+      const res = await fetch(statusUrl(id)).then((r) => r.json()).catch(() => null)
       if (!res?.success) { poll(id); return }
       if (res.data.status === 'completed') {
         setOutputUrl(res.data.outputUrl)
@@ -151,10 +163,14 @@ export default function ReelMvpModal({
   const handleGenerate = async () => {
     setStage('generating')
     setError(null)
-    const res = await fetch(`/studio/api/client/gallery/${token}/events/${projectId}/reels`, {
+    const trimmedPrompt = customPrompt.trim() || undefined
+    const body = props.source === 'guest'
+      ? { photoIds, templateId, style, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+      : { photoIds, templateId, style, customPrompt: trimmedPrompt }
+    const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ photoIds, templateId, style }),
+      body: JSON.stringify(body),
     }).then((r) => r.json()).catch(() => null)
 
     if (!res?.success) {
@@ -204,6 +220,43 @@ export default function ReelMvpModal({
             </div>
             <div className="flex gap-3">
               <button onClick={() => setStage('template')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
+              <button onClick={() => setStage('prompt')} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">Next →</button>
+            </div>
+          </div>
+        )}
+
+        {stage === 'prompt' && (
+          <div className="space-y-5">
+            <div className="text-center space-y-1">
+              <h2 className="text-lg font-bold text-text-primary">Add a personal touch</h2>
+              <p className="text-xs text-muted">Optional — describe a moment you want to see, or skip this</p>
+            </div>
+            <div className="space-y-2">
+              <textarea
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
+                placeholder="e.g. Slow-motion walk together at sunset…"
+                rows={3}
+                className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-none transition-colors"
+              />
+              <p className="text-[10px] text-muted text-right">{customPrompt.length}/{MAX_CUSTOM_PROMPT_LENGTH}</p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">💡 Ideas for {REEL_STYLE_META[style].label.toLowerCase()}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {REEL_STYLE_META[style].promptHints.map((hint) => (
+                  <button
+                    key={hint}
+                    onClick={() => setCustomPrompt(hint.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
+                    className="text-[11px] font-medium text-accent bg-accent/10 border border-accent/20 rounded-full px-2.5 py-1 hover:bg-accent/20 transition-colors"
+                  >
+                    {hint}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setStage('style')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
               <button onClick={() => setStage('confirm')} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">Next →</button>
             </div>
           </div>
@@ -219,11 +272,33 @@ export default function ReelMvpModal({
               <div className="flex justify-between"><span className="text-muted">Photos</span><span className="font-semibold text-text-primary">{photoIds.length}</span></div>
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
+              {customPrompt && (
+                <div className="flex justify-between gap-3"><span className="text-muted flex-shrink-0">Your note</span><span className="font-semibold text-text-primary text-right truncate">"{customPrompt}"</span></div>
+              )}
               <div className="flex justify-between border-t border-border pt-2"><span className="text-muted">Cost</span><span className="font-bold text-accent">{creditsRequired} credits</span></div>
             </div>
+
+            <label className="flex items-start gap-2.5 text-left cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={consentChecked}
+                onChange={(e) => setConsentChecked(e.target.checked)}
+                className="mt-0.5 w-4 h-4 flex-shrink-0 accent-accent rounded"
+              />
+              <span className="text-[11px] text-muted leading-relaxed">
+                I understand these {photoIds.length} photos will be sent to Kling, a third-party AI video service, to create this reel — this is separate from where the studio stores your originals.
+              </span>
+            </label>
+
             <div className="flex gap-3">
-              <button onClick={() => setStage('style')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
-              <button onClick={handleGenerate} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">✨ Generate</button>
+              <button onClick={() => setStage('prompt')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
+              <button
+                onClick={handleGenerate}
+                disabled={!consentChecked}
+                className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none"
+              >
+                ✨ Generate
+              </button>
             </div>
           </div>
         )}
@@ -251,6 +326,24 @@ export default function ReelMvpModal({
             <div className={`${aspectClass(template.aspectRatio)} max-h-[55vh] mx-auto rounded-2xl overflow-hidden bg-black`}>
               <video src={outputUrl} controls autoPlay className="w-full h-full object-contain" />
             </div>
+            {/* Guests have no "My Reels" history (design doc §5 — the QR
+                token is shared across every guest at the event, so a
+                per-token history list would leak one guest's reel to
+                everyone else). A shareable link to just THIS reel, sent to
+                themselves, is the way a guest ever finds it again. */}
+            {props.source === 'guest' && reelId && (
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}/studio/guest/reel/${reelId}`
+                  const text = `Check out my reel! 🎬✨ ${url}`
+                  if (navigator.share) navigator.share({ title: 'My AI Reel', text: 'Check out my reel! 🎬✨', url }).catch(() => {})
+                  else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+                }}
+                className="w-full text-center text-xs font-semibold text-accent hover:underline py-1"
+              >
+                📲 Send this reel to yourself (so you can find it later)
+              </button>
+            )}
             <div className="flex gap-3">
               <a href={outputUrl} download className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors text-center">Download</a>
               <button onClick={onClose} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors">Done</button>

@@ -1,15 +1,67 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  studioScanTable, studioQueryByPK, studioUpdateItem, studioDeleteItem, TABLES,
+  studioScanTable, studioQueryByPK, studioGetItem, studioUpdateItem, studioDeleteItem, TABLES,
 } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
 import { deleteStudioR2Object } from '@/lib/studio/r2'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, syncBillingCycle } from '@/lib/studio/quota'
+import { refundReelCredits } from '@/lib/studio/billing'
 import { logAuditEvent } from '@/lib/studio/auditLog'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
-import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer } from '@/types/studio'
+import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer, StudioJob, StudioReel } from '@/types/studio'
+
+// A Lambda timeout, crash, or lost invoke can leave an AI_REEL job sitting
+// at PENDING/PROCESSING forever with credits already deducted and nothing
+// ever refunding them or telling the user it failed (design doc §4.3's
+// "never leave ReelJob permanently stuck in generating state" requirement).
+// TABLES.jobs has no GSI (PK jobId only), so finding stuck ones means a full
+// scan — same approach this cron already uses for studios/transfers below,
+// not a new anti-pattern. 20 minutes gives real headroom over the pipeline's
+// own ~10-minute internal Kling-polling ceiling plus assembly time.
+const AI_REEL_STUCK_TIMEOUT_MS = 20 * 60 * 1000
+
+async function sweepStuckReelJobs(): Promise<{ count: number }> {
+  const jobs = await studioScanTable<StudioJob>(TABLES.jobs)
+  const now = Date.now()
+  const stuck = jobs.filter((j) =>
+    j.jobType === 'AI_REEL'
+    && (j.status === 'PENDING' || j.status === 'PROCESSING')
+    && now - new Date(j.createdAt).getTime() > AI_REEL_STUCK_TIMEOUT_MS
+  )
+
+  for (const job of stuck) {
+    const nowIso = new Date().toISOString()
+    await studioUpdateItem(
+      TABLES.jobs, { jobId: job.jobId },
+      'SET #s = :failed, errorMessage = :msg, completedAt = :now',
+      { ':failed': 'FAILED', ':msg': 'Generation timed out', ':now': nowIso },
+      { '#s': 'status' }
+    ).catch((e) => console.error('[storage-check] stuck reel job update failed', e))
+
+    const reelId = job.inputPayload?.reelId as string | undefined
+    if (!reelId) continue
+    const reel = await studioGetItem<StudioReel>(TABLES.reels, { reelId }).catch(() => null)
+    // Only touch it if the Lambda hasn't actually finished in the gap
+    // between the scan and now — never overwrite a real completed/failed
+    // result with a stale timeout.
+    if (!reel || reel.status === 'completed' || reel.status === 'failed') continue
+
+    await studioUpdateItem(
+      TABLES.reels, { reelId },
+      'SET #s = :failed, errorMessage = :msg, completedAt = :now',
+      { ':failed': 'failed', ':msg': 'Generation timed out — please try again', ':now': nowIso },
+      { '#s': 'status' }
+    ).catch((e) => console.error('[storage-check] stuck reel update failed', e))
+
+    if (reel.creditsCharged) {
+      await refundReelCredits(job.studioId, reel.creditsCharged).catch((e) => console.error('[storage-check] stuck reel credit refund failed', e))
+    }
+  }
+
+  return { count: stuck.length }
+}
 
 // Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on every
 // scheduled invocation as long as a project env var literally named
@@ -120,6 +172,8 @@ export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
   }
+
+  const stuckReels = await sweepStuckReelJobs()
 
   const studios = await studioScanTable<Studio>(TABLES.studios)
   const allTransfers = await studioScanTable<StudioTransfer>(TABLES.transfers)
@@ -249,5 +303,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count } })
 }
