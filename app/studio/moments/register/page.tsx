@@ -77,22 +77,19 @@ function MomentsRegisterInner() {
     }
   }
 
-  const inputBase = 'w-full bg-card border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors'
+  const inputBase = 'w-full bg-bg border rounded-2xl px-4 py-3.5 text-sm text-text-primary placeholder:text-muted/70 focus:outline-none transition-colors shadow-sm'
   const inputClass = (k: 'name' | 'phoneDigits') =>
-    `${inputBase} ${fieldError(k) ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'}`
+    `${inputBase} ${fieldError(k) ? 'border-danger focus:border-danger' : 'border-border/60 focus:border-accent'}`
 
   return (
     <AuthShell>
-      <div className="w-full max-w-sm space-y-6 pt-8">
-        <div className="text-center space-y-3">
-          <div
-            className="inline-flex w-14 h-14 rounded-2xl items-center justify-center text-2xl animate-reel-float"
-            style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
-          >
-            ✨
-          </div>
-          <h1 className="text-2xl font-extrabold text-text-primary">Welcome to VayuStudios <span className="text-accent">Moments</span></h1>
-          <p className="text-sm text-muted">A couple of details and your first gallery is ready to go.</p>
+      <div className="w-full max-w-sm space-y-7 pt-8">
+        <div className="text-center space-y-2.5">
+          <div className="text-2xl animate-reel-float">✨</div>
+          <h1 className="text-2xl font-extrabold text-text-primary">Let&apos;s make this yours <span aria-hidden>✨</span></h1>
+          <p className="text-sm text-muted leading-relaxed max-w-[280px] mx-auto">
+            A name and phone number is all we need to get your moment started.
+          </p>
         </div>
 
         {checking ? (
@@ -105,34 +102,26 @@ function MomentsRegisterInner() {
             <a href="/studio/login" className="inline-block text-sm text-accent hover:underline">← Back to sign in</a>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="bg-card border border-border rounded-2xl p-6 space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted">Email</label>
-              <input
-                type="email"
-                value={email}
-                disabled
-                className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-muted cursor-not-allowed"
-              />
-            </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <p className="sr-only">Signing up as {email}</p>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted">Your name</label>
+              <label className="text-xs font-medium text-muted pl-1">First name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onBlur={() => setTouched((t) => ({ ...t, name: true }))}
-                placeholder="Priya Sharma"
+                placeholder="Priya"
                 className={inputClass('name')}
               />
-              {fieldError('name') && <p className="text-xs text-danger">{fieldError('name')}</p>}
+              {fieldError('name') && <p className="text-xs text-danger pl-1">{fieldError('name')}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted">Phone</label>
-              <div className={`flex items-center border rounded-lg overflow-hidden transition-colors ${fieldError('phoneDigits') ? 'border-danger' : 'border-border focus-within:border-accent'}`}>
-                <span className="bg-muted/10 text-muted text-sm px-3 py-2.5 border-r border-border select-none whitespace-nowrap">+91</span>
+              <label className="text-xs font-medium text-muted pl-1">Phone number</label>
+              <div className={`flex items-center border rounded-2xl overflow-hidden shadow-sm transition-colors ${fieldError('phoneDigits') ? 'border-danger' : 'border-border/60 focus-within:border-accent'}`}>
+                <span className="bg-bg text-muted text-sm pl-4 pr-2 py-3.5 select-none whitespace-nowrap">+91</span>
                 <input
                   type="tel"
                   value={phoneDigits}
@@ -140,10 +129,10 @@ function MomentsRegisterInner() {
                   onBlur={() => setTouched((t) => ({ ...t, phoneDigits: true }))}
                   placeholder="9876543210"
                   maxLength={10}
-                  className="flex-1 bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none"
+                  className="flex-1 bg-bg pr-4 py-3.5 text-sm text-text-primary placeholder:text-muted/70 focus:outline-none"
                 />
               </div>
-              {fieldError('phoneDigits') && <p className="text-xs text-danger">{fieldError('phoneDigits')}</p>}
+              {fieldError('phoneDigits') && <p className="text-xs text-danger pl-1">{fieldError('phoneDigits')}</p>}
             </div>
 
             {submitError && (
@@ -153,14 +142,12 @@ function MomentsRegisterInner() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full text-bg font-bold py-2.5 rounded-xl text-sm transition-opacity disabled:opacity-50"
+              className="w-full text-white font-bold py-3.5 rounded-2xl text-sm transition-opacity disabled:opacity-50 hover:opacity-90"
               style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
             >
-              {submitting ? 'Setting up your gallery…' : 'Start Free →'}
+              {submitting ? 'Setting up…' : 'Continue'}
             </button>
-            <p className="text-[11px] text-muted text-center leading-relaxed">
-              Free to use — your gallery stays live for 19 days from creation, with reminders before anything is removed.
-            </p>
+            <p className="text-[11px] text-muted text-center">Your details stay private <span aria-hidden>🔒</span></p>
           </form>
         )}
       </div>

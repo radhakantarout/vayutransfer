@@ -60,10 +60,25 @@ export default function PhotoLightbox({ photos, index, onIndexChange, onClose, r
     else          onIndexChange(Math.max(0, index - 1))
   }
 
+  // Moments-only: the current photo itself, heavily blurred and dimmed,
+  // fills the backdrop instead of flat black — gated behind role so
+  // Client/Guest/Admin lightboxes render byte-identical to before.
+  const momentsBackdrop = role === 'moments' && current.fileType !== 'VIDEO'
+
   return (
-    <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" onClick={onClose}>
+    <div className={`fixed inset-0 z-[70] flex flex-col ${momentsBackdrop ? 'bg-black' : 'bg-black/95'}`} onClick={onClose}>
+      {momentsBackdrop && (
+        <>
+          <div
+            className="absolute inset-0 z-0 bg-cover bg-center scale-110 blur-3xl opacity-50"
+            style={{ backgroundImage: `url(${current.previewUrl})` }}
+            aria-hidden
+          />
+          <div className="absolute inset-0 z-0 bg-black/45" aria-hidden />
+        </>
+      )}
       {/* Header */}
-      <div className="flex flex-col gap-2 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+      <div className="relative z-10 flex flex-col gap-2 px-4 pt-4 pb-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-white/50 text-xs font-semibold flex-shrink-0">{index + 1} / {photos.length}</span>
@@ -143,7 +158,7 @@ export default function PhotoLightbox({ photos, index, onIndexChange, onClose, r
       </div>
 
       {/* Main media */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden relative"
+      <div className="relative z-10 flex-1 flex items-center justify-center overflow-hidden"
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onClick={e => e.stopPropagation()}>
@@ -180,7 +195,7 @@ export default function PhotoLightbox({ photos, index, onIndexChange, onClose, r
 
       {/* Thumbnail strip */}
       {photos.length > 1 && (
-        <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
+        <div className="relative z-10 flex-shrink-0 flex gap-2 overflow-x-auto px-4 pb-6 pt-3 snap-x snap-mandatory scrollbar-hide" onClick={e => e.stopPropagation()}>
           {photos.map((photo, idx) => (
             <button key={photo.fileId} onClick={() => onIndexChange(idx)}
               className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-start border-2 transition-all ${

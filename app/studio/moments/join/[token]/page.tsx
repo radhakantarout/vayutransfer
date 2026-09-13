@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+
+const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 
 interface JoinInfo {
   projectId: string
@@ -15,6 +17,53 @@ function nameStorageKey(token: string) {
   return `moments_join_name_${token}`
 }
 
+function celebratedKey(token: string) {
+  return `moments_join_celebrated_${token}`
+}
+
+// Small self-built confetti burst — no library, fired once when a join
+// request becomes approved (either immediately via auto-approve, or the
+// first time this browser revisits the link after a manual approval).
+function fireConfetti(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const dpr = window.devicePixelRatio || 1
+  canvas.width = window.innerWidth * dpr
+  canvas.height = window.innerHeight * dpr
+  ctx.scale(dpr, dpr)
+  const colors = ['#f97316', '#ec4899', '#8b5cf6', '#facc15', '#34d399']
+  const particles = Array.from({ length: 90 }, () => ({
+    x: window.innerWidth / 2,
+    y: window.innerHeight / 3,
+    vx: (Math.random() - 0.5) * 14,
+    vy: Math.random() * -12 - 4,
+    size: Math.random() * 6 + 4,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    rotation: Math.random() * 360,
+    spin: (Math.random() - 0.5) * 20,
+  }))
+  let frame = 0
+  const tick = () => {
+    frame++
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+    particles.forEach((p) => {
+      p.vy += 0.5
+      p.x += p.vx
+      p.y += p.vy
+      p.rotation += p.spin
+      ctx.save()
+      ctx.translate(p.x, p.y)
+      ctx.rotate((p.rotation * Math.PI) / 180)
+      ctx.fillStyle = p.color
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6)
+      ctx.restore()
+    })
+    if (frame < 100) requestAnimationFrame(tick)
+    else ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+  }
+  requestAnimationFrame(tick)
+}
+
 export default function MomentsJoinPage({ params }: { params: { token: string } }) {
   const [info, setInfo] = useState<JoinInfo | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -24,6 +73,7 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [nameTouched, setNameTouched] = useState(false)
+  const confettiRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     fetch(`/studio/api/moments/join/${params.token}`)
@@ -32,6 +82,10 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
         if (!res.success) { setNotFound(true); return }
         setInfo(res.data)
         setStatus(res.data.existingStatus)
+        if (res.data.existingStatus === 'APPROVED' && !sessionStorage.getItem(celebratedKey(params.token))) {
+          sessionStorage.setItem(celebratedKey(params.token), '1')
+          setTimeout(() => confettiRef.current && fireConfetti(confettiRef.current), 200)
+        }
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false))
@@ -68,6 +122,10 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
       }
       sessionStorage.removeItem(nameStorageKey(params.token))
       setStatus(res.data.status)
+      if (res.data.status === 'APPROVED') {
+        sessionStorage.setItem(celebratedKey(params.token), '1')
+        setTimeout(() => confettiRef.current && fireConfetti(confettiRef.current), 200)
+      }
     } catch {
       setError('Network error — please try again')
     } finally {
@@ -86,6 +144,7 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
   if (notFound || !info) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-bg gap-3 px-5 text-center">
+        <div className="text-3xl">🔗</div>
         <p className="text-sm font-semibold text-text-primary">This invite link isn&apos;t valid or has expired</p>
         <Link href="/studio/login" className="text-sm text-accent hover:underline">← Back to sign in</Link>
       </div>
@@ -93,8 +152,10 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
   }
 
   return (
-    <div className="min-h-screen bg-bg">
-      <header className="flex items-center px-5 sm:px-8 py-4 border-b border-border">
+    <div className="min-h-screen bg-bg relative overflow-hidden">
+      <canvas ref={confettiRef} className="fixed inset-0 pointer-events-none z-50" aria-hidden />
+
+      <header className="flex items-center px-5 sm:px-8 py-4">
         <Link href="/studio/login" className="flex items-center gap-2.5">
           <Image src="/logo.png" alt="VayuStudios" width={28} height={28} className="h-7 w-7" />
           <span className="text-sm font-extrabold text-text-primary">
@@ -103,63 +164,79 @@ export default function MomentsJoinPage({ params }: { params: { token: string } 
         </Link>
       </header>
 
-      <main className="max-w-md mx-auto px-5 sm:px-0 py-14 sm:py-20 text-center space-y-6">
+      <main className="max-w-md mx-auto px-5 sm:px-0 py-10 sm:py-16 text-center space-y-6">
         <div
-          className="inline-flex w-16 h-16 rounded-2xl items-center justify-center text-3xl animate-reel-float"
-          style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
+          className="inline-flex w-20 h-20 rounded-3xl items-center justify-center text-4xl animate-reel-float shadow-lg"
+          style={{ background: GRADIENT }}
         >
-          🎉
+          {status === 'APPROVED' ? '🎊' : status === 'PENDING' ? '⏳' : '🎉'}
         </div>
 
         <div className="space-y-1.5">
-          <h1 className="text-xl sm:text-2xl font-extrabold text-text-primary">{info.eventName}</h1>
-          <p className="text-sm text-muted">{info.hostName} invited you to join this gallery</p>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-text-primary break-words">{info.eventName}</h1>
+          <p className="text-sm text-muted">
+            <span className="font-semibold text-text-primary">{info.hostName}</span> invited you to join this gallery
+          </p>
         </div>
 
-        <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
-          {status === 'APPROVED' ? (
-            <>
-              <p className="text-sm font-semibold text-success">You&apos;re in! 🎊</p>
-              <Link
-                href={`/studio/moments/${info.projectId}`}
-                className="block w-full text-center text-bg font-bold py-3 rounded-xl text-sm"
-                style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
-              >
-                Open gallery →
-              </Link>
-            </>
-          ) : status === 'PENDING' ? (
-            <p className="text-sm text-muted">Your request to join is awaiting approval from {info.hostName}. You&apos;ll be able to see the gallery once approved.</p>
-          ) : status === 'REJECTED' ? (
-            <p className="text-sm text-muted">Your request to join wasn&apos;t approved.</p>
-          ) : (
-            <>
-              <p className="text-sm text-muted">Ask to join and start viewing, liking, and commenting on photos & videos from this gallery.</p>
-              <div className="space-y-1.5 text-left">
-                <label className="text-xs font-medium text-muted">Your name (shown to everyone in this gallery)</label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  onBlur={() => setNameTouched(true)}
-                  placeholder="e.g. Priya Sharma"
-                  className={`w-full bg-bg border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none transition-colors ${
-                    nameTouched && name.trim().length < 2 ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'
-                  }`}
-                />
-                {nameTouched && name.trim().length < 2 && <p className="text-xs text-danger">Enter your name — at least 2 characters</p>}
-              </div>
-              {error && <p className="text-xs text-danger">{error}</p>}
-              <button
-                onClick={handleJoin}
-                disabled={joining}
-                className="w-full text-bg font-bold py-3 rounded-xl text-sm disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)' }}
-              >
-                {joining ? 'Requesting…' : 'Ask to join ✨'}
-              </button>
-            </>
-          )}
+        <div className="rounded-3xl p-[1.5px]" style={{ background: GRADIENT }}>
+          <div className="bg-card rounded-[22px] p-6 sm:p-7 space-y-4">
+            {status === 'APPROVED' ? (
+              <>
+                <p className="text-base font-extrabold text-text-primary">You&apos;re in! <span aria-hidden>🎊</span></p>
+                <p className="text-xs text-muted">Time to see what everyone&apos;s been sharing.</p>
+                <Link
+                  href={`/studio/moments/${info.projectId}`}
+                  className="block w-full text-center text-white font-bold py-3.5 rounded-2xl text-sm hover:opacity-90 transition-opacity"
+                  style={{ background: GRADIENT }}
+                >
+                  Open gallery <span aria-hidden>→</span>
+                </Link>
+              </>
+            ) : status === 'PENDING' ? (
+              <>
+                <div className="flex justify-center gap-1 py-1">
+                  <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <p className="text-sm text-muted">
+                  Your request to join is awaiting approval from <span className="font-semibold text-text-primary">{info.hostName}</span>. You&apos;ll be able to see the gallery as soon as they say yes.
+                </p>
+              </>
+            ) : status === 'REJECTED' ? (
+              <p className="text-sm text-muted">Your request to join wasn&apos;t approved.</p>
+            ) : (
+              <>
+                <p className="text-sm text-muted">Ask to join and start viewing, liking, and commenting on photos &amp; videos from this gallery.</p>
+                <div className="space-y-1.5 text-left">
+                  <label className="text-xs font-semibold text-muted pl-1">Your name (shown to everyone in this gallery)</label>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onBlur={() => setNameTouched(true)}
+                    placeholder="e.g. Priya Sharma"
+                    className={`w-full bg-bg border rounded-2xl px-4 py-3 text-sm text-text-primary placeholder:text-muted/70 shadow-sm focus:outline-none transition-colors ${
+                      nameTouched && name.trim().length < 2 ? 'border-danger focus:border-danger' : 'border-border/60 focus:border-accent'
+                    }`}
+                  />
+                  {nameTouched && name.trim().length < 2 && <p className="text-xs text-danger pl-1">Enter your name — at least 2 characters</p>}
+                </div>
+                {error && <div className="bg-danger/10 border border-danger/30 rounded-lg px-3.5 py-2.5 text-xs text-danger text-left">{error}</div>}
+                <button
+                  onClick={handleJoin}
+                  disabled={joining}
+                  className="w-full text-white font-bold py-3.5 rounded-2xl text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+                  style={{ background: GRADIENT }}
+                >
+                  {joining ? 'Requesting…' : 'Ask to join ✨'}
+                </button>
+              </>
+            )}
+          </div>
         </div>
+
+        <p className="text-[11px] text-muted">Private by default <span aria-hidden>🔒</span></p>
       </main>
     </div>
   )

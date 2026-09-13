@@ -12,8 +12,17 @@ type Props =
   | { source?: 'client'; token: string; onClose: () => void; onResults: (photos: MediaFile[]) => void }
   | { source: 'moments'; projectId: string; onClose: () => void; onResults: (photos: MediaFile[]) => void }
 
+// VayuStudios Moments-only accent, same as ReelMvpModal's gating — Client
+// Gallery keeps its existing plain `bg-accent` buttons untouched.
+const MOMENTS_GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
+
 export default function SelfieSearchModal(props: Props): React.ReactElement {
   const { onClose, onResults } = props
+  const isMoments = props.source === 'moments'
+  const primaryBtnClass = `w-full text-sm font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 ${
+    isMoments ? 'text-white hover:opacity-90' : 'bg-accent text-bg hover:bg-accent/90'
+  }`
+  const primaryBtnStyle = isMoments ? { background: MOMENTS_GRADIENT } : undefined
   const searchUrl = props.source === 'moments'
     ? `/studio/api/moments/events/${props.projectId}/selfie-search`
     : `/studio/api/client/gallery/${props.token}/selfie-search`
@@ -104,7 +113,12 @@ export default function SelfieSearchModal(props: Props): React.ReactElement {
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h2 className="text-base font-bold text-text-primary">Find my photos</h2>
+          <div className="flex items-center gap-2.5">
+            {isMoments && (
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style={{ background: MOMENTS_GRADIENT }}>✨</div>
+            )}
+            <h2 className="text-base font-bold text-text-primary">Find my photos</h2>
+          </div>
           <button onClick={() => { stopCamera(); onClose() }} className="text-muted hover:text-text-primary">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -119,8 +133,7 @@ export default function SelfieSearchModal(props: Props): React.ReactElement {
             <>
               <p className="text-sm text-muted">Take a quick selfie and we'll find all your photos instantly.</p>
               <div className="flex flex-col gap-2">
-                <button onClick={startCamera}
-                  className="w-full bg-accent text-bg text-sm font-semibold py-3 rounded-xl hover:bg-accent/90 transition-colors flex items-center justify-center gap-2">
+                <button onClick={startCamera} className={primaryBtnClass} style={primaryBtnStyle}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -148,8 +161,7 @@ export default function SelfieSearchModal(props: Props): React.ReactElement {
                 </div>
               </div>
               <canvas ref={canvasRef} className="hidden" />
-              <button onClick={captureAndSearch}
-                className="w-full bg-accent text-bg text-sm font-semibold py-3 rounded-xl hover:bg-accent/90 transition-colors">
+              <button onClick={captureAndSearch} className={primaryBtnClass} style={primaryBtnStyle}>
                 Take Photo
               </button>
               <button onClick={reset} className="w-full text-xs text-muted hover:text-text-primary transition-colors">Cancel</button>
@@ -169,8 +181,7 @@ export default function SelfieSearchModal(props: Props): React.ReactElement {
             <div className="flex flex-col items-center gap-4 py-4 text-center">
               <div className="text-4xl">✨</div>
               <p className="text-base font-bold text-text-primary">We found {resultCount} photo{resultCount !== 1 ? 's' : ''} with you!</p>
-              <button onClick={() => { stopCamera(); onClose() }}
-                className="w-full bg-accent text-bg text-sm font-semibold py-3 rounded-xl hover:bg-accent/90 transition-colors">
+              <button onClick={() => { stopCamera(); onClose() }} className={primaryBtnClass} style={primaryBtnStyle}>
                 See my photos
               </button>
             </div>

@@ -3,7 +3,26 @@ import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByPK, studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { createOwnerMembership } from '@/lib/studio/galleryMembers'
-import type { StudioProject, StudioUser, GalleryMember } from '@/types/studio'
+import { getMediaPreviewUrl } from '@/lib/studio/storage'
+import type { StudioProject, StudioUser, GalleryMember, MediaFile } from '@/types/studio'
+
+// No cover-photo field on StudioProject for Moments (v1) — computed at read
+// time instead, same "falls back to the first ready photo" spirit as
+// StudioProject.coverPhotoFileId elsewhere in this codebase, just derived
+// rather than stored. Cheapest correct thing for a personal gallery's own
+// small photo count; revisit if this list ever needs to scale past a
+// handful of events per person.
+async function resolveCoverPhotoUrl(projectId: string): Promise<string | null> {
+  const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+  const ready = files.filter((f) => f.processingStatus === 'READY').sort((a, b) => a.displayOrder - b.displayOrder)
+  if (ready.length === 0) return null
+  return (await getMediaPreviewUrl(ready[0]).catch(() => undefined)) ?? null
+}
+
+async function countApprovedMembers(projectId: string): Promise<number> {
+  const members = await studioQueryByPK<GalleryMember>(TABLES.galleryMembers, 'projectId', projectId)
+  return members.filter((m) => m.status === 'APPROVED').length
+}
 
 // GET /studio/api/moments/events — this individual's own galleries, PLUS any
 // gallery they've been approved into as a member elsewhere (Phase 3) — the
@@ -33,7 +52,13 @@ export async function GET(req: NextRequest) {
     const events = [...owned, ...joined]
     events.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
 
-    return NextResponse.json({ success: true, data: events })
+    const enriched = await Promise.all(events.map(async (e) => ({
+      ...e,
+      coverPhotoUrl: await resolveCoverPhotoUrl(e.projectId),
+      memberCount: await countApprovedMembers(e.projectId),
+    })))
+
+    return NextResponse.json({ success: true, data: enriched })
   } catch (err) {
     console.error('[moments/events GET]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
