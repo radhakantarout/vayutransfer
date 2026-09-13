@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
+import QRCode from 'qrcode'
 import type { MediaFile, GalleryMember, ReelStyle } from '@/types/studio'
 import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
@@ -14,6 +15,9 @@ import {
 import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
 import ReelMvpModal from '@/components/studio/ReelMvpModal'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
+import GalleryBottomNav from '@/components/studio/moments/GalleryBottomNav'
+import NotificationsPanel from '@/components/studio/moments/NotificationsPanel'
+import ProfilePanel from '@/components/studio/moments/ProfilePanel'
 import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 
 const MAX_CONCURRENT_UPLOADS = 4
@@ -407,8 +411,80 @@ function Avatar({ label, size = 34 }: { label: string; size?: number }) {
   )
 }
 
+// ── Upload entry point — AI Face Search toggle + the drag/drop dropzone,
+// both now surfaced as a popup from the bottom bar's Upload button instead
+// of sitting permanently inline on the Photos tab. Admin-only, same as the
+// upload ability itself everywhere else in this file. ─────────────────────
+function UploadOptionsModal({
+  aiEnabled, onToggleAi, dragActive, setDragActive, onFiles, fileInputRef, onClose, maxConcurrent,
+}: {
+  aiEnabled: boolean
+  onToggleAi: () => void
+  dragActive: boolean
+  setDragActive: (v: boolean) => void
+  onFiles: (files: FileList | null) => void
+  fileInputRef: React.RefObject<HTMLInputElement>
+  onClose: () => void
+  maxConcurrent: number
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-text-primary">Add to this gallery</h2>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+        </div>
+
+        <div className="flex items-start gap-3 bg-bg border border-border rounded-2xl p-4">
+          <button
+            type="button" role="switch" aria-checked={aiEnabled}
+            onClick={onToggleAi}
+            className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors mt-0.5 ${aiEnabled ? 'bg-accent' : 'bg-border'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${aiEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-text-primary">✨ AI Face Search</p>
+            <p className="text-xs text-muted leading-relaxed">
+              Let people find themselves instantly with a selfie. Uses a small amount of your free AI credits per photo, charged as each one is indexed — turn it off now and apply it later anytime.
+            </p>
+          </div>
+        </div>
+
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(e) => { e.preventDefault(); setDragActive(false); onFiles(e.dataTransfer.files); onClose() }}
+          onClick={() => fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-2xl py-10 sm:py-14 flex flex-col items-center justify-center gap-2 text-center px-5 cursor-pointer transition-colors ${
+            dragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/40'
+          }`}
+        >
+          <div className="text-3xl animate-reel-float">📤</div>
+          <p className="text-sm font-bold text-text-primary">Tap to add photos & videos</p>
+          <p className="text-xs text-muted">or drag and drop — up to {maxConcurrent} upload at once, you can add more anytime</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Admin "People" panel — invite link + permission toggles + pending
 // requests + member list. Owner/admin only. ───────────────────────────────
+// Collapsible section header — Settings/Members both default closed (the
+// invite link + pending requests are the two things worth seeing the
+// instant this modal opens; everything else is opt-in detail).
+function SectionHeader({ title, open, onToggle }: { title: string; open: boolean; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle} className="w-full flex items-center justify-between text-left">
+      <p className="text-xs font-bold text-text-primary">{title}</p>
+      <svg className={`w-3.5 h-3.5 text-muted transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+      </svg>
+    </button>
+  )
+}
+
 function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null)
   const [daysRemaining, setDaysRemaining] = useState(0)
@@ -421,6 +497,10 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
   const [members, setMembers] = useState<GalleryMember[] | null>(null)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [membersOpen, setMembersOpen] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
+  const [qrDataUrl, setQrDataUrl] = useState('')
 
   const load = useCallback(() => {
     fetch(`/studio/api/moments/events/${projectId}/invite`).then((r) => r.json()).then((res) => {
@@ -439,6 +519,17 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
   }, [projectId])
 
   useEffect(() => { load() }, [load])
+
+  // Generated lazily (only once someone actually opens the QR disclosure),
+  // not eagerly on every link load — most people just tap Copy/Share.
+  useEffect(() => {
+    if (!qrOpen || !inviteUrl) return
+    let cancelled = false
+    QRCode.toDataURL(inviteUrl, { width: 320, margin: 2, color: { dark: '#0B0F1A', light: '#FFFFFF' } })
+      .then((d) => { if (!cancelled) setQrDataUrl(d) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [qrOpen, inviteUrl])
 
   const generateOrSave = async (overrides: Partial<{ autoApproveMembers: boolean; allowMemberDownloads: boolean; allowMemberReels: boolean; regenerate: boolean }> = {}) => {
     setSaving(true)
@@ -557,9 +648,30 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
                     <span className="text-[10px] text-muted">At the 19-day gallery limit</span>
                   )}
                 </div>
-                <button onClick={() => generateOrSave({ regenerate: true })} disabled={saving} className="text-[11px] text-muted hover:text-text-primary">
-                  Generate a new link
-                </button>
+                <div className="flex items-center justify-between">
+                  <button onClick={() => generateOrSave({ regenerate: true })} disabled={saving} className="text-[11px] text-muted hover:text-text-primary">
+                    Generate a new link
+                  </button>
+                  <button onClick={() => setQrOpen((v) => !v)} className="flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5h4.5v4.5h-4.5v-4.5zm0 10.5h4.5v4.5h-4.5v-4.5zM15.75 4.5h4.5v4.5h-4.5v-4.5zm0 4.5h.008M9.75 4.5h.008M4.5 9.75h.008M9.75 15h.008M15.75 15h.008M20.25 15h.008M15.75 20.25h.008M20.25 20.25h.008M11.25 11.25h1.5v1.5h-1.5v-1.5zM11.25 20.25h1.5M20.25 11.25h.008" />
+                    </svg>
+                    {qrOpen ? 'Hide QR' : 'Show QR'}
+                  </button>
+                </div>
+                {qrOpen && (
+                  <div className="flex flex-col items-center gap-2 pt-1">
+                    {qrDataUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={qrDataUrl} alt="Invite QR code" className="w-40 h-40 rounded-xl border border-border bg-white p-2" />
+                    ) : (
+                      <div className="w-40 h-40 rounded-xl border border-border flex items-center justify-center">
+                        <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted">Scan to open the join link</p>
+                  </div>
+                )}
               </>
             ) : (
               <button onClick={() => generateOrSave({ regenerate: true })} disabled={saving} className="text-xs font-bold px-4 py-2.5 rounded-xl text-white hover:opacity-90 transition-opacity" style={{ background: GRADIENT }}>
@@ -569,8 +681,8 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
           </div>
 
           <div className="bg-bg border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs font-bold text-text-primary">Settings</p>
-            {[
+            <SectionHeader title="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((v) => !v)} />
+            {settingsOpen && [
               { label: 'Auto-approve join requests', desc: 'Skip manual approval for new people', value: autoApprove, set: setAutoApprove, key: 'autoApproveMembers' as const },
               { label: 'Let members download', desc: 'Show a download button to approved members', value: allowDownloads, set: setAllowDownloads, key: 'allowMemberDownloads' as const },
               { label: 'Let members create Reels', desc: 'Uses your free AI credits per reel', value: allowReels, set: setAllowReels, key: 'allowMemberReels' as const },
@@ -611,8 +723,8 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
           )}
 
           <div className="space-y-2">
-            <p className="text-xs font-bold text-text-primary">Members ({approved.length})</p>
-            {approved.map((m) => (
+            <SectionHeader title={`Members (${approved.length})`} open={membersOpen} onToggle={() => setMembersOpen((v) => !v)} />
+            {membersOpen && approved.map((m) => (
               <div key={m.userId} className="flex items-center justify-between gap-2 bg-bg border border-border rounded-2xl px-3.5 py-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <Avatar label={m.name ?? m.email ?? 'Someone'} size={30} />
@@ -764,8 +876,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [likersFor, setLikersFor] = useState<string | null>(null)
   const [showPeople, setShowPeople] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
   const [activeTab, setActiveTab] = useState<'photos' | 'reels'>('photos')
-  const [menuOpen, setMenuOpen] = useState(false)
   const [reelSelectMode, setReelSelectMode] = useState(false)
   const [reelSelectedIds, setReelSelectedIds] = useState<Set<string>>(new Set())
   const [showReelModal, setShowReelModal] = useState(false)
@@ -822,6 +937,16 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     const timer = setInterval(() => { if (document.visibilityState === 'visible') refreshFiles() }, 4000)
     return () => clearInterval(timer)
   }, [event, refreshFiles])
+
+  // Same global "pending join requests across every gallery I administer"
+  // count the top-level shell's bell shows — a non-admin viewer here simply
+  // gets 0 back (they administer nothing), so this is safe to fetch always.
+  useEffect(() => {
+    fetch('/studio/api/moments/notifications')
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setPendingCount(res.data.totalPending) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -1040,7 +1165,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const videoCount = files.filter((f) => f.fileType === 'VIDEO').length
 
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="min-h-screen bg-bg pb-20 md:pb-0 md:pl-20 lg:pl-56">
       <header className="flex items-center justify-between gap-2 px-5 sm:px-8 py-4">
         <Link href="/studio/moments" aria-label="Back" className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-border/40 transition-colors -ml-1.5">
           <svg className="w-5 h-5 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
@@ -1048,47 +1173,36 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           </svg>
         </Link>
         <div className="flex items-center gap-2">
-          {/* Group Chat — promoted out of the menu since it's a core loop,
-              not a setting; every approved member can reach it in one tap. */}
+          {/* Chat, Upload, People, and Reel It all live in the persistent
+              gallery bottom bar now — the header only keeps the two
+              account-level destinations, mirroring the top-level shell. */}
           <button
-            onClick={() => setShowChat(true)}
-            aria-label="Group chat"
+            onClick={() => setShowNotifications(true)}
+            aria-label="Notifications"
+            className="relative w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted hover:text-text-primary transition-colors"
+          >
+            <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.311 6.022c1.733.64 3.56 1.085 5.454 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+            </svg>
+            {!!pendingCount && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-danger text-white text-[9px] font-bold flex items-center justify-center">
+                {pendingCount > 9 ? '9+' : pendingCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setShowProfile(true)}
+            aria-label="Profile"
             className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted hover:text-text-primary transition-colors"
           >
-            <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-6l-4 4v-4z" />
+            <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-label="Menu"
-              className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted hover:text-text-primary transition-colors"
-            >
-              <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-2 z-20 bg-card border border-border rounded-xl shadow-xl py-1 min-w-[180px]">
-                  <Link href="/studio/moments" className="block w-full px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors text-left">
-                    ← My galleries
-                  </Link>
-                  {isAdmin && (
-                    <button onClick={() => { setShowPeople(true); setMenuOpen(false) }} className="block w-full px-4 py-2.5 text-sm text-text-primary hover:bg-border/50 transition-colors text-left">
-                      👨‍👩‍👧 Invite & manage people
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-5 sm:px-8 pb-8 sm:pb-12 space-y-5">
+      <main className="max-w-3xl mx-auto px-5 sm:px-8 pb-28 md:pb-12 space-y-5">
         {/* Gradient-bordered hero card — cover photo backdrop when one
             exists, gradient fallback otherwise, matching the mock's header
             treatment on both the admin and member views. */}
@@ -1116,63 +1230,53 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           </div>
         </div>
 
-        {/* Photos / Reels tabs */}
-        <div className="flex items-center gap-1 bg-card border border-border rounded-full p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('photos')}
-            className={`px-4 py-1.5 rounded-full text-sm font-bold transition-colors ${activeTab === 'photos' ? 'text-bg' : 'text-muted hover:text-text-primary'}`}
-            style={activeTab === 'photos' ? { background: GRADIENT, color: 'white' } : undefined}
-          >
-            Photos
-          </button>
-          <button
-            onClick={() => setActiveTab('reels')}
-            className={`px-4 py-1.5 rounded-full text-sm font-bold transition-colors ${activeTab === 'reels' ? 'text-bg' : 'text-muted hover:text-text-primary'}`}
-            style={activeTab === 'reels' ? { background: GRADIENT, color: 'white' } : undefined}
-          >
-            Reels
-          </button>
+        {/* Photos / Reels tabs, sharing a row with Find My Photos — clicking
+            it jumps to the Photos tab so results are visible immediately,
+            so it's safe to show on both tabs rather than gating on activeTab. */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-card border border-border rounded-full p-1 w-fit flex-shrink-0">
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={`px-4 py-1.5 rounded-full text-sm font-bold transition-colors ${activeTab === 'photos' ? 'text-bg' : 'text-muted hover:text-text-primary'}`}
+              style={activeTab === 'photos' ? { background: GRADIENT, color: 'white' } : undefined}
+            >
+              Photos
+            </button>
+            <button
+              onClick={() => setActiveTab('reels')}
+              className={`px-4 py-1.5 rounded-full text-sm font-bold transition-colors ${activeTab === 'reels' ? 'text-bg' : 'text-muted hover:text-text-primary'}`}
+              style={activeTab === 'reels' ? { background: GRADIENT, color: 'white' } : undefined}
+            >
+              Reels
+            </button>
+          </div>
+
+          {files.length > 0 && (
+            <button
+              onClick={() => { setActiveTab('photos'); setShowSelfie(true) }}
+              className="flex items-center gap-1.5 text-xs font-bold text-white rounded-full pl-3 pr-3.5 py-2 shadow-md shadow-accent/20 hover:opacity-90 hover:-translate-y-0.5 active:scale-95 transition-all flex-shrink-0"
+              style={{ background: GRADIENT }}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Find My Photos
+            </button>
+          )}
         </div>
 
         {activeTab === 'photos' && (
           <>
-            {isAdmin && (
-              <>
-                <div className="flex items-start gap-3 bg-card border border-border rounded-2xl p-4">
-                  <button
-                    type="button" role="switch" aria-checked={aiEnabled}
-                    onClick={() => setAiEnabled((v) => !v)}
-                    className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors mt-0.5 ${aiEnabled ? 'bg-accent' : 'bg-border'}`}
-                  >
-                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${aiEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </button>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-text-primary">✨ AI Face Search</p>
-                    <p className="text-xs text-muted leading-relaxed">
-                      Let people find themselves instantly with a selfie. Uses a small amount of your free AI credits per photo, charged as each one is indexed — turn it off now and apply it later anytime.
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setDragActive(true) }}
-                  onDragLeave={() => setDragActive(false)}
-                  onDrop={(e) => { e.preventDefault(); setDragActive(false); handleFiles(e.dataTransfer.files) }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl py-10 sm:py-14 flex flex-col items-center justify-center gap-2 text-center px-5 cursor-pointer transition-colors ${
-                    dragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-accent/40'
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden"
-                    onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
-                  />
-                  <div className="text-3xl animate-reel-float">📤</div>
-                  <p className="text-sm font-bold text-text-primary">Tap to add photos & videos</p>
-                  <p className="text-xs text-muted">or drag and drop — up to {MAX_CONCURRENT_UPLOADS} upload at once, you can add more anytime</p>
-                </div>
-              </>
-            )}
+            {/* AI Face Search toggle + the drag/drop dropzone both moved into
+                UploadOptionsModal, opened from the bottom bar's Upload
+                button — no longer permanently inline on this tab. The
+                hidden file input itself still needs to live somewhere in
+                this tree since fileInputRef is shared. */}
+            <input
+              ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden"
+              onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; setShowUploadModal(false) }}
+            />
 
             {files.length > 0 && canReel && reelSelectMode && (
               <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
@@ -1182,21 +1286,6 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                   className="text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
                 >
                   Cancel
-                </button>
-              </div>
-            )}
-
-            {files.length > 0 && (
-              <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-                <button
-                  onClick={() => setShowSelfie(true)}
-                  className="flex items-center gap-1.5 text-xs font-semibold border border-accent/40 text-accent bg-accent/10 rounded-full px-3 py-1.5 hover:bg-accent/20 transition-colors flex-shrink-0"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  Find My Photos
                 </button>
               </div>
             )}
@@ -1213,7 +1302,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                 <div className="text-3xl">📷</div>
                 <p className="text-sm font-semibold text-text-primary">{selfieFileIds ? 'No matches' : 'No photos yet'}</p>
                 <p className="text-xs text-muted max-w-xs">
-                  {selfieFileIds ? 'No photos matched your selfie.' : isAdmin ? 'Add your first photo or video above to get this gallery started.' : 'The gallery owner hasn\'t added any photos yet.'}
+                  {selfieFileIds ? 'No photos matched your selfie.' : isAdmin ? 'Tap Upload below to get this gallery started.' : 'The gallery owner hasn\'t added any photos yet.'}
                 </p>
               </div>
             ) : (
@@ -1312,14 +1401,14 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         {activeTab === 'reels' && <ReelsTabContent projectId={projectId} canReel={canReel} />}
       </main>
 
-      {activeTab === 'photos' && canReel && files.length > 0 && !reelSelectMode && (
-        <button
-          onClick={() => { setReelSelectMode(true); setReelSelectedIds(new Set()) }}
-          className="fixed bottom-24 md:bottom-8 right-4 z-30 flex items-center gap-1.5 text-sm font-bold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 active:scale-[0.97] transition-all rounded-full pl-4 pr-5 py-3 shadow-2xl"
-        >
-          ✨ Make a reel
-        </button>
-      )}
+      <GalleryBottomNav
+        isAdmin={isAdmin}
+        canReel={canReel}
+        onChat={() => setShowChat(true)}
+        onUpload={() => { setActiveTab('photos'); setShowUploadModal(true) }}
+        onManagePeople={() => setShowPeople(true)}
+        onReelIt={() => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) }}
+      />
 
       {lightboxIndex !== null && (
         <PhotoLightbox
@@ -1349,10 +1438,57 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
 
       {showPeople && <PeopleModal projectId={projectId} onClose={() => setShowPeople(false)} />}
 
+      {/* Notifications/Profile open as popups over the gallery instead of
+          navigating away — closing one lands you right back on whichever
+          tab/state you had open, since the gallery page never unmounts. */}
+      {showNotifications && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={() => setShowNotifications(false)}>
+          <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div>
+                <h2 className="text-sm font-bold text-text-primary">Notifications</h2>
+                <p className="text-xs text-muted">Join requests waiting on you</p>
+              </div>
+              <button onClick={() => setShowNotifications(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <NotificationsPanel enableAuthRedirect={false} onPendingCountChange={setPendingCount} onModal />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProfile && (
+        <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={() => setShowProfile(false)}>
+          <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <h2 className="text-sm font-bold text-text-primary">Profile</h2>
+              <button onClick={() => setShowProfile(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <ProfilePanel innerBg="bg" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {showChat && <GroupChatModal projectId={projectId} onClose={() => setShowChat(false)} />}
 
+      {showUploadModal && (
+        <UploadOptionsModal
+          aiEnabled={aiEnabled}
+          onToggleAi={() => setAiEnabled((v) => !v)}
+          dragActive={dragActive}
+          setDragActive={setDragActive}
+          onFiles={handleFiles}
+          fileInputRef={fileInputRef}
+          onClose={() => setShowUploadModal(false)}
+          maxConcurrent={MAX_CONCURRENT_UPLOADS}
+        />
+      )}
+
       {reelSelectMode && reelSelectedIds.size >= MIN_REEL_PHOTOS && (
-        <div className="fixed bottom-5 inset-x-4 z-30 flex justify-center">
+        <div className="fixed bottom-20 md:bottom-8 inset-x-4 md:inset-x-auto md:right-8 md:left-20 lg:left-56 z-30 flex justify-center">
           <button
             onClick={() => setShowReelModal(true)}
             className="bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold px-6 py-3.5 rounded-2xl shadow-2xl active:scale-[0.97] transition-all"

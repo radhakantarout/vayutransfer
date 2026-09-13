@@ -4,24 +4,18 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByPK, studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { createOwnerMembership } from '@/lib/studio/galleryMembers'
 import { getMediaPreviewUrl } from '@/lib/studio/storage'
-import type { StudioProject, StudioUser, GalleryMember, MediaFile } from '@/types/studio'
+import type { StudioProject, StudioUser, GalleryMember, MediaFile, StudioReel } from '@/types/studio'
 
-// No cover-photo field on StudioProject for Moments (v1) — computed at read
-// time instead, same "falls back to the first ready photo" spirit as
-// StudioProject.coverPhotoFileId elsewhere in this codebase, just derived
-// rather than stored. Cheapest correct thing for a personal gallery's own
-// small photo count; revisit if this list ever needs to scale past a
-// handful of events per person.
-async function resolveCoverPhotoUrl(projectId: string): Promise<string | null> {
-  const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+// Cover photo respects an admin-chosen coverPhotoFileId (from the gallery
+// card's "edit cover" pencil) when set, same fallback-to-first-ready-photo
+// pattern StudioProject.coverPhotoFileId already uses elsewhere in this
+// codebase — falls back cleanly if unset or the chosen file was deleted.
+async function resolveCoverPhotoUrl(project: StudioProject, files: MediaFile[]): Promise<string | null> {
   const ready = files.filter((f) => f.processingStatus === 'READY').sort((a, b) => a.displayOrder - b.displayOrder)
-  if (ready.length === 0) return null
-  return (await getMediaPreviewUrl(ready[0]).catch(() => undefined)) ?? null
-}
-
-async function countApprovedMembers(projectId: string): Promise<number> {
-  const members = await studioQueryByPK<GalleryMember>(TABLES.galleryMembers, 'projectId', projectId)
-  return members.filter((m) => m.status === 'APPROVED').length
+  const chosen = project.coverPhotoFileId ? ready.find((f) => f.fileId === project.coverPhotoFileId) : undefined
+  const pick = chosen ?? ready[0]
+  if (!pick) return null
+  return (await getMediaPreviewUrl(pick).catch(() => undefined)) ?? null
 }
 
 // GET /studio/api/moments/events — this individual's own galleries, PLUS any
@@ -52,11 +46,23 @@ export async function GET(req: NextRequest) {
     const events = [...owned, ...joined]
     events.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
 
-    const enriched = await Promise.all(events.map(async (e) => ({
-      ...e,
-      coverPhotoUrl: await resolveCoverPhotoUrl(e.projectId),
-      memberCount: await countApprovedMembers(e.projectId),
-    })))
+    const enriched = await Promise.all(events.map(async (e) => {
+      const [files, members, reels] = await Promise.all([
+        studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', e.projectId),
+        studioQueryByPK<GalleryMember>(TABLES.galleryMembers, 'projectId', e.projectId),
+        studioQueryByIndex<StudioReel>(TABLES.reels, 'projectId-createdAt-index', 'projectId = :p', { ':p': e.projectId }).catch(() => [] as StudioReel[]),
+      ])
+      const isAdmin = ownedIds.has(e.projectId) || members.find((m) => m.userId === auth.userId)?.role === 'ADMIN'
+      return {
+        ...e,
+        coverPhotoUrl: await resolveCoverPhotoUrl(e, files),
+        memberCount: members.filter((m) => m.status === 'APPROVED').length,
+        photoCount: files.filter((f) => f.fileType === 'IMAGE').length,
+        videoCount: files.filter((f) => f.fileType === 'VIDEO').length,
+        reelCount: reels.length,
+        isAdmin,
+      }
+    }))
 
     return NextResponse.json({ success: true, data: enriched })
   } catch (err) {

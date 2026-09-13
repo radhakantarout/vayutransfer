@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
+import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
+import type { MediaFile } from '@/types/studio'
 
 const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 
@@ -18,8 +20,13 @@ interface MomentsEvent {
   projectId: string
   clientName: string
   updatedAt: string
+  createdAt: string
   coverPhotoUrl?: string | null
   memberCount?: number
+  photoCount?: number
+  videoCount?: number
+  reelCount?: number
+  isAdmin?: boolean
 }
 
 const FEATURES = [
@@ -27,6 +34,12 @@ const FEATURES = [
   { emoji: '💌', title: 'Invite your people', body: 'Share access easily via link, QR, or contact list.', tint: 'linear-gradient(135deg,#3b82f6,#8b5cf6)' },
   { emoji: '🎬', title: 'Turn it into a reel', body: 'Compile best moments into a stunning video montage.', tint: 'linear-gradient(135deg,#8b5cf6,#ec4899)' },
 ]
+
+function daysLeftFor(createdAt: string): number {
+  const created = new Date(createdAt)
+  const deadline = new Date(created.getTime() + MOMENTS_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  return Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+}
 
 // No real photography to source (same limitation solved for Reel style
 // cards) — a small scattered "photo stack" built from gradient tiles +
@@ -42,12 +55,109 @@ function PhotoStack() {
   )
 }
 
+// "Edit cover" pencil — always picks from an EXISTING ready photo already in
+// the gallery (same precedent as Studio Admin's "Set as Cover"), never a
+// fresh upload, so this needs no upload machinery of its own.
+function CoverPickerModal({ projectId, onClose, onPicked }: { projectId: string; onClose: () => void; onPicked: (url: string | null) => void }) {
+  const [files, setFiles] = useState<MediaFile[] | null>(null)
+  const [saving, setSaving] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch(`/studio/api/moments/events/${projectId}/files`)
+      .then((r) => r.json())
+      .then((res) => setFiles(res.success ? res.data : []))
+      .catch(() => setFiles([]))
+  }, [projectId])
+
+  const pick = async (fileId: string, previewUrl: string) => {
+    setSaving(fileId)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coverPhotoFileId: fileId }),
+      }).then((r) => r.json())
+      if (res.success) { onPicked(previewUrl); onClose() }
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const ready = (files ?? []).filter((f) => f.fileType === 'IMAGE' && f.processingStatus === 'READY' && !!f.r2PreviewUrl)
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+          <h2 className="text-sm font-bold text-text-primary">Choose a cover photo</h2>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {files === null ? (
+            <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+          ) : ready.length === 0 ? (
+            <p className="text-xs text-muted text-center py-10">Add some photos to this gallery first, then come back to pick a cover.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {ready.map((f) => (
+                <button
+                  key={f.fileId}
+                  onClick={() => pick(f.fileId, f.r2PreviewUrl!)}
+                  disabled={!!saving}
+                  className="relative aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-accent transition-colors disabled:opacity-50"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                  {saving === f.fileId && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DeleteConfirmModal({ event, onClose, onConfirm, deleting }: { event: MomentsEvent; onClose: () => void; onConfirm: () => void; deleting: boolean }) {
+  const totalMedia = (event.photoCount ?? 0) + (event.videoCount ?? 0)
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={deleting ? undefined : onClose}>
+      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-6 space-y-4 text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="text-3xl">⚠️</div>
+        <div className="space-y-1.5">
+          <h2 className="text-base font-extrabold text-text-primary">Delete &quot;{event.clientName}&quot;?</h2>
+          <p className="text-xs text-muted leading-relaxed">
+            This permanently deletes {totalMedia} photo{totalMedia === 1 ? '' : 's'}/video{totalMedia === 1 ? '' : 's'}
+            {!!event.reelCount && ` and ${event.reelCount} reel${event.reelCount === 1 ? '' : 's'}`}, every comment and like, and removes everyone in this gallery. This cannot be undone.
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onClose} disabled={deleting} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={deleting} className="flex-1 bg-danger text-white text-sm font-bold py-3 rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50">
+            {deleting ? 'Deleting…' : 'Delete forever'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function MomentsLandingPage() {
   const router = useRouter()
   const [me, setMe]         = useState<Me | null>(null)
   const [events, setEvents] = useState<MomentsEvent[] | null>(null)
   const [checking, setChecking] = useState(true)
   const [pendingCount, setPendingCount] = useState(0)
+  const [editingCoverFor, setEditingCoverFor] = useState<string | null>(null)
+  const [deleteConfirmFor, setDeleteConfirmFor] = useState<MomentsEvent | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     fetch('/studio/api/auth/me')
@@ -68,6 +178,20 @@ export default function MomentsLandingPage() {
       .catch(() => router.replace('/studio/login?next=/studio/moments'))
       .finally(() => setChecking(false))
   }, [router])
+
+  const handleDelete = async () => {
+    if (!deleteConfirmFor) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${deleteConfirmFor.projectId}`, { method: 'DELETE' }).then((r) => r.json())
+      if (res.success) {
+        setEvents((prev) => (prev ?? []).filter((e) => e.projectId !== deleteConfirmFor.projectId))
+        setDeleteConfirmFor(null)
+      }
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (checking || !me) {
     return (
@@ -100,30 +224,75 @@ export default function MomentsLandingPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              {events!.map((ev, i) => (
-                <Link
-                  key={ev.projectId}
-                  href={`/studio/moments/${ev.projectId}`}
-                  className="relative overflow-hidden rounded-2xl aspect-[4/5] group animate-reel-pop-in"
-                  style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'backwards' }}
-                >
-                  {ev.coverPhotoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={ev.coverPhotoUrl} alt="" className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105" />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-3xl" style={{ background: GRADIENT }}>🎉</div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/0" />
-                  <div className="absolute bottom-0 left-0 right-0 p-3 space-y-1">
-                    <p className="text-sm font-bold text-white truncate drop-shadow">{ev.clientName}</p>
-                    {!!ev.memberCount && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
-                        👥 {ev.memberCount} {ev.memberCount === 1 ? 'person' : 'people'}
-                      </span>
+              {events!.map((ev, i) => {
+                const daysLeft = daysLeftFor(ev.createdAt)
+                const totalMedia = (ev.photoCount ?? 0) + (ev.videoCount ?? 0)
+                return (
+                  <Link
+                    key={ev.projectId}
+                    href={`/studio/moments/${ev.projectId}`}
+                    className="relative overflow-hidden rounded-2xl aspect-[4/5] group animate-reel-pop-in"
+                    style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'backwards' }}
+                  >
+                    {ev.coverPhotoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={ev.coverPhotoUrl} alt="" className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105" />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-3xl" style={{ background: GRADIENT }}>🎉</div>
                     )}
-                  </div>
-                </Link>
-              ))}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/0" />
+
+                    <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full backdrop-blur ${daysLeft <= 2 ? 'bg-danger/85 text-white' : 'bg-black/40 text-white/90'}`}>
+                        {daysLeft > 0 ? `${daysLeft}d left` : 'Expiring'}
+                      </span>
+                      {ev.isAdmin && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingCoverFor(ev.projectId) }}
+                            aria-label="Change cover photo"
+                            title="Change cover photo"
+                            className="w-6 h-6 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur transition-colors"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmFor(ev) }}
+                            aria-label="Delete gallery"
+                            title="Delete gallery"
+                            className="w-6 h-6 flex items-center justify-center rounded-full bg-black/40 hover:bg-danger text-white backdrop-blur transition-colors"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="absolute bottom-0 left-0 right-0 p-3 space-y-1">
+                      <p className="text-sm font-bold text-white truncate drop-shadow">{ev.clientName}</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {!!ev.memberCount && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
+                            👥 {ev.memberCount}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
+                          🖼️ {totalMedia}
+                        </span>
+                        {!!ev.reelCount && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/90 bg-white/15 backdrop-blur px-2 py-0.5 rounded-full">
+                            🎬 {ev.reelCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </Link>
+                )
+              })}
             </div>
           </>
         ) : (
@@ -167,6 +336,18 @@ export default function MomentsLandingPage() {
           </>
         )}
       </main>
+
+      {editingCoverFor && (
+        <CoverPickerModal
+          projectId={editingCoverFor}
+          onClose={() => setEditingCoverFor(null)}
+          onPicked={(url) => setEvents((prev) => (prev ?? []).map((e) => (e.projectId === editingCoverFor ? { ...e, coverPhotoUrl: url } : e)))}
+        />
+      )}
+
+      {deleteConfirmFor && (
+        <DeleteConfirmModal event={deleteConfirmFor} deleting={deleting} onClose={() => setDeleteConfirmFor(null)} onConfirm={handleDelete} />
+      )}
 
       <MomentsBottomNav pendingCount={pendingCount} />
     </div>
