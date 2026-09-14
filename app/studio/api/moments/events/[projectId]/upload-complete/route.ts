@@ -3,13 +3,18 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { completeStudioR2MultipartUpload, abortStudioR2MultipartUpload } from '@/lib/studio/r2'
 import { invokeStudioWatermarkLambda } from '@/lib/studio/watermark'
+import { invokeVideoTranscodeLambda } from '@/lib/studio/videoTranscode'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import type { MediaFile } from '@/types/studio'
 
-// Mirrors admin/projects/[projectId]/upload-complete exactly — same billing
-// increment + fire-and-forget watermark invocation (which already no-ops for
-// VIDEO files, see lambda/vayustudio-watermark/index.js). Gated to the
-// gallery's own admin(s), same as upload-url.
+// Mirrors admin/projects/[projectId]/upload-complete's billing-increment
+// logic, but diverges on which processing Lambda gets invoked: IMAGE goes
+// to the shared watermark Lambda (unchanged), VIDEO goes to its own
+// transcode Lambda (converts e.g. iPhone HEVC/.mov — unplayable outside
+// Safari — to universally-playable H.264/AAC mp4). Both write processingStatus
+// + r2PreviewUrl through the identical shape, so nothing downstream of this
+// route needs to know which one ran. Gated to the gallery's own admin(s),
+// same as upload-url.
 export async function POST(
   req: NextRequest,
   { params }: { params: { projectId: string } }
@@ -63,7 +68,10 @@ export async function POST(
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
 
-    if (!process.env.WATERMARK_LAMBDA_ARN) {
+    const isVideo = mediaFile.fileType === 'VIDEO'
+    const lambdaArn = isVideo ? process.env.VIDEO_TRANSCODE_LAMBDA_ARN : process.env.WATERMARK_LAMBDA_ARN
+
+    if (!lambdaArn) {
       await studioUpdateItem(
         TABLES.mediafiles,
         { projectId, fileId },
@@ -80,15 +88,24 @@ export async function POST(
       { ':s': 'PROCESSING', ':now': now }
     )
 
-    invokeStudioWatermarkLambda({
-      fileId,
-      projectId,
-      studioId,
-      sourceKey: mediaFile.r2Key,
-      sourceBackend: 'R2',
-      watermarkEnabled: mediaFile.watermarkEnabled,
-      fileType: mediaFile.fileType,
-    }).catch((err: unknown) => console.error('[moments watermark-lambda invoke]', err))
+    if (isVideo) {
+      invokeVideoTranscodeLambda({
+        fileId,
+        projectId,
+        studioId,
+        sourceKey: mediaFile.r2Key,
+      }).catch((err: unknown) => console.error('[moments vidtranscode-lambda invoke]', err))
+    } else {
+      invokeStudioWatermarkLambda({
+        fileId,
+        projectId,
+        studioId,
+        sourceKey: mediaFile.r2Key,
+        sourceBackend: 'R2',
+        watermarkEnabled: mediaFile.watermarkEnabled,
+        fileType: mediaFile.fileType,
+      }).catch((err: unknown) => console.error('[moments watermark-lambda invoke]', err))
+    }
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })
   } catch (err) {

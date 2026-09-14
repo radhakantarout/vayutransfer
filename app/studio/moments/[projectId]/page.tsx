@@ -59,6 +59,38 @@ function retentionCountdown(createdAt: string): { daysLeft: number; deadline: st
   return { daysLeft, deadline: deadline.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) }
 }
 
+// Mounting a real <video> for every video tile in the grid at once is the
+// root cause of a real crash on mobile — iOS Safari has a hard limit on
+// concurrent decodable <video> elements. Mounts the actual element only
+// once a tile is about to scroll into view (and leaves it mounted after —
+// simplest fix that caps the worst case without remount/flicker
+// complexity). playsInline matters here too, not just in the lightbox.
+function LazyGridVideo({ src }: { src: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { rootMargin: '200px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  return (
+    <div ref={ref} className="w-full h-full">
+      {visible ? (
+        <video src={src} muted playsInline preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-2xl bg-card">🎬</div>
+      )}
+    </div>
+  )
+}
+
 async function initOrResumeUpload(
   projectId: string,
   file: File,
@@ -250,6 +282,39 @@ function LikersSheet({ projectId, fileId, onClose }: { projectId: string; fileId
               </div>
             ))
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Photo info — filename/date/size/counts. Rendered by this page (not the
+// shared PhotoLightbox) since it needs the full GalleryFile record the
+// lightbox itself never sees — it only ever gets the slim LightboxPhoto
+// shape. ─────────────────────────────────────────────────────────────────
+function PhotoInfoSheet({ file, onClose }: { file: GalleryFile; onClose: () => void }) {
+  const rows: [string, string][] = [
+    ['Name', file.originalFilename],
+    ['Type', file.fileType === 'VIDEO' ? 'Video' : 'Photo'],
+    ['Size', formatBytes(file.sizeBytes)],
+    ['Uploaded', new Date(file.uploadedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })],
+    ['Likes', String(file.likeCount ?? 0)],
+    ['Comments', String(file.commentCount ?? 0)],
+  ]
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-xs" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+          <h2 className="text-sm font-bold text-text-primary">Info</h2>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+        </div>
+        <div className="px-5 py-4 space-y-2.5">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted">{label}</span>
+              <span className="text-text-primary font-semibold truncate max-w-[60%] text-right">{value}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -874,12 +939,22 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [commentsFor, setCommentsFor] = useState<string | null>(null)
   const [likersFor, setLikersFor] = useState<string | null>(null)
+  const [infoFor, setInfoFor] = useState<string | null>(null)
   const [showPeople, setShowPeople] = useState(false)
   const [showChat, setShowChat] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [indexingUntil, setIndexingUntil] = useState<number | null>(null)
+  const [indexError, setIndexError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'photos' | 'reels'>('photos')
   const [reelSelectMode, setReelSelectMode] = useState(false)
   const [reelSelectedIds, setReelSelectedIds] = useState<Set<string>>(new Set())
+  // Long-press multi-select — separate from reel-select (different action
+  // set: Love/Download/Share/Bin, not "create a reel"), mutually exclusive
+  // with it so the two gestures can't both be active at once.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressFiredRef = useRef(false)
   const [showReelModal, setShowReelModal] = useState(false)
   const [showSelfie, setShowSelfie] = useState(false)
   const [selfieFileIds, setSelfieFileIds] = useState<Set<string> | null>(null)
@@ -946,6 +1021,20 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     if (open === 'people' && isAdmin) setShowPeople(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access?.status, isAdmin])
+
+  // Clears the "Indexing…" state as soon as the live-poll shows nothing
+  // left unindexed, or after the bounded safety-net window either way.
+  useEffect(() => {
+    if (!indexingUntil) return
+    const stillUnindexed = files.some((f) => f.processingStatus === 'READY' && f.fileType === 'IMAGE' && !f.faceIndexed)
+    if (!stillUnindexed) { setIndexingUntil(null); return }
+    const timer = setTimeout(() => setIndexingUntil(null), Math.max(0, indexingUntil - Date.now()))
+    return () => clearTimeout(timer)
+  }, [files, indexingUntil])
+
+  useEffect(() => {
+    if (selectMode && selectedIds.size === 0) setSelectMode(false)
+  }, [selectMode, selectedIds])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -1083,6 +1172,53 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     if (!res?.success) refreshFiles() // revert via a fresh fetch if the toggle failed
   }
 
+  // Retroactively index photos that were skipped when uploaded — same
+  // route/Lambda the upload-time effect above already calls, just with
+  // whatever's currently unindexed instead of one fresh batch's fileIds.
+  // Badges/count update on their own via the existing 4s live-poll once the
+  // (fire-and-forget) Lambda finishes; indexingUntil is just a bounded
+  // safety net so the button doesn't stay stuck if that never happens.
+  const enableIndexing = async (fileIds: string[]) => {
+    if (fileIds.length === 0) return
+    setIndexError(null)
+    setIndexingUntil(Date.now() + 45000)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${projectId}/faces/index`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds }),
+      }).then((r) => r.json())
+      if (!res.success) {
+        setIndexingUntil(null)
+        setIndexError(res.error === 'QUOTA_EXCEEDED' ? 'Not enough AI credits right now.' : 'Could not start indexing — try again.')
+      }
+    } catch {
+      setIndexingUntil(null)
+      setIndexError('Could not start indexing — try again.')
+    }
+  }
+
+  // Shares the actual photo/video file via the native share sheet (so the
+  // recipient gets the real media, not a private/expiring gallery link) —
+  // falls back to just opening it (triggering a download) if the browser
+  // doesn't support Web Share's file-sharing form.
+  const shareFiles = async (targets: { previewUrl: string; filename: string }[]) => {
+    try {
+      const fetched = await Promise.all(targets.map(async (t) => {
+        const blob = await fetch(t.previewUrl).then((r) => r.blob())
+        return new File([blob], t.filename, { type: blob.type })
+      }))
+      if (navigator.canShare?.({ files: fetched })) {
+        await navigator.share({ files: fetched })
+        return
+      }
+      targets.forEach((t) => window.open(t.previewUrl, '_blank'))
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return // user cancelled the share sheet
+      targets.forEach((t) => window.open(t.previewUrl, '_blank'))
+    }
+  }
+
   const bumpCommentCount = (fileId: string, delta: number) => {
     setFiles((prev) => prev.map((f) => f.fileId === fileId ? { ...f, commentCount: Math.max(0, (f.commentCount ?? 0) + delta) } : f))
   }
@@ -1094,6 +1230,59 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       else if (next.size < MAX_REEL_PHOTOS) next.add(fileId)
       return next
     })
+  }
+
+  const toggleSelected = (fileId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(fileId)) next.delete(fileId)
+      else next.add(fileId)
+      return next
+    })
+  }
+
+  const startLongPress = (fileId: string) => {
+    longPressFiredRef.current = false
+    longPressTimer.current = setTimeout(() => {
+      longPressFiredRef.current = true
+      setSelectMode(true)
+      // Functional form — adds to whatever's currently selected rather than
+      // resetting it, so long-pressing a second tile after the first can't
+      // wipe out an in-progress selection.
+      setSelectedIds((prev) => new Set(prev).add(fileId))
+      navigator.vibrate?.(10)
+    }, 500)
+  }
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+  }
+  const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()) }
+
+  const bulkLike = async () => {
+    const targets = files.filter((f) => selectedIds.has(f.fileId) && !f.likedByMe)
+    await Promise.all(targets.map((f) => toggleLike(f.fileId)))
+    exitSelectMode()
+  }
+  const bulkDownload = () => {
+    files.filter((f) => selectedIds.has(f.fileId) && f.r2PreviewUrl).forEach((f) => window.open(f.r2PreviewUrl, '_blank'))
+    exitSelectMode()
+  }
+  const bulkShare = async () => {
+    const targets = files.filter((f) => selectedIds.has(f.fileId) && f.r2PreviewUrl)
+      .map((f) => ({ previewUrl: f.r2PreviewUrl!, filename: f.originalFilename }))
+    await shareFiles(targets)
+    exitSelectMode()
+  }
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedIds)
+    if (!window.confirm(`Delete ${ids.length} item${ids.length === 1 ? '' : 's'} permanently? This can't be undone.`)) return
+    const res = await fetch(`/studio/api/moments/events/${projectId}/files`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileIds: ids }),
+    }).then((r) => r.json())
+    if (res.success) setFiles((prev) => prev.filter((f) => !selectedIds.has(f.fileId)))
+    exitSelectMode()
   }
 
   // Sign out lives on /studio/moments/profile now — the per-gallery menu
@@ -1157,11 +1346,16 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const displayFiles = selfieFileIds ? files.filter((f) => selfieFileIds.has(f.fileId)) : files
   const viewablePhotos: LightboxPhoto[] = displayFiles
     .filter((f) => f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl)
-    .map((f) => ({ fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType }))
+    .map((f) => ({
+      fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType,
+      likeCount: f.likeCount, commentCount: f.commentCount, likedByMe: f.likedByMe,
+    }))
 
   const coverPhotoUrl = files.find((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl)?.r2PreviewUrl
   const photoCount = files.filter((f) => f.fileType === 'IMAGE').length
   const videoCount = files.filter((f) => f.fileType === 'VIDEO').length
+  const unindexedPhotos = files.filter((f) => f.processingStatus === 'READY' && f.fileType === 'IMAGE' && !f.faceIndexed)
+  const indexing = !!indexingUntil && Date.now() < indexingUntil
 
   return (
     <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-20 md:pb-0 md:pl-20 lg:pl-56">
@@ -1255,6 +1449,26 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
               </div>
             )}
 
+            {isAdmin && unindexedPhotos.length > 0 && (
+              <div className="flex items-center justify-between gap-2 bg-accent/10 border border-accent/20 rounded-xl px-3.5 py-2.5">
+                <span className="text-xs text-accent font-semibold">
+                  ✨ {unindexedPhotos.length} photo{unindexedPhotos.length === 1 ? '' : 's'} not searchable yet
+                </span>
+                <button
+                  onClick={() => enableIndexing(unindexedPhotos.map((f) => f.fileId))}
+                  disabled={indexing}
+                  className="text-xs font-bold text-white rounded-full px-3.5 py-1.5 flex-shrink-0 hover:opacity-90 transition-opacity disabled:opacity-60"
+                  style={{ background: GRADIENT }}
+                >
+                  {indexing ? 'Indexing…' : 'Enable AI search'}
+                </button>
+              </div>
+            )}
+
+            {indexError && (
+              <p className="text-xs text-danger px-1">{indexError}</p>
+            )}
+
             {selfieFileIds && (
               <div className="flex items-center gap-2 px-3 py-2 bg-accent/10 rounded-xl text-xs text-accent font-semibold">
                 <span>Showing {displayFiles.length} photo{displayFiles.length !== 1 ? 's' : ''} with you</span>
@@ -1274,34 +1488,41 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
                 {displayFiles.map((f) => {
                   const isReady = f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl
-                  const isPicked = reelSelectedIds.has(f.fileId)
+                  const isPicked = reelSelectMode ? reelSelectedIds.has(f.fileId) : selectedIds.has(f.fileId)
+                  const anySelectMode = reelSelectMode || selectMode
                   return (
                     <div key={f.fileId} className="relative aspect-square rounded-xl overflow-hidden bg-card border border-border">
                       <div
                         onClick={() => {
+                          if (longPressFiredRef.current) { longPressFiredRef.current = false; return }
                           if (!isReady) return
+                          if (selectMode) { toggleSelected(f.fileId); return }
                           if (reelSelectMode) toggleReelSelect(f.fileId)
                           else setLightboxIndex(viewablePhotos.findIndex((p) => p.fileId === f.fileId))
                         }}
-                        className={`w-full h-full ${isReady ? 'cursor-pointer' : ''} ${reelSelectMode && isReady ? (isPicked ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border') : ''}`}
+                        onPointerDown={() => { if (isReady && !reelSelectMode) startLongPress(f.fileId) }}
+                        onPointerUp={cancelLongPress}
+                        onPointerLeave={cancelLongPress}
+                        onPointerCancel={cancelLongPress}
+                        className={`w-full h-full ${isReady ? 'cursor-pointer' : ''} ${anySelectMode && isReady ? (isPicked ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border') : ''}`}
                       >
                         {!isReady ? (
                           <div className="w-full h-full flex items-center justify-center text-2xl">{f.fileType === 'VIDEO' ? '🎬' : '🖼️'}</div>
                         ) : f.fileType === 'VIDEO' ? (
-                          <video src={f.r2PreviewUrl} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+                          <LazyGridVideo src={f.r2PreviewUrl!} />
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" loading="lazy" />
                         )}
                       </div>
-                      {f.fileType === 'VIDEO' && isReady && !reelSelectMode && (
+                      {f.fileType === 'VIDEO' && isReady && !anySelectMode && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                           <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
                             <div className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5" />
                           </div>
                         </div>
                       )}
-                      {reelSelectMode && isReady && (
+                      {anySelectMode && isReady && (
                         <div className={`absolute inset-0 flex items-center justify-center transition-colors pointer-events-none ${isPicked ? 'bg-accent/25' : 'bg-black/10'}`}>
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isPicked ? 'bg-accent border-accent scale-100' : 'border-white/80 scale-90 bg-black/20'}`}>
                             {isPicked && (
@@ -1317,27 +1538,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         </div>
                       )}
-                      {isAdmin && !reelSelectMode && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteFile(f.fileId) }}
-                          disabled={deletingId === f.fileId}
-                          aria-label="Delete"
-                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/55 hover:bg-danger flex items-center justify-center text-white transition-colors disabled:opacity-50"
-                        >
-                          {deletingId === f.fileId ? (
-                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          )}
-                        </button>
-                      )}
-                      {isReady && !reelSelectMode && (
+                      {isReady && !anySelectMode && (
                         <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5">
                           <button
                             onClick={(e) => { e.stopPropagation(); toggleLike(f.fileId) }}
-                            className="flex items-center gap-0.5 bg-black/55 rounded-full px-1.5 py-0.5 text-white text-[10px] font-semibold"
+                            className="flex items-center gap-0.5 bg-black/45 backdrop-blur-sm border border-white/10 rounded-full px-1.5 py-0.5 text-white text-[10px] font-semibold"
                           >
                             <span className={f.likedByMe ? 'text-rose-500' : ''}>{f.likedByMe ? '❤️' : '🤍'}</span>
                             {(f.likeCount ?? 0) > 0 && (
@@ -1348,12 +1553,22 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); setCommentsFor(f.fileId) }}
-                            className="flex items-center gap-0.5 bg-black/55 rounded-full px-1.5 py-0.5 text-white text-[10px] font-semibold"
+                            className="flex items-center gap-0.5 bg-black/45 backdrop-blur-sm border border-white/10 rounded-full px-1.5 py-0.5 text-white text-[10px] font-semibold"
                           >
                             <span>💬</span>
                             {(f.commentCount ?? 0) > 0 && <span>{f.commentCount}</span>}
                           </button>
                         </div>
+                      )}
+                      {isAdmin && isReady && f.fileType === 'IMAGE' && f.faceIndexed && !anySelectMode && (
+                        <span
+                          title="Searchable by selfie"
+                          className="absolute bottom-1.5 right-1.5 w-5 h-5 rounded-full bg-black/45 backdrop-blur-sm border border-white/10 flex items-center justify-center text-white"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                          </svg>
+                        </span>
                       )}
                     </div>
                   )
@@ -1366,16 +1581,49 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         {activeTab === 'reels' && <ReelsTabContent projectId={projectId} canReel={canReel} />}
       </main>
 
-      <MomentsBottomNav
-        gallery={{
-          isAdmin,
-          canReel,
-          onChat: () => setShowChat(true),
-          onUpload: () => { setActiveTab('photos'); setShowUploadModal(true) },
-          onManagePeople: () => setShowPeople(true),
-          onReelIt: () => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) },
-        }}
-      />
+      {selectMode ? (
+        <div className="fixed bottom-0 inset-x-0 md:left-20 lg:left-56 z-40 bg-card border-t border-border rounded-t-3xl shadow-2xl px-4 pt-3.5 flex items-center justify-between gap-2" style={{ paddingBottom: 'calc(0.875rem + env(safe-area-inset-bottom))' }}>
+          <button onClick={exitSelectMode} className="text-sm font-semibold text-muted hover:text-text-primary flex-shrink-0 px-1">
+            Cancel
+          </button>
+          <span className="text-xs font-bold text-text-primary flex-shrink-0">{selectedIds.size} selected</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={bulkLike} title="Love" className="w-10 h-10 rounded-2xl flex items-center justify-center bg-bg hover:bg-border/60 transition-colors text-base">
+              ❤️
+            </button>
+            {canDownload && (
+              <button onClick={bulkDownload} title="Download" className="w-10 h-10 rounded-2xl flex items-center justify-center bg-bg hover:bg-border/60 text-muted hover:text-text-primary transition-colors">
+                <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+              </button>
+            )}
+            <button onClick={bulkShare} title="Share" className="w-10 h-10 rounded-2xl flex items-center justify-center bg-bg hover:bg-border/60 text-muted hover:text-text-primary transition-colors">
+              <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+              </svg>
+            </button>
+            {isAdmin && (
+              <button onClick={bulkDelete} title="Delete" className="w-10 h-10 rounded-2xl flex items-center justify-center bg-danger/10 hover:bg-danger/20 text-danger transition-colors">
+                <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <MomentsBottomNav
+          gallery={{
+            isAdmin,
+            canReel,
+            onChat: () => setShowChat(true),
+            onUpload: () => { setActiveTab('photos'); setShowUploadModal(true) },
+            onManagePeople: () => setShowPeople(true),
+            onReelIt: () => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) },
+          }}
+        />
+      )}
 
       {lightboxIndex !== null && (
         <PhotoLightbox
@@ -1386,6 +1634,10 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           role="moments"
           onDelete={isAdmin ? (photo) => deleteFile(photo.fileId) : undefined}
           onDownload={canDownload ? (photo) => window.open(photo.previewUrl, '_blank') : undefined}
+          onShare={(photo) => shareFiles([{ previewUrl: photo.previewUrl, filename: photo.filename }])}
+          onInfo={(photo) => setInfoFor(photo.fileId)}
+          onToggleLike={(photo) => toggleLike(photo.fileId)}
+          onOpenComments={(photo) => setCommentsFor(photo.fileId)}
         />
       )}
 
@@ -1402,6 +1654,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       {likersFor && (
         <LikersSheet projectId={projectId} fileId={likersFor} onClose={() => setLikersFor(null)} />
       )}
+
+      {infoFor && (() => {
+        const infoFile = files.find((f) => f.fileId === infoFor)
+        return infoFile ? <PhotoInfoSheet file={infoFile} onClose={() => setInfoFor(null)} /> : null
+      })()}
 
       {showPeople && <PeopleModal projectId={projectId} onClose={() => setShowPeople(false)} />}
 
