@@ -10,6 +10,11 @@ export interface LightboxPhoto {
   // controls> element instead. First used by VayuStudios Moments, which is
   // also the first surface to render any video at all in a gallery grid.
   fileType?: 'IMAGE' | 'VIDEO'
+  // VIDEO only — a static poster-frame JPEG (lambda/vayustudio-vidtranscode).
+  // The thumbnail strip below can only ever render <img>, so a VIDEO entry
+  // with no thumbnailUrl falls back to previewUrl, which is the actual mp4
+  // and renders as a broken image — this field is what fixes that.
+  thumbnailUrl?: string
   // Moments role only — drives the bottom-left love/comment pills. Optional
   // everywhere else, so Client/Guest/Admin usages (which never populate
   // these) are unaffected.
@@ -311,7 +316,12 @@ export default function PhotoLightbox({
             <button key={photo.fileId} onClick={() => onIndexChange(idx)}
               className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden snap-center border-2 transition-all ${
                 idx === index ? 'border-accent scale-105' : 'border-white/20 opacity-60'}`}>
-              <img src={photo.previewUrl} alt="" className="w-full h-full object-cover" />
+              <img src={photo.fileType === 'VIDEO' ? (photo.thumbnailUrl ?? photo.previewUrl) : photo.previewUrl} alt="" className="w-full h-full object-cover" />
+              {photo.fileType === 'VIDEO' && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-0 h-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-white/90 ml-0.5" />
+                </div>
+              )}
             </button>
           ))}
           <div style={{ width: 'calc(50% - 28px)' }} className="flex-shrink-0" aria-hidden />

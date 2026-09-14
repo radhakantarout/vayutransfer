@@ -46,20 +46,24 @@ export async function getMediaDownloadUrl(
     : s3.getStudioSignedDownloadUrl(key, filename, opts?.expiresInSeconds)
 }
 
-// r2PreviewUrl is the watermarked preview written by the Lambda pipeline —
-// trustworthy once set, regardless of which backend the source file is on
-// (the Lambda re-runs and overwrites this same preview on every edit re-
-// upload). Only fall back to a raw signed view of the current file — from
-// whichever backend it's actually on — when no preview exists yet at all.
-// VIDEO files never get a Lambda-written preview (the watermark Lambda
-// no-ops on non-image files) so this fallback is the ONLY way a video is
-// ever viewable — previously this returned `undefined` unconditionally for
-// non-IMAGE files (harmless while nothing rendered `<video>` anywhere in the
-// app, but a real bug once VayuStudios Moments' gallery grid started trying
-// to play videos: every uploaded video appeared "broken" with no playable
-// source at all).
+// r2PreviewUrl is the Lambda-written preview — for IMAGE it's the
+// watermarked copy, for VIDEO it's the transcoded H.264/AAC mp4
+// (lambda/vayustudio-vidtranscode). Trustworthy once set, regardless of
+// which backend the source file is on (the Lambda re-runs and overwrites
+// this same preview on every edit re-upload).
+//
+// The raw-signed-URL fallback below is only safe for IMAGE: a raw upload is
+// still a directly-viewable JPEG/PNG. For VIDEO, the raw upload is very
+// often HEVC-in-.mov straight off an iPhone, which most browsers cannot
+// decode at all — serving it as a "preview" doesn't just look wrong, the
+// <video> element throws decode errors that read as a crash to the user.
+// So a video with no r2PreviewUrl yet (still transcoding, transcode failed,
+// or an old record from before this pipeline existed) must report "no
+// preview" rather than the broken raw file — the UI already renders a
+// processing/placeholder state for that, which is the correct outcome here.
 export async function getMediaPreviewUrl(file: StorageFile): Promise<string | undefined> {
   if (file.r2PreviewUrl) return file.r2PreviewUrl
+  if (file.fileType === 'VIDEO') return undefined
   const { key, backend } = resolveCurrent(file)
   try {
     return backend === 'R2' ? await r2.getStudioR2SignedViewUrl(key) : await s3.getStudioSignedViewUrl(key)

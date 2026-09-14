@@ -330,6 +330,12 @@ export interface MediaFile {
   s3Key?: string
   r2PreviewKey?: string
   r2PreviewUrl?: string
+  // VIDEO only — a static JPEG frame grab, written by
+  // lambda/vayustudio-vidtranscode alongside the transcoded mp4. Grid tiles
+  // show this (a plain <img>, exactly like a photo) instead of mounting a
+  // <video> element at all — r2PreviewUrl for a video is the actual
+  // playable file, used only in the full-view lightbox.
+  videoThumbnailUrl?: string
   editedS3Key?: string
   watermarkEnabled: boolean
   displayOrder: number

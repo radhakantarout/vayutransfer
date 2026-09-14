@@ -1,6 +1,6 @@
 'use strict'
 
-const { S3Client, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3')
+const { S3Client, GetObjectCommand, HeadObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3')
 const { Upload }                                        = require('@aws-sdk/lib-storage')
 const { DynamoDBClient }                                = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand }         = require('@aws-sdk/lib-dynamodb')
@@ -114,6 +114,7 @@ exports.handler = async (event) => {
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vidtranscode-'))
   const inputPath  = path.join(workDir, 'input')
   const outputPath = path.join(workDir, 'output.mp4')
+  const thumbPath  = path.join(workDir, 'thumb.jpg')
 
   try {
     const sourceR2 = new S3Client({
@@ -136,9 +137,18 @@ exports.handler = async (event) => {
     await pipeline(sourceObj.Body, fsSync.createWriteStream(inputPath))
 
     // ── 3. Transcode — H.264/AAC, capped at 1080p, faststart for streaming ─
+    // -map is required, not cosmetic: newer iPhones (e.g. spatial-audio
+    // recordings) embed a second audio track in Apple's proprietary "apac"
+    // codec alongside the normal stereo AAC track. ffmpeg's default stream
+    // auto-selection picks "best" audio by channel count and grabs the
+    // undecodable apac track instead, failing the whole command. Mapping
+    // the first video + first audio stream by relative index sidesteps
+    // that — the trailing `?` makes the audio map optional so silent/
+    // video-only source files still succeed.
     console.log('[vidtranscode] running ffmpeg')
     await runFfmpeg([
       '-y', '-i', inputPath,
+      '-map', '0:v:0', '-map', '0:a:0?',
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
       '-vf', "scale='min(1920,iw)':-2",
       '-c:a', 'aac', '-b:a', '128k',
@@ -148,8 +158,16 @@ exports.handler = async (event) => {
     const { size: outputSize } = await fs.stat(outputPath)
     console.log(`[vidtranscode] transcoded, output ${outputSize} bytes`)
 
-    // ── 4. Upload the transcoded mp4 to R2 (streamed, same reason as the
-    // download) ───────────────────────────────────────────────────────────
+    // ── 3b. Grab a static poster frame from the (already scaled/oriented)
+    // transcoded output — grid tiles show this as a plain <img>, exactly
+    // like a photo, instead of ever mounting a <video> element. Frame 0
+    // rather than e.g. 0.5s in, so this never fails on a very short clip.
+    await runFfmpeg(['-y', '-i', outputPath, '-ss', '00:00:00', '-vframes', '1', '-q:v', '3', thumbPath])
+    const thumbBuf = await fs.readFile(thumbPath)
+    console.log(`[vidtranscode] thumbnail grabbed, ${thumbBuf.length} bytes`)
+
+    // ── 4. Upload the transcoded mp4 (streamed — real videos can be large
+    // even under the source cap) + the small thumbnail jpg to R2 ──────────
     const destR2 = new S3Client({
       region: 'auto',
       endpoint: r2Endpoint,
@@ -166,12 +184,23 @@ exports.handler = async (event) => {
         CacheControl: 'public, max-age=31536000, immutable',
       },
     }).done()
-    console.log(`[vidtranscode] uploaded to R2: ${r2Key}`)
+    console.log(`[vidtranscode] uploaded video to R2: ${r2Key}`)
 
-    // ── 5. Write r2PreviewUrl + READY to DynamoDB — same helper/URL shape
-    // watermark uses for images ────────────────────────────────────────────
+    const thumbKey = r2Key.replace(/\.mp4$/, '-thumb.jpg')
+    await destR2.send(new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: thumbKey,
+      Body: thumbBuf,
+      ContentType: 'image/jpeg',
+      CacheControl: 'public, max-age=31536000, immutable',
+    }))
+    console.log(`[vidtranscode] uploaded thumbnail to R2: ${thumbKey}`)
+
+    // ── 5. Write r2PreviewUrl + videoThumbnailUrl + READY to DynamoDB —
+    // same helper/URL shape watermark uses for images ─────────────────────
     const r2PreviewUrl = `${PREVIEW_BASE}/${r2Key}`
-    await setStatus(projectId, fileId, 'READY', { r2PreviewUrl })
+    const videoThumbnailUrl = `${PREVIEW_BASE}/${thumbKey}`
+    await setStatus(projectId, fileId, 'READY', { r2PreviewUrl, videoThumbnailUrl })
     console.log(`[vidtranscode] done → ${r2PreviewUrl}`)
     await bumpJobProgress(jobId)
 

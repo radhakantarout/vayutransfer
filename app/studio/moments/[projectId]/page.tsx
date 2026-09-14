@@ -59,38 +59,6 @@ function retentionCountdown(createdAt: string): { daysLeft: number; deadline: st
   return { daysLeft, deadline: deadline.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) }
 }
 
-// Mounting a real <video> for every video tile in the grid at once is the
-// root cause of a real crash on mobile — iOS Safari has a hard limit on
-// concurrent decodable <video> elements. Mounts the actual element only
-// once a tile is about to scroll into view (and leaves it mounted after —
-// simplest fix that caps the worst case without remount/flicker
-// complexity). playsInline matters here too, not just in the lightbox.
-function LazyGridVideo({ src }: { src: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
-      { rootMargin: '200px' }
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
-
-  return (
-    <div ref={ref} className="w-full h-full">
-      {visible ? (
-        <video src={src} muted playsInline preload="metadata" className="w-full h-full object-cover pointer-events-none" />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center text-2xl bg-card">🎬</div>
-      )}
-    </div>
-  )
-}
-
 async function initOrResumeUpload(
   projectId: string,
   file: File,
@@ -906,7 +874,7 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
 
             {playingId === r.reelId && r.outputUrl && (
               <div className="p-3 pt-0 space-y-2">
-                <video src={r.outputUrl} controls autoPlay className="w-full rounded-xl bg-black" />
+                <video src={r.outputUrl} controls autoPlay muted playsInline className="w-full rounded-xl bg-black" />
                 <a href={r.outputUrl} download className="block text-center text-xs font-semibold text-accent hover:underline py-1">Download</a>
               </div>
             )}
@@ -1348,6 +1316,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     .filter((f) => f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl)
     .map((f) => ({
       fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType,
+      thumbnailUrl: f.videoThumbnailUrl,
       likeCount: f.likeCount, commentCount: f.commentCount, likedByMe: f.likedByMe,
     }))
 
@@ -1490,6 +1459,13 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                   const isReady = f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl
                   const isPicked = reelSelectMode ? reelSelectedIds.has(f.fileId) : selectedIds.has(f.fileId)
                   const anySelectMode = reelSelectMode || selectMode
+                  // While still processing, show a blurred version of what
+                  // was actually just uploaded (the local blob URL captured
+                  // at queue-time, still alive until dismissed) instead of a
+                  // bare emoji placeholder — falls back to the emoji if this
+                  // tile appeared from a page reload rather than this
+                  // session's own upload (no local blob to blur then).
+                  const uploadingPreview = !isReady ? uploads.find((u) => u.fileId === f.fileId)?.previewUrl : undefined
                   return (
                     <div key={f.fileId} className="relative aspect-square rounded-xl overflow-hidden bg-card border border-border">
                       <div
@@ -1507,9 +1483,26 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                         className={`w-full h-full ${isReady ? 'cursor-pointer' : ''} ${anySelectMode && isReady ? (isPicked ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border') : ''}`}
                       >
                         {!isReady ? (
-                          <div className="w-full h-full flex items-center justify-center text-2xl">{f.fileType === 'VIDEO' ? '🎬' : '🖼️'}</div>
+                          uploadingPreview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={uploadingPreview} alt="" className="w-full h-full object-cover scale-110 blur-md opacity-70" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-2xl">{f.fileType === 'VIDEO' ? '🎬' : '🖼️'}</div>
+                          )
                         ) : f.fileType === 'VIDEO' ? (
-                          <LazyGridVideo src={f.r2PreviewUrl!} />
+                          f.videoThumbnailUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={f.videoThumbnailUrl} alt={f.originalFilename} className="w-full h-full object-cover" loading="lazy" />
+                          ) : (
+                            // Older videos transcoded before the poster-frame step
+                            // existed have no videoThumbnailUrl yet. Never mount a
+                            // real <video> tag in the grid — that was causing a
+                            // flood of concurrent range-request (206) network calls
+                            // and visible flicker as each tile buffered metadata.
+                            // Static placeholder only; full playback still works
+                            // fine in the lightbox via r2PreviewUrl.
+                            <div className="w-full h-full flex items-center justify-center text-2xl bg-card">🎬</div>
+                          )
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" loading="lazy" />
@@ -1534,8 +1527,8 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                         </div>
                       )}
                       {f.processingStatus === 'PROCESSING' && (
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <div className="absolute inset-0 bg-black/35 backdrop-blur-[2px] flex items-center justify-center">
+                          <div className="w-7 h-7 rounded-full border-[3px] border-white/30 border-t-white animate-spin" />
                         </div>
                       )}
                       {isReady && !anySelectMode && (
@@ -1761,7 +1754,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                         <div className="h-1.5 bg-border rounded-full overflow-hidden mt-1.5">
                           <div
                             className="h-full rounded-full transition-all"
-                            style={{ width: `${u.status === 'queued' ? 0 : pct}%`, background: u.status === 'done' ? undefined : GRADIENT }}
+                            style={{ width: `${u.status === 'queued' ? 0 : pct}%`, background: GRADIENT }}
                           />
                         </div>
                         {u.status === 'uploading' && (
