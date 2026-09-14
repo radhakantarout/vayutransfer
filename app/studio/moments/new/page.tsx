@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
+import TopNavBar from '@/components/studio/moments/TopNavBar'
 
 const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 const SUGGESTIONS = ['Priya & Rahul\'s Wedding', 'Mia\'s 30th 🎂', 'Family Trip 🌴', 'Summer Reunion ☀️']
@@ -62,14 +62,8 @@ export default function NewMomentsEventPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg pb-24 md:pb-0 md:pl-20 lg:pl-56">
-      <header className="flex items-center px-5 sm:px-8 py-4">
-        <Link href="/studio/moments" aria-label="Back" className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-border/40 transition-colors -ml-1.5">
-          <svg className="w-5 h-5 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </Link>
-      </header>
+    <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-24 md:pb-0 md:pl-20 lg:pl-56">
+      <TopNavBar />
 
       <main className="max-w-md mx-auto px-5 sm:px-0 py-6 sm:py-12 space-y-6">
         <div className="space-y-1.5">

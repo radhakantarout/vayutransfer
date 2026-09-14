@@ -25,11 +25,14 @@ export async function GET(req: NextRequest, { params }: { params: { projectId: s
   }
 }
 
-// PATCH /studio/api/moments/events/[projectId] — admin-only. Currently just
-// the cover photo (from the mock's "edit cover" pencil on the gallery card),
-// reusing the exact same coverPhotoFileId field/fallback-to-first-ready-photo
-// pattern Studio Admin's "Set as Cover" already uses — never a fresh upload,
-// always an existing photo already in this gallery.
+// PATCH /studio/api/moments/events/[projectId] — admin-only. Handles the
+// gallery card's "edit" pencil: cover photo (reusing the exact same
+// coverPhotoFileId field/fallback-to-first-ready-photo pattern Studio
+// Admin's "Set as Cover" already uses — never a fresh upload, always an
+// existing photo already in this gallery) and/or renaming the event
+// (clientName doubles as a Moments event's display name — see moments/events
+// POST). Both fields are optional and independent so the one PATCH body
+// can carry either, or both, from the same modal.
 export async function PATCH(req: NextRequest, { params }: { params: { projectId: string } }) {
   try {
     const auth = await verifyStudioJWT(req)
@@ -41,14 +44,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { projectId:
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const body = await req.json().catch(() => ({})) as { coverPhotoFileId?: string | null }
-    if (body.coverPhotoFileId === undefined) {
+    const body = await req.json().catch(() => ({})) as { coverPhotoFileId?: string | null; clientName?: string }
+    if (body.coverPhotoFileId === undefined && body.clientName === undefined) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    }
+
+    if (body.clientName !== undefined) {
+      const name = body.clientName.trim()
+      if (name.length < 2) {
+        return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+      }
+      await studioUpdateItem(
+        TABLES.projects,
+        { studioId: resolved.project.studioId, projectId: params.projectId },
+        'SET clientName = :name',
+        { ':name': name }
+      )
     }
 
     if (body.coverPhotoFileId === null) {
       await studioUpdateItem(TABLES.projects, { studioId: resolved.project.studioId, projectId: params.projectId }, 'REMOVE coverPhotoFileId', {})
-    } else {
+    } else if (body.coverPhotoFileId !== undefined) {
       const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId: params.projectId, fileId: body.coverPhotoFileId })
       if (!file) return NextResponse.json({ success: false, error: 'FILE_NOT_FOUND' }, { status: 404 })
       await studioUpdateItem(

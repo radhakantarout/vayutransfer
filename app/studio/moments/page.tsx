@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import Link from 'next/link'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
+import TopNavBar from '@/components/studio/moments/TopNavBar'
 import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
 import type { MediaFile } from '@/types/studio'
 
@@ -55,29 +55,59 @@ function PhotoStack() {
   )
 }
 
-// "Edit cover" pencil — always picks from an EXISTING ready photo already in
-// the gallery (same precedent as Studio Admin's "Set as Cover"), never a
-// fresh upload, so this needs no upload machinery of its own.
-function CoverPickerModal({ projectId, onClose, onPicked }: { projectId: string; onClose: () => void; onPicked: (url: string | null) => void }) {
+// "Edit" pencil — rename the event and/or change its cover, in one popup.
+// Cover always picks from an EXISTING ready photo already in the gallery
+// (same precedent as Studio Admin's "Set as Cover"), never a fresh upload,
+// so this needs no upload machinery of its own.
+function EditEventModal({
+  event, onClose, onRenamed, onCoverPicked,
+}: {
+  event: MomentsEvent
+  onClose: () => void
+  onRenamed: (name: string) => void
+  onCoverPicked: (url: string | null) => void
+}) {
   const [files, setFiles] = useState<MediaFile[] | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
+  const [name, setName] = useState(event.clientName)
+  const [savingName, setSavingName] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`/studio/api/moments/events/${projectId}/files`)
+    fetch(`/studio/api/moments/events/${event.projectId}/files`)
       .then((r) => r.json())
       .then((res) => setFiles(res.success ? res.data : []))
       .catch(() => setFiles([]))
-  }, [projectId])
+  }, [event.projectId])
+
+  const saveName = async () => {
+    const trimmed = name.trim()
+    if (trimmed.length < 2) { setNameError('Give it a name — at least 2 characters'); return }
+    if (trimmed === event.clientName) return
+    setNameError(null)
+    setSavingName(true)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${event.projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientName: trimmed }),
+      }).then((r) => r.json())
+      if (res.success) onRenamed(trimmed)
+      else setNameError('Something went wrong — please try again')
+    } finally {
+      setSavingName(false)
+    }
+  }
 
   const pick = async (fileId: string, previewUrl: string) => {
     setSaving(fileId)
     try {
-      const res = await fetch(`/studio/api/moments/events/${projectId}`, {
+      const res = await fetch(`/studio/api/moments/events/${event.projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coverPhotoFileId: fileId }),
       }).then((r) => r.json())
-      if (res.success) { onPicked(previewUrl); onClose() }
+      if (res.success) { onCoverPicked(previewUrl); onClose() }
     } finally {
       setSaving(null)
     }
@@ -87,36 +117,62 @@ function CoverPickerModal({ projectId, onClose, onPicked }: { projectId: string;
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={onClose}>
-      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-          <h2 className="text-sm font-bold text-text-primary">Choose a cover photo</h2>
+          <h2 className="text-sm font-bold text-text-primary">Edit gallery</h2>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
         </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          {files === null ? (
-            <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
-          ) : ready.length === 0 ? (
-            <p className="text-xs text-muted text-center py-10">Add some photos to this gallery first, then come back to pick a cover.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {ready.map((f) => (
-                <button
-                  key={f.fileId}
-                  onClick={() => pick(f.fileId, f.r2PreviewUrl!)}
-                  disabled={!!saving}
-                  className="relative aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-accent transition-colors disabled:opacity-50"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
-                  {saving === f.fileId && (
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    </div>
-                  )}
-                </button>
-              ))}
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted pl-1">Event name</label>
+            <div className="flex gap-2">
+              <input
+                value={name}
+                onChange={(e) => { setName(e.target.value); setNameError(null) }}
+                onKeyDown={(e) => e.key === 'Enter' && saveName()}
+                className={`flex-1 min-w-0 bg-bg border rounded-xl px-3.5 py-2.5 text-sm text-text-primary focus:outline-none transition-colors ${
+                  nameError ? 'border-danger focus:border-danger' : 'border-border focus:border-accent'
+                }`}
+              />
+              <button
+                onClick={saveName}
+                disabled={savingName || name.trim() === event.clientName}
+                className="text-xs font-bold px-3.5 py-2.5 rounded-xl text-white flex-shrink-0 hover:opacity-90 transition-opacity disabled:opacity-40"
+                style={{ background: GRADIENT }}
+              >
+                {savingName ? 'Saving…' : 'Save'}
+              </button>
             </div>
-          )}
+            {nameError && <p className="text-xs text-danger pl-1">{nameError}</p>}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-muted pl-1">Cover photo</p>
+            {files === null ? (
+              <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
+            ) : ready.length === 0 ? (
+              <p className="text-xs text-muted text-center py-10">Add some photos to this gallery first, then come back to pick a cover.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {ready.map((f) => (
+                  <button
+                    key={f.fileId}
+                    onClick={() => pick(f.fileId, f.r2PreviewUrl!)}
+                    disabled={!!saving}
+                    className="relative aspect-square rounded-xl overflow-hidden border-2 border-transparent hover:border-accent transition-colors disabled:opacity-50"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={f.r2PreviewUrl} alt="" className="w-full h-full object-cover" />
+                    {saving === f.fileId && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -154,8 +210,7 @@ export default function MomentsLandingPage() {
   const [me, setMe]         = useState<Me | null>(null)
   const [events, setEvents] = useState<MomentsEvent[] | null>(null)
   const [checking, setChecking] = useState(true)
-  const [pendingCount, setPendingCount] = useState(0)
-  const [editingCoverFor, setEditingCoverFor] = useState<string | null>(null)
+  const [editingEvent, setEditingEvent] = useState<MomentsEvent | null>(null)
   const [deleteConfirmFor, setDeleteConfirmFor] = useState<MomentsEvent | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -168,9 +223,6 @@ export default function MomentsLandingPage() {
           return
         }
         setMe(res.data)
-        fetch('/studio/api/moments/notifications').then((r) => r.json()).then((notifRes) => {
-          if (notifRes.success) setPendingCount(notifRes.data.totalPending)
-        }).catch(() => {})
         return fetch('/studio/api/moments/events')
           .then((r) => r.json())
           .then((eventsRes) => setEvents(eventsRes.success ? eventsRes.data : []))
@@ -205,15 +257,8 @@ export default function MomentsLandingPage() {
   const hasEvents = !!events && events.length > 0
 
   return (
-    <div className="min-h-screen bg-bg pb-24 md:pb-0 md:pl-20 lg:pl-56">
-      <header className="flex items-center px-5 sm:px-8 py-4 border-b border-border md:hidden">
-        <Link href="/studio/moments" className="flex items-center gap-2.5">
-          <Image src="/logo.png" alt="VayuStudios" width={28} height={28} className="h-7 w-7" />
-          <span className="text-sm font-extrabold text-text-primary">
-            Vayu<span className="text-accent">Studios</span> <span className="text-muted font-semibold">Moments</span>
-          </span>
-        </Link>
-      </header>
+    <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-24 md:pb-0 md:pl-20 lg:pl-56">
+      <TopNavBar />
 
       <main className="max-w-3xl mx-auto px-5 sm:px-8 py-8 sm:py-16 space-y-8 sm:space-y-10">
         {hasEvents ? (
@@ -249,9 +294,9 @@ export default function MomentsLandingPage() {
                       {ev.isAdmin && (
                         <div className="flex items-center gap-1">
                           <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingCoverFor(ev.projectId) }}
-                            aria-label="Change cover photo"
-                            title="Change cover photo"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingEvent(ev) }}
+                            aria-label="Edit gallery"
+                            title="Edit gallery"
                             className="w-6 h-6 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur transition-colors"
                           >
                             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -337,11 +382,15 @@ export default function MomentsLandingPage() {
         )}
       </main>
 
-      {editingCoverFor && (
-        <CoverPickerModal
-          projectId={editingCoverFor}
-          onClose={() => setEditingCoverFor(null)}
-          onPicked={(url) => setEvents((prev) => (prev ?? []).map((e) => (e.projectId === editingCoverFor ? { ...e, coverPhotoUrl: url } : e)))}
+      {editingEvent && (
+        <EditEventModal
+          event={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onRenamed={(name) => {
+            setEvents((prev) => (prev ?? []).map((e) => (e.projectId === editingEvent.projectId ? { ...e, clientName: name } : e)))
+            setEditingEvent((prev) => (prev ? { ...prev, clientName: name } : prev))
+          }}
+          onCoverPicked={(url) => setEvents((prev) => (prev ?? []).map((e) => (e.projectId === editingEvent.projectId ? { ...e, coverPhotoUrl: url } : e)))}
         />
       )}
 
@@ -349,7 +398,7 @@ export default function MomentsLandingPage() {
         <DeleteConfirmModal event={deleteConfirmFor} deleting={deleting} onClose={() => setDeleteConfirmFor(null)} onConfirm={handleDelete} />
       )}
 
-      <MomentsBottomNav pendingCount={pendingCount} />
+      <MomentsBottomNav />
     </div>
   )
 }

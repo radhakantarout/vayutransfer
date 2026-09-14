@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import QRCode from 'qrcode'
@@ -15,9 +15,8 @@ import {
 import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
 import ReelMvpModal from '@/components/studio/ReelMvpModal'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
-import GalleryBottomNav from '@/components/studio/moments/GalleryBottomNav'
-import NotificationsPanel from '@/components/studio/moments/NotificationsPanel'
-import ProfilePanel from '@/components/studio/moments/ProfilePanel'
+import MomentsBottomNav from '@/components/studio/moments/BottomNav'
+import TopNavBar from '@/components/studio/moments/TopNavBar'
 import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 
 const MAX_CONCURRENT_UPLOADS = 4
@@ -855,6 +854,7 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
 
 export default function MomentsEventPage({ params }: { params: { projectId: string } }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { projectId } = params
 
   const [access, setAccess]     = useState<AccessInfo | null>(null)
@@ -877,9 +877,6 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [showPeople, setShowPeople] = useState(false)
   const [showChat, setShowChat] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
-  const [showNotifications, setShowNotifications] = useState(false)
-  const [showProfile, setShowProfile] = useState(false)
-  const [pendingCount, setPendingCount] = useState(0)
   const [activeTab, setActiveTab] = useState<'photos' | 'reels'>('photos')
   const [reelSelectMode, setReelSelectMode] = useState(false)
   const [reelSelectedIds, setReelSelectedIds] = useState<Set<string>>(new Set())
@@ -938,15 +935,17 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     return () => clearInterval(timer)
   }, [event, refreshFiles])
 
-  // Same global "pending join requests across every gallery I administer"
-  // count the top-level shell's bell shows — a non-admin viewer here simply
-  // gets 0 back (they administer nothing), so this is safe to fetch always.
+  // Arriving here via the top-level bottom bar's "which gallery?" picker
+  // (Chat/People tapped with no gallery open yet) — ?open=chat|people opens
+  // the right panel the moment access is confirmed, same as tapping the
+  // bottom bar directly once already inside.
   useEffect(() => {
-    fetch('/studio/api/moments/notifications')
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setPendingCount(res.data.totalPending) })
-      .catch(() => {})
-  }, [])
+    if (access?.status !== 'APPROVED') return
+    const open = searchParams.get('open')
+    if (open === 'chat') setShowChat(true)
+    if (open === 'people' && isAdmin) setShowPeople(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [access?.status, isAdmin])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -1165,44 +1164,10 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const videoCount = files.filter((f) => f.fileType === 'VIDEO').length
 
   return (
-    <div className="min-h-screen bg-bg pb-20 md:pb-0 md:pl-20 lg:pl-56">
-      <header className="flex items-center justify-between gap-2 px-5 sm:px-8 py-4">
-        <Link href="/studio/moments" aria-label="Back" className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-border/40 transition-colors -ml-1.5">
-          <svg className="w-5 h-5 text-text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </Link>
-        <div className="flex items-center gap-2">
-          {/* Chat, Upload, People, and Reel It all live in the persistent
-              gallery bottom bar now — the header only keeps the two
-              account-level destinations, mirroring the top-level shell. */}
-          <button
-            onClick={() => setShowNotifications(true)}
-            aria-label="Notifications"
-            className="relative w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted hover:text-text-primary transition-colors"
-          >
-            <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.311 6.022c1.733.64 3.56 1.085 5.454 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-            </svg>
-            {!!pendingCount && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-danger text-white text-[9px] font-bold flex items-center justify-center">
-                {pendingCount > 9 ? '9+' : pendingCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setShowProfile(true)}
-            aria-label="Profile"
-            className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted hover:text-text-primary transition-colors"
-          >
-            <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-20 md:pb-0 md:pl-20 lg:pl-56">
+      <TopNavBar />
 
-      <main className="max-w-3xl mx-auto px-5 sm:px-8 pb-28 md:pb-12 space-y-5">
+      <main className="max-w-3xl mx-auto px-5 sm:px-8 pt-5 pb-28 md:pb-12 space-y-5">
         {/* Gradient-bordered hero card — cover photo backdrop when one
             exists, gradient fallback otherwise, matching the mock's header
             treatment on both the admin and member views. */}
@@ -1401,13 +1366,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         {activeTab === 'reels' && <ReelsTabContent projectId={projectId} canReel={canReel} />}
       </main>
 
-      <GalleryBottomNav
-        isAdmin={isAdmin}
-        canReel={canReel}
-        onChat={() => setShowChat(true)}
-        onUpload={() => { setActiveTab('photos'); setShowUploadModal(true) }}
-        onManagePeople={() => setShowPeople(true)}
-        onReelIt={() => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) }}
+      <MomentsBottomNav
+        gallery={{
+          isAdmin,
+          canReel,
+          onChat: () => setShowChat(true),
+          onUpload: () => { setActiveTab('photos'); setShowUploadModal(true) },
+          onManagePeople: () => setShowPeople(true),
+          onReelIt: () => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) },
+        }}
       />
 
       {lightboxIndex !== null && (
@@ -1437,40 +1404,6 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       )}
 
       {showPeople && <PeopleModal projectId={projectId} onClose={() => setShowPeople(false)} />}
-
-      {/* Notifications/Profile open as popups over the gallery instead of
-          navigating away — closing one lands you right back on whichever
-          tab/state you had open, since the gallery page never unmounts. */}
-      {showNotifications && (
-        <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={() => setShowNotifications(false)}>
-          <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-              <div>
-                <h2 className="text-sm font-bold text-text-primary">Notifications</h2>
-                <p className="text-xs text-muted">Join requests waiting on you</p>
-              </div>
-              <button onClick={() => setShowNotifications(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-5">
-              <NotificationsPanel enableAuthRedirect={false} onPendingCountChange={setPendingCount} onModal />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showProfile && (
-        <div className="fixed inset-0 z-[90] bg-black/70 flex items-end sm:items-center justify-center" onClick={() => setShowProfile(false)}>
-          <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-              <h2 className="text-sm font-bold text-text-primary">Profile</h2>
-              <button onClick={() => setShowProfile(false)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-5">
-              <ProfilePanel innerBg="bg" />
-            </div>
-          </div>
-        </div>
-      )}
 
       {showChat && <GroupChatModal projectId={projectId} onClose={() => setShowChat(false)} />}
 

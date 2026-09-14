@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { useMomentsTheme } from '@/lib/momentsTheme'
 
 interface Me {
   name: string
@@ -18,6 +19,7 @@ const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 // page (bg-bg) wants bg-card cards; a bg-card modal sheet wants bg-bg ones.
 export default function ProfilePanel({ innerBg = 'card' }: { innerBg?: 'card' | 'bg' }) {
   const router = useRouter()
+  const { theme, toggle: toggleTheme } = useMomentsTheme()
   const [me, setMe] = useState<Me | null>(null)
   const [checking, setChecking] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
@@ -65,6 +67,21 @@ export default function ProfilePanel({ innerBg = 'card' }: { innerBg?: 'card' | 
         <div className="min-w-0">
           <p className="text-base font-bold text-text-primary truncate">{me.name || 'Your account'}</p>
           <p className="text-xs text-muted truncate">{me.email}</p>
+        </div>
+      </div>
+
+      <div className={`flex items-center gap-3 ${cardClass} border border-border rounded-2xl p-4`}>
+        <button
+          type="button" role="switch" aria-checked={theme === 'dark'}
+          onClick={toggleTheme}
+          className={`relative flex-shrink-0 rounded-full transition-colors ${theme === 'dark' ? 'bg-accent' : 'bg-border'}`}
+          style={{ height: '22px', width: '38px' }}
+        >
+          <span className={`absolute top-0.5 left-0.5 rounded-full bg-white transition-transform ${theme === 'dark' ? 'translate-x-4' : 'translate-x-0'}`} style={{ height: '18px', width: '18px' }} />
+        </button>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-text-primary">Dark mode</p>
+          <p className="text-[11px] text-muted">Moments looks best in the dark — switch back to light anytime</p>
         </div>
       </div>
 

@@ -36,6 +36,26 @@ html.dark {
   --muted:   120 138 168;
 }
 
+/* VayuStudios Moments' own scoped dark mode — same values as html.dark
+   above (reusing the already-tuned dark palette, not a new one), but keyed
+   off a class on Moments' own layout wrapper (lib/momentsTheme.tsx) instead
+   of the global <html> element. Moments defaults to dark and has its own
+   independent localStorage key, completely separate from the shared
+   vayustudio-theme toggle Studio Admin/Client Gallery/Guest use — this
+   selector never matches anywhere outside Moments, so it can't affect (and
+   isn't affected by) the rest of VayuStudios or VayuTransfer. */
+.moments-dark {
+  --bg:      11  15  26;
+  --card:    19  25  41;
+  --nav:     19  25  41;
+  --border:  30  45  69;
+  --accent:   0 198 255;
+  --success:  0 229 160;
+  --danger:  255  83 112;
+  --text:    224 234 248;
+  --muted:   120 138 168;
+}
+
 body {
   background-color: rgb(var(--bg));
   color: rgb(var(--text));
