@@ -1,0 +1,14 @@
+{
+  "name": "VayuStudios Moments",
+  "short_name": "Moments",
+  "start_url": "/studio/moments",
+  "scope": "/studio/moments/",
+  "display": "standalone",
+  "background_color": "#0B0F1A",
+  "theme_color": "#0B0F1A",
+  "icons": [
+    { "src": "/icons/moments-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/moments-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/moments-icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

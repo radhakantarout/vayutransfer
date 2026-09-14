@@ -17,6 +17,7 @@ import ReelMvpModal from '@/components/studio/ReelMvpModal'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
 import TopNavBar from '@/components/studio/moments/TopNavBar'
+import InstallPrompt from '@/components/studio/moments/InstallPrompt'
 import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 
 const MAX_CONCURRENT_UPLOADS = 4
@@ -1329,6 +1330,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   return (
     <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-20 md:pb-0 md:pl-20 lg:pl-56">
       <TopNavBar />
+      <InstallPrompt />
 
       <main className="max-w-3xl mx-auto px-5 sm:px-8 pt-5 pb-28 md:pb-12 space-y-5">
         {/* Gradient-bordered hero card — cover photo backdrop when one
