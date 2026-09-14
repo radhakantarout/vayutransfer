@@ -101,7 +101,19 @@ export async function middleware(request: NextRequest) {
   // ── VayuStudios app domain routing ──────────────────────────────────────
   if (isStudioAppDomain) {
     if (path === '/') {
-      return NextResponse.rewrite(new URL('/studio/home', request.url))
+      // A signed-in Moments user always goes straight to their galleries,
+      // regardless of any stale vayustudios-path cookie (see chooser below)
+      // — Studio Admin's own root behavior is untouched in every case that
+      // matters to them (still /studio/home unless they'd previously chosen
+      // otherwise via the cookie).
+      const auth = await verifyStudioJWT(request)
+      if (auth?.role === 'CLIENT') {
+        return NextResponse.rewrite(new URL('/studio/moments', request.url))
+      }
+      const savedPath = request.cookies.get('vayustudios-path')?.value
+      if (savedPath === 'moments') return NextResponse.rewrite(new URL('/studio/moments', request.url))
+      if (savedPath === 'studio') return NextResponse.rewrite(new URL('/studio/home', request.url))
+      return NextResponse.rewrite(new URL('/studio/welcome', request.url))
     }
     const isAllowed = path.startsWith('/studio') || path.startsWith('/api') || SHARED_PAGES.has(path)
     if (!isAllowed) {

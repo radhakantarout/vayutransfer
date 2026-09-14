@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
 import TopNavBar from '@/components/studio/moments/TopNavBar'
+import GoogleIcon from '@/components/studio/GoogleIcon'
+import { setVayustudiosPath } from '@/lib/vayustudiosPathCookie'
 import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
 import type { MediaFile } from '@/types/studio'
 
@@ -51,6 +52,103 @@ function PhotoStack() {
       <div className="absolute left-1 top-3 w-14 h-14 rounded-xl -rotate-12 shadow-lg flex items-center justify-center text-xl" style={{ background: 'linear-gradient(135deg,#fdba74,#f97316)' }}>🎊</div>
       <div className="absolute right-0 top-0 w-14 h-14 rounded-xl rotate-12 shadow-lg flex items-center justify-center text-xl" style={{ background: 'linear-gradient(135deg,#f0abfc,#ec4899)' }}>💜</div>
       <div className="absolute left-5 bottom-0 w-14 h-14 rounded-xl rotate-3 shadow-lg flex items-center justify-center text-xl" style={{ background: 'linear-gradient(135deg,#c4b5fd,#8b5cf6)' }}>📷</div>
+    </div>
+  )
+}
+
+// The actual Moments front door for anyone signed out — reached either via
+// the /studio/welcome chooser or by visiting /studio/moments directly.
+// Reuses PhotoStack + FEATURES already defined above (zero new copy needed
+// for the pitch section) so it stays trivially in sync with the rest of
+// this file. Deliberately its own small "Taking you to Google…" transition
+// (mirrors the one on /studio/(auth)/login/page.tsx) rather than importing
+// anything from that file — keeps Studio Admin's login page untouched.
+function MomentsLoggedOutLanding() {
+  const [redirecting, setRedirecting] = useState(false)
+
+  const goToGoogle = () => {
+    setRedirecting(true)
+    setTimeout(() => { window.location.href = '/studio/api/auth/google?intent=moments&next=/studio/moments' }, 700)
+  }
+
+  const switchToStudio = () => {
+    setVayustudiosPath('studio')
+    window.location.href = '/studio/home'
+  }
+
+  if (redirecting) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center px-5">
+        <div className="text-center space-y-6">
+          <div className="relative w-24 h-24 mx-auto">
+            <div className="absolute inset-0 rounded-full animate-spin" style={{ background: GRADIENT, animationDuration: '1.6s' }} />
+            <div className="absolute inset-1.5 rounded-full bg-card flex items-center justify-center">
+              <GoogleIcon />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-extrabold text-text-primary">Taking you to Google…</h1>
+            <p className="text-sm text-muted">Just a second — we&apos;re getting your gallery ready ✨</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-bg">
+      <header className="flex items-center justify-center px-5 py-6">
+        <span className="text-sm font-extrabold text-text-primary">
+          Vayu<span className="text-accent">Studios</span> <span className="text-muted font-semibold">Moments</span>
+        </span>
+      </header>
+
+      <main className="max-w-md md:max-w-4xl mx-auto px-5 sm:px-8 pb-16 md:grid md:grid-cols-2 md:items-center md:gap-12">
+        <div className="space-y-6">
+          <div className="text-center md:text-left space-y-3">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-text-primary leading-tight">
+              Your people.<br />Your moments. <span aria-hidden>✨</span>
+            </h1>
+            <p className="text-sm sm:text-base text-muted max-w-sm mx-auto md:mx-0">
+              Free private galleries for weddings, trips, and get-togethers — invite your people, no studio needed.
+            </p>
+          </div>
+
+          <button
+            onClick={goToGoogle}
+            className="w-full flex items-center justify-center gap-2.5 bg-card border border-border text-text-primary font-bold py-3.5 rounded-2xl text-sm hover:border-accent/40 transition-colors shadow-sm"
+          >
+            <GoogleIcon />
+            Continue with Google
+          </button>
+
+          <p className="text-center md:text-left text-[11px] text-muted">Private by default 🔒 · Free to start</p>
+        </div>
+
+        <div className="mt-10 md:mt-0 space-y-6">
+          <PhotoStack />
+
+          <div className="bg-card border border-border rounded-3xl p-4 sm:p-5 space-y-1 animate-reel-pop-in" style={{ animationFillMode: 'backwards' }}>
+            {FEATURES.map((f) => (
+              <div key={f.title} className="flex items-center gap-3.5 py-2.5">
+                <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg flex-shrink-0" style={{ background: f.tint }}>
+                  {f.emoji}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-text-primary">{f.title}</p>
+                  <p className="text-xs text-muted leading-snug">{f.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </main>
+
+      <p className="text-center text-[11px] text-muted pb-8">
+        <button onClick={switchToStudio} className="hover:text-text-primary hover:underline transition-colors">
+          Looking for professional studio tools instead?
+        </button>
+      </p>
     </div>
   )
 }
@@ -206,10 +304,10 @@ function DeleteConfirmModal({ event, onClose, onConfirm, deleting }: { event: Mo
 }
 
 export default function MomentsLandingPage() {
-  const router = useRouter()
   const [me, setMe]         = useState<Me | null>(null)
   const [events, setEvents] = useState<MomentsEvent[] | null>(null)
   const [checking, setChecking] = useState(true)
+  const [unauthenticated, setUnauthenticated] = useState(false)
   const [editingEvent, setEditingEvent] = useState<MomentsEvent | null>(null)
   const [deleteConfirmFor, setDeleteConfirmFor] = useState<MomentsEvent | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -219,7 +317,7 @@ export default function MomentsLandingPage() {
       .then((r) => r.json())
       .then((res) => {
         if (!res.success || !res.data || res.data.role !== 'CLIENT') {
-          router.replace('/studio/login?next=/studio/moments')
+          setUnauthenticated(true)
           return
         }
         setMe(res.data)
@@ -227,9 +325,9 @@ export default function MomentsLandingPage() {
           .then((r) => r.json())
           .then((eventsRes) => setEvents(eventsRes.success ? eventsRes.data : []))
       })
-      .catch(() => router.replace('/studio/login?next=/studio/moments'))
+      .catch(() => setUnauthenticated(true))
       .finally(() => setChecking(false))
-  }, [router])
+  }, [])
 
   const handleDelete = async () => {
     if (!deleteConfirmFor) return
@@ -243,6 +341,10 @@ export default function MomentsLandingPage() {
     } finally {
       setDeleting(false)
     }
+  }
+
+  if (unauthenticated) {
+    return <MomentsLoggedOutLanding />
   }
 
   if (checking || !me) {
