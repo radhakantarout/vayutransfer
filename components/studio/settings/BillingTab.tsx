@@ -7,8 +7,7 @@ import {
   PRO_STORAGE_MAX_GB, PRO_STORAGE_STEP_GB, PRO_AI_MAX_CREDITS, PRO_AI_STEP_CREDITS,
   FREE_STORAGE_GB, FREE_AI_SEARCH_CREDITS, ANNUAL_MONTHS_CHARGED,
 } from '@/constants/studioPricing'
-import UsageBar, { usageTextColor } from '@/components/studio/UsageBar'
-import StudioTopupModal from '@/components/studio/StudioTopupModal'
+import UsageBillingPanel from '@/components/studio/UsageBillingPanel'
 
 interface BillingStats {
   billingPlanId: 'free' | 'pro' | 'custom'
@@ -24,23 +23,8 @@ interface BillingStats {
   aiSearchUsagePct: number
 }
 
-function fmtBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
-
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-interface BillingHistoryRow {
-  txnId: string
-  type: 'storage_topup' | 'ai_search_topup' | 'plan_change'
-  label: string
-  amountPaise: number
-  createdAt: string
 }
 
 declare global {
@@ -68,32 +52,13 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
   const [annual, setAnnual] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [topupKind, setTopupKind] = useState<'storage' | 'ai-search' | null>(null)
-  const [history, setHistory] = useState<BillingHistoryRow[] | null>(null)
-  const [resendingTxnId, setResendingTxnId] = useState<string | null>(null)
-  const [resentTxnId, setResentTxnId] = useState<string | null>(null)
 
   const loadStats = () => {
     fetch('/studio/api/admin/stats').then(r => r.json()).then(res => {
       if (res.success) setBilling(res.data.billing)
     }).finally(() => setLoading(false))
   }
-  const loadHistory = () => {
-    fetch('/studio/api/billing/history').then(r => r.json()).then(res => {
-      if (res.success) setHistory(res.data)
-    })
-  }
-  useEffect(() => { loadStats(); loadHistory() }, [])
-
-  const resendReceipt = async (txnId: string) => {
-    setResendingTxnId(txnId); setResentTxnId(null)
-    try {
-      const res = await fetch(`/studio/api/billing/receipt/${txnId}`, { method: 'POST' }).then(r => r.json())
-      if (res.success) setResentTxnId(txnId)
-    } finally {
-      setResendingTxnId(null)
-    }
-  }
+  useEffect(() => { loadStats() }, [])
 
   const proMonthlyPaise = computeProPlanPricePaise(proStorageGB, proAiCredits)
   const proDisplayPaise = annual ? proMonthlyPaise * ANNUAL_MONTHS_CHARGED : proMonthlyPaise
@@ -108,7 +73,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
       }).then(r => r.json())
       if (!res.success) throw new Error(res.error ?? 'Failed to switch plan')
       setShowChangePlan(false)
-      loadStats(); loadHistory()
+      loadStats()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -153,7 +118,7 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
         rzp.open()
       })
       setShowChangePlan(false)
-      loadStats(); loadHistory()
+      loadStats()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong'
       if (msg !== 'Payment cancelled') setError(msg)
@@ -171,13 +136,6 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
 
   const planName = billing.billingPlanId.charAt(0).toUpperCase() + billing.billingPlanId.slice(1)
   const isFree = billing.billingPlanId === 'free'
-  // Top-ups only make sense once you're on a paid plan (the base plan is
-  // what's actually being topped up on top of) — a Free studio clicking
-  // "Top up" gets sent straight to the upgrade options instead.
-  const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
-    if (isFree) { setShowChangePlan(true); return }
-    setTopupKind(kind)
-  }
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -279,74 +237,26 @@ export default function BillingTab({ autoExpandChangePlan = false }: { autoExpan
         )}
       </section>
 
-      {/* Usage */}
+      {/* Usage + billing history — shared with Moments' Profile screen */}
       <section className="space-y-3">
         <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Usage this cycle</h4>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="bg-card border border-border rounded-2xl px-5 py-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted">Storage</span>
-              <button onClick={() => handleTopUpClick('storage')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
-            </div>
-            <p className="text-lg font-extrabold text-text-primary">
-              {fmtBytes(billing.storageUsedBytes)} <span className="text-sm font-medium text-muted">/ {fmtBytes(billing.storageGrantBytes)}</span>
-            </p>
-            <UsageBar pct={billing.storageUsagePct} />
-            <p className={`text-[11px] font-semibold ${usageTextColor(billing.storageUsagePct)}`}>{billing.storageUsagePct}% used</p>
-          </div>
-          <div className="bg-card border border-border rounded-2xl px-5 py-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted">AI photo search</span>
-              <button onClick={() => handleTopUpClick('ai-search')} className="text-xs font-semibold text-accent hover:underline">Top up</button>
-            </div>
-            <p className="text-lg font-extrabold text-text-primary">
-              {billing.aiSearchCreditsUsed.toLocaleString('en-IN')} <span className="text-sm font-medium text-muted">/ {formatAiCredits(billing.aiSearchCreditsTotal)}</span>
-            </p>
-            <UsageBar pct={billing.aiSearchUsagePct} />
-            <p className={`text-[11px] font-semibold ${usageTextColor(billing.aiSearchUsagePct)}`}>{billing.aiSearchUsagePct}% used</p>
-          </div>
-        </div>
+        <UsageBillingPanel
+          key={`${billing.billingPlanId}-${billing.storageGrantBytes}-${billing.aiSearchCreditsTotal}`}
+          role="studio"
+          storageUsedBytes={billing.storageUsedBytes}
+          storageGrantBytes={billing.storageGrantBytes}
+          storageUsagePct={billing.storageUsagePct}
+          aiCreditsUsed={billing.aiSearchCreditsUsed}
+          aiCreditsQuota={billing.aiSearchCreditsTotal}
+          aiUsagePct={billing.aiSearchUsagePct}
+          onUsageChange={loadStats}
+          topUpAllowed={!isFree}
+          onTopUpBlocked={() => setShowChangePlan(true)}
+        />
         <p className="text-[11px] text-muted">
-          AI search credits reset every 30 days from your last plan change — unused top-up credits don&apos;t carry over to the next cycle. Storage top-ups never expire.
+          AI search credits reset every 30 days from your last plan change — unused top-up credits don&apos;t carry over to the next cycle. Storage top-ups never expire. A PDF receipt is emailed to you automatically after every payment.
         </p>
       </section>
-
-      {/* Billing history */}
-      <section className="space-y-3">
-        <h4 className="text-xs font-bold text-muted uppercase tracking-wider">Billing history</h4>
-        <p className="text-xs text-muted">A PDF receipt is emailed to you automatically after every payment.</p>
-
-        {history === null ? (
-          <div className="flex items-center justify-center h-20"><div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" /></div>
-        ) : history.length === 0 ? (
-          <p className="text-sm text-muted bg-card border border-border rounded-2xl px-5 py-4">No payments yet.</p>
-        ) : (
-          <div className="border border-border rounded-2xl divide-y divide-border overflow-hidden">
-            {history.map((txn) => (
-              <div key={txn.txnId} className="flex items-center justify-between gap-3 px-5 py-3 flex-wrap">
-                <div>
-                  <p className="text-sm font-bold text-text-primary">{txn.label}</p>
-                  <p className="text-xs text-muted">{fmtDate(txn.createdAt)}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <p className="text-sm font-bold text-text-primary">{formatPaiseAsRupees(txn.amountPaise)}</p>
-                  <div className="flex items-center gap-3 text-xs font-semibold text-accent">
-                    <a href={`/studio/api/billing/receipt/${txn.txnId}`} target="_blank" rel="noopener noreferrer" className="hover:underline">View</a>
-                    <a href={`/studio/api/billing/receipt/${txn.txnId}?download=1`} className="hover:underline">Download</a>
-                    <button type="button" disabled={resendingTxnId === txn.txnId} onClick={() => resendReceipt(txn.txnId)} className="hover:underline disabled:opacity-60">
-                      {resendingTxnId === txn.txnId ? 'Sending…' : resentTxnId === txn.txnId ? 'Sent ✓' : 'Email me'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {topupKind && (
-        <StudioTopupModal kind={topupKind} onClose={() => setTopupKind(null)} onSuccess={() => { setTopupKind(null); loadStats(); loadHistory() }} />
-      )}
     </div>
   )
 }

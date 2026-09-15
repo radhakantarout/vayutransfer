@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useMomentsTheme } from '@/lib/momentsTheme'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
-import StudioTopupModal from '@/components/studio/StudioTopupModal'
-import { toMomentsCredits } from '@/constants/studioPricing'
+import UsageBillingPanel from '@/components/studio/UsageBillingPanel'
 
 interface Me {
   name: string
@@ -14,6 +13,10 @@ interface Me {
   billingPlanId?: string
   aiCreditsUsed: number
   aiCreditsQuota: number
+  aiUsagePct?: number
+  storageUsedBytes?: number
+  storageGrantBytes?: number
+  storageUsagePct?: number
 }
 
 interface MomentsEventLite {
@@ -207,7 +210,7 @@ export default function ProfilePanel() {
   const [usage, setUsage] = useState<{ galleryCount: number; mediaCount: number } | null>(null)
   const [checking, setChecking] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
-  const [modal, setModal] = useState<'upgrade' | 'feedback' | 'legal' | 'deleteAll' | null>(null)
+  const [modal, setModal] = useState<'feedback' | 'legal' | 'deleteAll' | null>(null)
   const [creditDivisor, setCreditDivisor] = useState(50)
 
   useEffect(() => {
@@ -272,46 +275,34 @@ export default function ProfilePanel() {
       </div>
 
       {/* Plan + usage */}
-      <div>
+      <div className="space-y-2">
         <SectionLabel>Plan &amp; Usage</SectionLabel>
-        <div className="bg-card border border-border rounded-2xl divide-y divide-border">
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">⭐</span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-text-primary">Plan</span>
-              <span className="inline-block text-[10px] font-bold text-accent bg-accent/10 rounded-full px-2 py-0.5 mt-0.5 capitalize">
-                {me.billingPlanId ?? 'Free'}
-              </span>
+        <div className="bg-card border border-border rounded-2xl px-4 py-3.5 flex items-center gap-3">
+          <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">📊</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-text-primary">Galleries</span>
+            <span className="block text-[11px] text-muted mt-0.5">
+              {usage ? `${usage.galleryCount} gallery${usage.galleryCount === 1 ? '' : 'ies'} · ${usage.mediaCount} photo${usage.mediaCount === 1 ? '' : 's'}/video${usage.mediaCount === 1 ? '' : 's'}` : '—'}
             </span>
-            <button
-              onClick={() => setModal('upgrade')}
-              className="text-xs font-bold text-white rounded-full px-3.5 py-1.5 flex-shrink-0 hover:opacity-90 transition-opacity"
-              style={{ background: GRADIENT }}
-            >
-              Buy credits
-            </button>
-          </div>
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">📊</span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-text-primary">Galleries</span>
-              <span className="block text-[11px] text-muted mt-0.5">
-                {usage ? `${usage.galleryCount} gallery${usage.galleryCount === 1 ? '' : 'ies'} · ${usage.mediaCount} photo${usage.mediaCount === 1 ? '' : 's'}/video${usage.mediaCount === 1 ? '' : 's'}` : '—'}
-              </span>
-            </span>
-          </div>
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">✨</span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-text-primary">Moments Credits</span>
-              <span className="block text-[11px] text-muted mt-0.5">
-                {typeof me.aiCreditsQuota === 'number'
-                  ? `${toMomentsCredits(Math.max(0, me.aiCreditsQuota - me.aiCreditsUsed), creditDivisor)} left of ${toMomentsCredits(me.aiCreditsQuota, creditDivisor)} this month · covers AI search & reels`
-                  : '—'}
-              </span>
-            </span>
-          </div>
+          </span>
+          <span className="inline-block text-[10px] font-bold text-accent bg-accent/10 rounded-full px-2 py-0.5 capitalize flex-shrink-0">
+            {me.billingPlanId ?? 'Free'} plan
+          </span>
         </div>
+        {typeof me.storageUsedBytes === 'number' && (
+          <UsageBillingPanel
+            key={`${me.storageGrantBytes}-${me.aiCreditsQuota}`}
+            role="moments"
+            storageUsedBytes={me.storageUsedBytes}
+            storageGrantBytes={me.storageGrantBytes ?? 0}
+            storageUsagePct={me.storageUsagePct ?? 0}
+            aiCreditsUsed={me.aiCreditsUsed}
+            aiCreditsQuota={me.aiCreditsQuota}
+            aiUsagePct={me.aiUsagePct ?? 0}
+            momentsCreditDivisor={creditDivisor}
+            onUsageChange={loadMe}
+          />
+        )}
       </div>
 
       {/* Appearance */}
@@ -371,13 +362,6 @@ export default function ProfilePanel() {
         <p className="text-[10px] text-muted/70">© {new Date().getFullYear()} VayuStudios · Moments v1.0</p>
       </div>
 
-      {modal === 'upgrade' && (
-        <StudioTopupModal
-          kind="ai-search"
-          onClose={() => setModal(null)}
-          onSuccess={() => { setModal(null); loadMe() }}
-        />
-      )}
       {modal === 'feedback' && (
         <MailtoModal
           kind="feedback"

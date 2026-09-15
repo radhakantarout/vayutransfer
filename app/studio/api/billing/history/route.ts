@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { formatTxnLabel } from '@/lib/studio/receiptLabel'
-import type { StudioTransaction } from '@/types/studio'
+import type { Studio, StudioTransaction } from '@/types/studio'
 
 // Lists a studio's successful billing transactions, newest first, for the
-// Settings > Billing "Billing history" list. Reads via the
-// studioId-createdAt-index GSI (added alongside this route) rather than a
-// full-table scan.
+// Settings > Billing "Billing history" list, and (via the shared
+// UsageBillingPanel component) Moments' Profile usage screen too. Reads via
+// the studioId-createdAt-index GSI (added alongside this route) rather than
+// a full-table scan.
 export async function GET(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || !['ADMIN', 'OWNER'].includes(auth.role) || !auth.studioId) {
+    if (!auth?.studioId) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+
+    // Same isIndividual carve-out as billing/ai-search-topup — a Moments
+    // personal Studio is always role CLIENT, never ADMIN/OWNER, but still
+    // needs to see its own billing history. Real studios keep the
+    // ADMIN/OWNER-only rule unchanged.
+    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })
+    if (!studio) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    if (!studio.isIndividual && !['ADMIN', 'OWNER'].includes(auth.role)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 

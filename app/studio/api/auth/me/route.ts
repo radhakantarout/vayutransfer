@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { aiCreditsUsed, aiCreditsQuota } from '@/lib/studio/quota'
+import { aiCreditsUsed, aiCreditsQuota, aiUsagePct, currentStorageBytes, activeStorageGrantBytes, storageUsagePct } from '@/lib/studio/quota'
 import type { StudioUser, Studio } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
@@ -33,6 +33,10 @@ export async function GET(req: NextRequest) {
         billingPlanId:  studio?.billingPlanId ?? 'free',
         aiCreditsUsed:  studio ? aiCreditsUsed(studio) : 0,
         aiCreditsQuota: studio ? aiCreditsQuota(studio) : 0,
+        aiUsagePct:     studio ? aiUsagePct(studio) : 0,
+        storageUsedBytes:  studio ? currentStorageBytes(studio) : 0,
+        storageGrantBytes: studio ? activeStorageGrantBytes(studio) : 0,
+        storageUsagePct:   studio ? storageUsagePct(studio) : 0,
       },
     },
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
