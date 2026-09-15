@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || auth.role !== 'OWNER' || !auth.studioId) {
+    if (!auth || auth.role !== 'OWNER') {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
@@ -29,14 +29,17 @@ export async function PATCH(req: NextRequest) {
     }
 
     const before = await getPricingConfig()
-    const after = await savePricingConfig(patch, auth.studioId)
+    const after = await savePricingConfig(patch, auth.userId)
 
-    // Global platform config, not studio-scoped — logged under the editing
-    // owner's own studioId (same as every other AuditLog row, which is
-    // always studioId-anchored) with targetId 'live' identifying the one
-    // config row, per the plan's "who/when/old→new" audit trail requirement.
+    // Global platform config, not studio-scoped — the real platform-owner
+    // JWT (app/studio/api/auth/admin-login/route.ts) has role: 'OWNER' but
+    // NO studioId at all (userId: 'platform-owner' instead), unlike every
+    // other OWNER token which is scoped to one photography studio. AuditLog
+    // rows still require a studioId, so this uses auth.userId for both
+    // fields (same actorId convention as every other owner route here) with
+    // targetId 'live' identifying the one config row.
     logAuditEvent({
-      studioId: auth.studioId, actorId: auth.studioId, actorRole: 'OWNER',
+      studioId: auth.studioId ?? auth.userId, actorId: auth.userId, actorRole: auth.role,
       action: 'UPDATE_PRICING_CONFIG', targetType: 'PRICING_CONFIG', targetId: 'live',
       metadata: { before, after, changedFields: Object.keys(patch) },
     })
