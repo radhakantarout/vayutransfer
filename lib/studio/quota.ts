@@ -69,11 +69,21 @@ export function checkStorageAvailable(studio: Studio, extraBytes = 0): { ok: boo
 
 // This cycle's AI-search credit ceiling — plan base + any top-ups bought
 // during the current cycle (top-up credits don't roll over past a reset,
-// same "use it or lose it" rule as the base allotment). Free plan never
-// has top-ups (gated to Pro+), so it always reads the live constant here
-// too — same reasoning as planStorageBytes/planAiCredits above.
+// same "use it or lose it" rule as the base allotment).
+//
+// A real (non-Moments) free-plan studio still can't top up at all (gated to
+// Pro+ in app/studio/api/billing/ai-search-topup/route.ts), so for one it
+// always reads the live constant — a free-tier pricing change then applies
+// immediately with no backfill needed. BUT a VayuStudios Moments personal
+// studio (Studio.isIndividual) CAN top up while staying on the free plan
+// (that route's isIndividual carve-out) — once that's happened,
+// aiSearchCreditsTotal (seeded from the free baseline by applyTopup's
+// if_not_exists) must win, or a real payment silently vanishes from the
+// quota a user actually sees/is enforced against. This bug shipped and hit
+// a real paying customer before being caught — see the isIndividual studio
+// case explicitly.
 export function aiCreditsQuota(studio: Studio): number {
-  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_AI_SEARCH_CREDITS
+  if ((studio.billingPlanId ?? 'free') === 'free') return studio.aiSearchCreditsTotal ?? FREE_AI_SEARCH_CREDITS
   return studio.aiSearchCreditsTotal ?? planAiCredits(studio)
 }
 
