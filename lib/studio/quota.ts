@@ -22,9 +22,14 @@ export function planStorageBytes(studio: Studio): number {
   return (studio.planStorageGB ?? FREE_STORAGE_GB) * GB
 }
 
-export function planAiCredits(studio: Studio): number {
-  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_AI_SEARCH_CREDITS
-  return studio.planAiCreditsPerMonth ?? FREE_AI_SEARCH_CREDITS
+// `freeAiSearchCreditsOverride` lets a caller that already fetched the live,
+// owner-editable PricingConfig (see lib/pricingConfig.ts) pass its
+// freeAiSearchCredits through instead of the hardcoded constant — optional
+// and defaulted so every pre-existing call site is unaffected.
+export function planAiCredits(studio: Studio, freeAiSearchCreditsOverride?: number): number {
+  const freeDefault = freeAiSearchCreditsOverride ?? FREE_AI_SEARCH_CREDITS
+  if ((studio.billingPlanId ?? 'free') === 'free') return freeDefault
+  return studio.planAiCreditsPerMonth ?? freeDefault
 }
 
 // Total currently-active storage grant: the plan's base allotment + any
@@ -82,9 +87,10 @@ export function checkStorageAvailable(studio: Studio, extraBytes = 0): { ok: boo
 // quota a user actually sees/is enforced against. This bug shipped and hit
 // a real paying customer before being caught — see the isIndividual studio
 // case explicitly.
-export function aiCreditsQuota(studio: Studio): number {
-  if ((studio.billingPlanId ?? 'free') === 'free') return studio.aiSearchCreditsTotal ?? FREE_AI_SEARCH_CREDITS
-  return studio.aiSearchCreditsTotal ?? planAiCredits(studio)
+export function aiCreditsQuota(studio: Studio, freeAiSearchCreditsOverride?: number): number {
+  const freeDefault = freeAiSearchCreditsOverride ?? FREE_AI_SEARCH_CREDITS
+  if ((studio.billingPlanId ?? 'free') === 'free') return studio.aiSearchCreditsTotal ?? freeDefault
+  return studio.aiSearchCreditsTotal ?? planAiCredits(studio, freeAiSearchCreditsOverride)
 }
 
 // Cumulative photos indexed by Rekognition this cycle — never decremented
@@ -97,15 +103,15 @@ export function isOverAiQuota(studio: Studio): boolean {
   return aiCreditsUsed(studio) >= aiCreditsQuota(studio)
 }
 
-export function aiUsagePct(studio: Studio): number {
-  const quota = aiCreditsQuota(studio)
+export function aiUsagePct(studio: Studio, freeAiSearchCreditsOverride?: number): number {
+  const quota = aiCreditsQuota(studio, freeAiSearchCreditsOverride)
   return quota > 0 ? Math.round((aiCreditsUsed(studio) / quota) * 100) : 0
 }
 
-export function checkAiCreditsAvailable(studio: Studio, count: number): { ok: boolean; usedCredits: number; quotaCredits: number; usedPct: number } {
+export function checkAiCreditsAvailable(studio: Studio, count: number, freeAiSearchCreditsOverride?: number): { ok: boolean; usedCredits: number; quotaCredits: number; usedPct: number } {
   const usedCredits = aiCreditsUsed(studio)
-  const quotaCredits = aiCreditsQuota(studio)
-  return { ok: usedCredits + count <= quotaCredits, usedCredits, quotaCredits, usedPct: aiUsagePct(studio) }
+  const quotaCredits = aiCreditsQuota(studio, freeAiSearchCreditsOverride)
+  return { ok: usedCredits + count <= quotaCredits, usedCredits, quotaCredits, usedPct: aiUsagePct(studio, freeAiSearchCreditsOverride) }
 }
 
 // Reel credits are a simple prepaid balance (Studio.reelCreditsBalance) —

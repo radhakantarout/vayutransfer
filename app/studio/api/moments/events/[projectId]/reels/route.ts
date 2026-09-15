@@ -6,7 +6,8 @@ import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABL
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits } from '@/lib/studio/billing'
-import { AI_SEARCH_CREDIT_PRICE_PAISE } from '@/constants/studioPricing'
+import { aiSearchCreditPricePaise } from '@/constants/studioPricing'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
@@ -156,10 +157,12 @@ export async function POST(
       }, { status: 409 })
     }
 
+    const pricing = await getPricingConfig()
     const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
-    const { sellPricePaise } = computeReelCost(photos.length, durationSec)
-    const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / AI_SEARCH_CREDIT_PRICE_PAISE))
-    const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired)
+    const { sellPricePaise } = computeReelCost(photos.length, durationSec, pricing)
+    const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
+    const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
+    const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
     if (!creditCheck.ok) {
       return NextResponse.json({
         success: false, error: 'INSUFFICIENT_CREDITS',

@@ -190,12 +190,26 @@ export interface ReelCostEstimate {
 // server-side at request time from the ACTUAL configuration (hero clip
 // count + their length), never a flat per-duration bucket. See design doc
 // §7 for why this matters for margin protection.
-export function computeReelCost(heroClipCount: number, avgClipDurationSec: number): ReelCostEstimate {
-  const rawCostPaise = Math.round(
-    heroClipCount * avgClipDurationSec * KLING_COST_PAISE_PER_AI_SECOND + FIXED_OVERHEAD_PAISE_PER_REEL
-  )
-  const sellPricePaise = Math.round(rawCostPaise / (1 - TARGET_MARGIN))
-  const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / CREDIT_VALUE_PAISE))
+//
+// `rates` is optional and defaults to the hardcoded constants above so
+// every pre-existing call site keeps working unchanged. Callers that want
+// the live, owner-editable numbers (see lib/pricingConfig.ts) fetch a
+// PricingConfig and pass its fields through here instead — this function
+// itself has no DynamoDB dependency, so it stays a plain sync function
+// usable from both server routes and client components (e.g. the modal's
+// pre-generation cost estimate).
+export function computeReelCost(
+  heroClipCount: number,
+  avgClipDurationSec: number,
+  rates?: { klingCostPaisePerAiSecond?: number; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
+): ReelCostEstimate {
+  const klingRate = rates?.klingCostPaisePerAiSecond ?? KLING_COST_PAISE_PER_AI_SECOND
+  const overhead = rates?.fixedOverheadPaisePerReel ?? FIXED_OVERHEAD_PAISE_PER_REEL
+  const margin = rates?.targetMargin ?? TARGET_MARGIN
+  const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
+  const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * klingRate + overhead)
+  const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
+  const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
   return { rawCostPaise, sellPricePaise, creditsRequired }
 }
 

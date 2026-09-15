@@ -625,8 +625,8 @@ export interface Selection {
 export type AuditAction =
   | 'DELETE_PHOTOS' | 'DELETE_PROJECT' | 'DELETE_CLIENT' | 'DELETE_STUDIO'
   | 'DELETE_TRANSFER' | 'DELETE_WEBSITE_MEDIA'
-  | 'SUSPEND_STUDIO' | 'REACTIVATE_STUDIO' | 'TOGGLE_AI_FLAG'
-export type AuditTargetType = 'PHOTO_BATCH' | 'PROJECT' | 'CLIENT' | 'STUDIO' | 'TRANSFER' | 'WEBSITE_MEDIA'
+  | 'SUSPEND_STUDIO' | 'REACTIVATE_STUDIO' | 'TOGGLE_AI_FLAG' | 'UPDATE_PRICING_CONFIG'
+export type AuditTargetType = 'PHOTO_BATCH' | 'PROJECT' | 'CLIENT' | 'STUDIO' | 'TRANSFER' | 'WEBSITE_MEDIA' | 'PRICING_CONFIG'
 
 export interface AuditLog {
   auditId: string

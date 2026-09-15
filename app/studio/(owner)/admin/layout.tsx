@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 const NAV = [
   { href: '/studio/admin/studios', label: 'Studios', icon: '🏠' },
   { href: '/studio/admin/users',   label: 'Users',   icon: '👥' },
+  { href: '/studio/admin/pricing', label: 'Pricing',  icon: '💰' },
 ]
 
 export default function OwnerLayout({ children }: { children: React.ReactNode }) {

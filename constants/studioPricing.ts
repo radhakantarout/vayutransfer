@@ -39,11 +39,14 @@ export const AI_EXTRA_PAISE_PER_1000 = 30000       // +₹300 per 1,000 photos
 // itself at checkout/plan-change, and (b) mid-cycle top-ups on top of
 // whatever plan a studio is already on (Free included — Free studios can
 // still top up without moving to Pro).
-export function computeStorageAddOnPaise(extraGB: number): number {
-  return Math.round((Math.max(0, extraGB) / 100) * STORAGE_EXTRA_PAISE_PER_100GB)
+// Rate params optional, defaulting to the hardcoded constants above — see
+// constants/videoProviders.ts#computeReelCost's comment for why this shape
+// (rather than an async config fetch inside the function) was chosen.
+export function computeStorageAddOnPaise(extraGB: number, storageExtraPaisePer100GB: number = STORAGE_EXTRA_PAISE_PER_100GB): number {
+  return Math.round((Math.max(0, extraGB) / 100) * storageExtraPaisePer100GB)
 }
-export function computeAiAddOnPaise(extraCredits: number): number {
-  return Math.round((Math.max(0, extraCredits) / 1000) * AI_EXTRA_PAISE_PER_1000)
+export function computeAiAddOnPaise(extraCredits: number, aiExtraPaisePer1000: number = AI_EXTRA_PAISE_PER_1000): number {
+  return Math.round((Math.max(0, extraCredits) / 1000) * aiExtraPaisePer1000)
 }
 // Per-credit price derived from the same rate as computeAiAddOnPaise, rather
 // than a second hardcoded number — used by Moments' reel-generation route to
@@ -52,12 +55,22 @@ export function computeAiAddOnPaise(extraCredits: number): number {
 // unlike Studio Admin/Client Gallery which keep reel credits as a separate
 // pool — see app/studio/api/moments/events/[projectId]/reels/route.ts).
 export const AI_SEARCH_CREDIT_PRICE_PAISE = AI_EXTRA_PAISE_PER_1000 / 1000
+export function aiSearchCreditPricePaise(aiExtraPaisePer1000: number = AI_EXTRA_PAISE_PER_1000): number {
+  return aiExtraPaisePer1000 / 1000
+}
 // Pro plan price for an arbitrary chosen storage/AI amount (the calculator's
 // live price, and the authoritative server-side price for a plan-change).
-export function computeProPlanPricePaise(storageGB: number, aiCredits: number): number {
-  return PRO_BASE_PRICE_PAISE
-    + computeStorageAddOnPaise(storageGB - PRO_BASE_STORAGE_GB)
-    + computeAiAddOnPaise(aiCredits - PRO_BASE_AI_CREDITS)
+export function computeProPlanPricePaise(
+  storageGB: number,
+  aiCredits: number,
+  rates?: { proBasePricePaise?: number; proBaseStorageGB?: number; proBaseAiCredits?: number; storageExtraPaisePer100GB?: number; aiExtraPaisePer1000?: number }
+): number {
+  const basePrice = rates?.proBasePricePaise ?? PRO_BASE_PRICE_PAISE
+  const baseStorageGB = rates?.proBaseStorageGB ?? PRO_BASE_STORAGE_GB
+  const baseAiCredits = rates?.proBaseAiCredits ?? PRO_BASE_AI_CREDITS
+  return basePrice
+    + computeStorageAddOnPaise(storageGB - baseStorageGB, rates?.storageExtraPaisePer100GB)
+    + computeAiAddOnPaise(aiCredits - baseAiCredits, rates?.aiExtraPaisePer1000)
 }
 
 // Billing cycle — a fixed 30-day rolling window; annual billing is 10x the

@@ -51,6 +51,15 @@ const TABLES = {
   // no GSI needed). Polled every few seconds, not push-based (see design
   // doc discussion — WebSocket infra was scoped out for this pass).
   galleryMessages: process.env.DYNAMO_STUDIO_GALLERY_MESSAGES_TABLE ?? 'vayustudio-gallery-messages',
+  // Single-row config table (PK configKey, one live row 'live') — every
+  // owner-editable pricing constant, so a price change is a save in the
+  // admin UI, not a redeploy. Same "generic key-value, compute-once-read-
+  // many" shape as VayuTransfer's vayu-platform-stats. NOT YET PROVISIONED
+  // in AWS as of 2026-09-16 — lib/pricingConfig.ts's accessor falls back to
+  // hardcoded defaults whenever this table/row doesn't exist, so shipping
+  // this code ahead of the table is safe (zero behavior change until the
+  // table exists AND has a saved row).
+  pricingConfig: process.env.DYNAMO_STUDIO_PRICING_CONFIG_TABLE ?? 'vayustudio-pricing-config',
 } as const
 
 export { TABLES }

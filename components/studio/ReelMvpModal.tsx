@@ -6,7 +6,9 @@ import {
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
+import { aiSearchCreditPricePaise } from '@/constants/studioPricing'
 import type { ReelStyle } from '@/types/studio'
+import type { PricingConfig } from '@/types/pricingConfig'
 
 // "Fast minimal demo" scope (AI Reel Generator design doc, Phase 1) with a
 // real premium-feeling flow layered on top per explicit request: template
@@ -149,11 +151,31 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [outputUrl, setOutputUrl] = useState<string | null>(null)
   const [msgIdx, setMsgIdx] = useState(0)
   const [progress, setProgress] = useState<{ stage: string; percent: number } | null>(null)
+  const [pricing, setPricing] = useState<PricingConfig | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reducedMotion = useReducedMotion()
 
+  // Live, owner-editable rates (lib/pricingConfig.ts) — falls back to
+  // whatever computeReelCost's own hardcoded defaults are if this hasn't
+  // loaded yet, so the quote never blocks on the fetch. Fetching here
+  // (rather than trusting a build-time constant) is what keeps this preview
+  // in sync with the server's actual charge the moment an admin changes a
+  // price, with zero redeploy.
+  useEffect(() => {
+    fetch('/studio/api/pricing-config').then((r) => r.json()).then((d) => { if (d.success) setPricing(d.data) }).catch(() => {})
+  }, [])
+
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
-  const { creditsRequired } = computeReelCost(photoIds.length, DEFAULT_AI_CLIP_DURATION_SEC)
+  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(photoIds.length, DEFAULT_AI_CLIP_DURATION_SEC, pricing ?? undefined)
+  // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
+  // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
+  // component was originally built for — same real ₹ cost, wildly
+  // different credit COUNT. Showing the wrong pool's number here used to
+  // quote a small figure that had nothing to do with what the server
+  // actually charged/rejected against.
+  const creditsRequired = isMoments
+    ? Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(pricing?.aiExtraPaisePer1000)))
+    : reelPoolCreditsRequired
   // Guest (selfie-search) mode has no reel history list at all — the QR
   // token is shared across every guest at the event, so per-token history
   // would leak one guest's reel to everyone else (see the `source: 'guest'`
