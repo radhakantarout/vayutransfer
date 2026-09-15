@@ -3,7 +3,7 @@ import {
   studioScanTable, studioQueryByPK, studioGetItem, studioUpdateItem, studioDeleteItem, TABLES,
 } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
-import { deleteStudioR2Object } from '@/lib/studio/r2'
+import { deleteStudioR2Object, listStudioR2IncompleteMultipartUploads, abortStudioR2MultipartUpload } from '@/lib/studio/r2'
 import { getStudioAdminEmails } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, syncBillingCycle } from '@/lib/studio/quota'
@@ -61,6 +61,30 @@ async function sweepStuckReelJobs(): Promise<{ count: number }> {
   }
 
   return { count: stuck.length }
+}
+
+// Incomplete multipart uploads (browser closed mid-upload, network drop) are
+// real, billed R2 bytes that are invisible to a normal object listing and,
+// before this, were never counted toward billableStorageBytes OR ever
+// cleaned up — an unbounded, silent storage-cost leak. Shared bucket, so
+// this covers Studio Admin and Moments uploads in one pass. 48h (not
+// VayuTransfer's own 6h default) since a real event video on a slow
+// connection can legitimately take a while; never touches anything younger.
+const ORPHANED_UPLOAD_STALE_HOURS = 48
+
+async function sweepOrphanedMultipartUploads(): Promise<{ count: number }> {
+  const uploads = await listStudioR2IncompleteMultipartUploads()
+  const cutoffMs = Date.now() - ORPHANED_UPLOAD_STALE_HOURS * 60 * 60 * 1000
+  const stale = uploads.filter((u) => new Date(u.initiated).getTime() < cutoffMs)
+
+  await Promise.all(
+    stale.map((u) =>
+      abortStudioR2MultipartUpload(u.key, u.uploadId)
+        .catch((err) => console.error('[storage-check] failed to abort orphaned upload', u.key, err))
+    )
+  )
+
+  return { count: stale.length }
 }
 
 // Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on every
@@ -174,6 +198,10 @@ export async function GET(req: NextRequest) {
   }
 
   const stuckReels = await sweepStuckReelJobs()
+  const orphanedUploads = await sweepOrphanedMultipartUploads().catch((err) => {
+    console.error('[storage-check] orphaned-upload sweep failed', err)
+    return { count: 0 }
+  })
 
   const studios = await studioScanTable<Studio>(TABLES.studios)
   const allTransfers = await studioScanTable<StudioTransfer>(TABLES.transfers)
@@ -303,5 +331,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count, orphanedUploadsAborted: orphanedUploads.count } })
 }

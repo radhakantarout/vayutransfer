@@ -127,6 +127,26 @@ export async function POST(
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
+    // Same dedupe pattern as face-indexing (faces/index/route.ts) — without
+    // this, nothing stopped a scripted rapid-fire loop of POSTs (each
+    // triggering a real, paid Kling Lambda invoke) beyond the credit check
+    // alone, which itself only narrowly stops overspend, not repeated
+    // legitimate-looking requests for the same gallery.
+    const runningJobs = await studioQueryByIndex<StudioJob>(
+      TABLES.jobs,
+      'projectId-status-index',
+      'projectId = :pid AND #s = :processing',
+      { ':pid': projectId, ':processing': 'PROCESSING' },
+      { '#s': 'status' },
+      25
+    )
+    const runningReelJob = runningJobs.find((j) => j.jobType === 'AI_REEL')
+    if (runningReelJob) {
+      return NextResponse.json({
+        success: false, error: 'JOB_RUNNING', data: { jobId: runningReelJob.jobId },
+      }, { status: 409 })
+    }
+
     const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
     const { sellPricePaise } = computeReelCost(photos.length, durationSec)
     const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / AI_SEARCH_CREDIT_PRICE_PAISE))
@@ -145,7 +165,20 @@ export async function POST(
     }
 
     const creditsRequired = aiCreditsRequired
-    await deductAiSearchCredits(studioId, creditsRequired)
+    try {
+      // ceilingCredits comes from the check just above — deductAiSearchCredits
+      // re-verifies atomically against the item's live aiSearchCreditsUsed at
+      // write time, so a concurrent request that already consumed the
+      // remaining headroom correctly fails here even though both requests
+      // passed the read-only check above.
+      await deductAiSearchCredits(studioId, creditsRequired, creditCheck.quotaCredits)
+    } catch (err) {
+      console.error('[moments reels POST] credit deduction lost a concurrency race', err)
+      return NextResponse.json({
+        success: false, error: 'INSUFFICIENT_CREDITS',
+        message: 'Someone just used the last of these credits — please check your balance and try again.',
+      }, { status: 402 })
+    }
 
     const reelId = randomUUID()
     const jobId = randomUUID()

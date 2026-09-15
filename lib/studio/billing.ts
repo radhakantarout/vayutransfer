@@ -182,21 +182,38 @@ export async function refundReelCredits(studioId: string, credits: number): Prom
 }
 
 // AI-search-credit spend/refund — mirrors the exact inline DynamoDB update
-// lambda/vayustudio-indexfaces/index.js already does after each Rekognition
-// call (`ADD aiSearchCreditsUsed :n`), just as a reusable function. No
-// DynamoDB-level ceiling guard: unlike reelCreditsBalance (a real prepaid
-// balance that must never go negative), aiSearchCreditsUsed is a cumulative
-// usage counter checked against a quota BEFORE spending (checkAiCreditsAvailable
-// in lib/studio/quota.ts) — the same check-then-add pattern the indexing
-// Lambda already uses, not a balance-decrement pattern. Used by Moments'
-// reel-generation route, which spends from this same AI-credit pool instead
-// of the separate reelCreditsBalance Studio Admin/Client Gallery use.
-export async function deductAiSearchCredits(studioId: string, credits: number): Promise<void> {
+// lambda/vayustudio-indexfaces/index.js does an equivalent bare
+// `ADD aiSearchCreditsUsed :n` after each Rekognition call, without this
+// guard — a real gap (see the ceilingCredits comment below), not yet fixed
+// there since the Lambda batches many photos per invoke and would need a
+// per-photo re-check loop; tracked separately, not blocking this fix for
+// the synchronous reel-generation path.
+//
+// Previously a bare ADD with no DynamoDB-level ceiling guard — unlike
+// reelCreditsBalance (a decrementing balance, guarded by deductReelCredits
+// below), aiSearchCreditsUsed only ever increases, so "never exceed quota"
+// has to be enforced as an upper bound instead of a floor. The bug this
+// fixes: checkAiCreditsAvailable (a plain read) and this deduct were two
+// separate steps with no atomicity between them — two concurrent requests
+// could each pass the check and each deduct, together exceeding
+// ceilingCredits while each still triggered a real, paid Kling/Rekognition
+// call regardless of what the counter said afterward.
+//
+// ceilingCredits is the caller's own already-computed aiCreditsQuota(studio)
+// snapshot (however slightly stale) — the fix doesn't require a perfectly
+// fresh ceiling read, only that THIS write is atomic against the item's
+// CURRENT aiSearchCreditsUsed at commit time, which DynamoDB guarantees per
+// item regardless of how many requests race. Throws (ConditionalCheckFailedException)
+// if this deduction would exceed the ceiling — callers must catch this and
+// treat it as insufficient credits, not let it bubble up as a 500.
+export async function deductAiSearchCredits(studioId: string, credits: number, ceilingCredits: number): Promise<void> {
   await studioUpdateItem(
     TABLES.studios,
     { studioId },
     'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
-    { ':n': credits, ':now': new Date().toISOString() }
+    { ':n': credits, ':now': new Date().toISOString(), ':maxUsedBefore': Math.max(0, ceilingCredits - credits) },
+    undefined,
+    'attribute_not_exists(aiSearchCreditsUsed) OR aiSearchCreditsUsed <= :maxUsedBefore'
   )
 }
 
@@ -204,8 +221,13 @@ export async function refundAiSearchCredits(studioId: string, credits: number): 
   await studioUpdateItem(
     TABLES.studios,
     { studioId },
+    // Never let a refund push the counter below zero (e.g. a duplicate
+    // refund call racing itself) — floor-guarded the same direction
+    // deductReelCredits already floor-guards its own balance.
     'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
-    { ':n': -credits, ':now': new Date().toISOString() }
+    { ':n': -credits, ':now': new Date().toISOString(), ':credits': credits },
+    undefined,
+    'attribute_exists(aiSearchCreditsUsed) AND aiSearchCreditsUsed >= :credits'
   )
 }
 

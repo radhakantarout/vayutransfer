@@ -67,13 +67,20 @@ export async function studioGetItem<T>(
   return res.Item ? (unmarshall(res.Item) as T) : null
 }
 
+// conditionExpression is optional and additive — every existing call site
+// omits it and behaves exactly as before. Pass one (e.g.
+// 'attribute_not_exists(studioId)') for an atomic create-if-not-exists PUT;
+// DynamoDB throws ConditionalCheckFailedException if it doesn't hold, which
+// the caller should catch and handle as "someone else already created this."
 export async function studioPutItem(
   table: string,
-  item: Record<string, unknown>
+  item: Record<string, unknown>,
+  conditionExpression?: string
 ): Promise<void> {
   await client.send(new PutItemCommand({
     TableName: table,
     Item: marshall(item, { removeUndefinedValues: true }),
+    ...(conditionExpression ? { ConditionExpression: conditionExpression } : {}),
   }))
 }
 
