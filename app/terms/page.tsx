@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { LegalHero, LegalToc, LegalSection, TrustBadge, Icons } from '@/components/legal/LegalShell'
+import MomentsBackBanner from '@/components/legal/MomentsBackBanner'
 
 export const metadata: Metadata = {
   title: 'Terms of Service — VayuTransfer & VayuStudios',
@@ -23,9 +24,10 @@ const TOC = [
   { id: 'contact',     label: 'Contact' },
 ]
 
-export default function TermsPage() {
+export default function TermsPage({ searchParams }: { searchParams: { from?: string } }) {
   return (
     <main className="min-h-screen bg-bg">
+      {searchParams.from === 'moments' && <MomentsBackBanner />}
       <LegalHero
         eyebrow="Terms of Service"
         title="The fine print, in plain language"

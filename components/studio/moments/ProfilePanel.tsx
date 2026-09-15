@@ -334,7 +334,7 @@ export default function ProfilePanel() {
           <Row icon="💬" label="Help Center" sub="Chat with us" onClick={() => setChatOpen(true)} />
           <Row icon="📝" label="Send feedback" onClick={() => setModal('feedback')} />
           <Row icon="🚩" label="Report a legal issue" onClick={() => setModal('legal')} />
-          <Row icon="🔒" label="Privacy notice" onClick={() => router.push('/privacy')} />
+          <Row icon="🔒" label="Privacy notice" onClick={() => window.open('/privacy?from=moments', '_blank')} />
         </div>
       </div>
 
@@ -356,9 +356,9 @@ export default function ProfilePanel() {
 
       <div className="text-center space-y-1 pt-2 pb-1">
         <p className="flex items-center justify-center gap-3 text-[11px] text-muted">
-          <a href="/privacy" className="hover:text-text-primary hover:underline">Privacy</a>
+          <a href="/privacy?from=moments" target="_blank" rel="noopener noreferrer" className="hover:text-text-primary hover:underline">Privacy</a>
           <span aria-hidden>·</span>
-          <a href="/terms" className="hover:text-text-primary hover:underline">Terms of Service</a>
+          <a href="/terms?from=moments" target="_blank" rel="noopener noreferrer" className="hover:text-text-primary hover:underline">Terms of Service</a>
         </p>
         <p className="text-[10px] text-muted/70">© {new Date().getFullYear()} VayuStudios · Moments v1.0</p>
       </div>
