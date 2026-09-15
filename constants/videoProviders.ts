@@ -218,6 +218,14 @@ export function getReelCreditPack(packId: string): ReelCreditPack | undefined {
   return REEL_CREDIT_PACKS.find((p) => p.id === packId)
 }
 
+// One-time free trial grant, lazily applied the first time any studio (a
+// real photography studio OR a VayuStudios Moments personal Studio — same
+// Studio row shape either way) ever tries to generate a reel with
+// Studio.reelCreditsFreeTrialUsed not yet true. Sized to comfortably cover
+// one real test reel (computeReelCost(5, DEFAULT_AI_CLIP_DURATION_SEC) ≈ 5
+// credits for a 5-photo reel) without being a full paid pack.
+export const FREE_TRIAL_REEL_CREDITS = 5
+
 // billingCycle undefined/'monthly' -> monthly price. Only studios actually
 // on annual billing get the deeper discount — a Free-plan studio (no
 // billingCycle at all) is priced at the monthly rate, same as a Pro-monthly

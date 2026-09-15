@@ -8,8 +8,8 @@ import AuthShell from '@/components/studio/AuthShell'
 import GoogleIcon from '@/components/studio/GoogleIcon'
 import PasswordInput from '@/components/PasswordInput'
 
-type Role        = 'ADMIN' | 'PRINT' | 'CLIENT'
 type ForgotStep  = 'email' | 'otp' | 'password'
+const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 
 function validatePassword(pw: string): string | null {
   if (pw.length < 8)               return 'At least 8 characters required'
@@ -42,12 +42,6 @@ function PasswordStrength({ password }: { password: string }) {
   )
 }
 
-const ROLES: { value: Role; label: string; description: string }[] = [
-  { value: 'ADMIN',  label: 'Studio Admin',  description: 'Manage projects & galleries' },
-  { value: 'PRINT',  label: 'Print Admin',   description: 'Access print download links'  },
-  { value: 'CLIENT', label: 'Customer',      description: 'View your photo gallery'       },
-]
-
 const ROLE_REDIRECT: Record<string, string> = {
   OWNER: '/studio/admin/studios',
   ADMIN: '/studio/dashboard',
@@ -59,11 +53,22 @@ function LoginPageInner() {
   const searchParams = useSearchParams()
 
   /* ── Login state ─────────────────────────────── */
-  const [role, setRole]         = useState<Role>('ADMIN')
+  // Studio Admin starts collapsed to a compact row — Individual User is the
+  // primary, always-expanded card (mock: asymmetric hierarchy, Moments is
+  // the inviting default, Admin is the secondary/professional path).
+  const [adminExpanded, setAdminExpanded] = useState(false)
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loginLoading, setLoginLoading] = useState(false)
+  // Branded transitional screen shown for a beat before an actual Google
+  // OAuth redirect (a real `<a href>` navigation) fires — purely cosmetic,
+  // no change to the OAuth flow itself.
+  const [redirectingTo, setRedirectingTo] = useState<string | null>(null)
+  const goToGoogle = (href: string) => {
+    setRedirectingTo(href)
+    setTimeout(() => { window.location.href = href }, 700)
+  }
 
   /* ── Forgot-password state ───────────────────── */
   const [showForgot, setShowForgot]     = useState(false)
@@ -221,19 +226,39 @@ function LoginPageInner() {
   }
 
   /* ── Render ──────────────────────────────────── */
+  if (redirectingTo) {
+    return (
+      <AuthShell>
+        <div className="w-full max-w-sm pt-16 text-center space-y-6">
+          <p className="text-xs font-semibold text-muted flex items-center justify-center gap-1.5">
+            <span aria-hidden>☁️</span> VayuStudios Moments
+          </p>
+          <div className="relative w-28 h-28 mx-auto">
+            <div className="absolute inset-0 rounded-full animate-spin" style={{ background: GRADIENT, animationDuration: '1.6s' }} />
+            <div className="absolute inset-1.5 rounded-full bg-card flex items-center justify-center">
+              <GoogleIcon />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-xl font-extrabold text-text-primary">Taking you to Google…</h1>
+            <p className="text-sm text-muted">Just a second — we&apos;re getting your gallery ready ✨</p>
+          </div>
+          <p className="text-[11px] text-muted">Secure sign-in 🔒</p>
+        </div>
+      </AuthShell>
+    )
+  }
+
   return (
     <AuthShell>
       <div className="w-full max-w-sm space-y-6 pt-4">
 
         {!showForgot && (
           <div className="text-center space-y-2">
-            <h1 className="text-2xl font-extrabold text-text-primary">Log in to Vayu<span className="text-accent">Studios</span></h1>
-            <p className="text-sm text-muted">
-              New to VayuStudios?{' '}
-              <Link href="/studio/get-started" className="text-accent hover:underline">
-                Request studio setup →
-              </Link>
-            </p>
+            <h1 className="text-2xl font-extrabold text-text-primary leading-tight">
+              Your people.<br />Your moments. <span aria-hidden>✨</span>
+            </h1>
+            <p className="text-sm text-muted">VayuStudios Moments</p>
           </div>
         )}
 
@@ -381,112 +406,135 @@ function LoginPageInner() {
             )}
           </div>
         ) : (
-          /* ── NORMAL LOGIN FLOW ───────────────────── */
+          /* ── NORMAL LOGIN FLOW — asymmetric hierarchy: Individual User is
+             the primary, always-expanded card; Studio Admin is a compact
+             row that expands in place to reveal its (unchanged) form. ── */
           <>
-            {/* Role selector */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted text-center uppercase tracking-wider">Sign in as</p>
-              <div className="grid grid-cols-3 gap-2">
-                {ROLES.map(({ value, label, description }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => { setRole(value); setLoginError(null) }}
-                    className={`flex flex-col items-center gap-1 px-2 py-3 rounded-xl border text-center transition-colors ${
-                      role === value
-                        ? 'bg-accent/10 border-accent/50 text-accent'
-                        : 'border-border text-muted hover:border-accent/20 hover:text-text-primary'
-                    }`}
-                  >
-                    <span className="text-sm font-semibold leading-tight">{label}</span>
-                    <span className="text-[10px] leading-tight opacity-70">{description}</span>
-                  </button>
-                ))}
+            {/* Individual User — primary */}
+            <div className="relative rounded-3xl p-[1.5px] animate-reel-glow" style={{ background: GRADIENT }}>
+              <div className="relative overflow-hidden rounded-[22px] bg-card p-6 text-center space-y-4">
+                <span className="absolute top-3 right-4 text-base animate-reel-float" aria-hidden>✨</span>
+                <span className="absolute top-9 right-9 text-[10px] animate-reel-float" style={{ animationDelay: '0.6s' }} aria-hidden>⭐</span>
+                <div
+                  className="inline-flex w-12 h-12 rounded-2xl items-center justify-center text-2xl animate-reel-float"
+                  style={{ background: GRADIENT }}
+                >
+                  ✨
+                </div>
+                <div className="space-y-1">
+                  <p className="text-base font-extrabold text-text-primary">Individual User</p>
+                  <p className="text-xs text-muted">Create a private gallery for your event</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goToGoogle(`/studio/api/auth/google?intent=moments${nextParam ? `&next=${encodeURIComponent(nextParam)}` : ''}`)}
+                  className="flex items-center justify-center gap-2.5 w-full text-white font-bold rounded-xl py-3 text-sm hover:opacity-90 transition-opacity"
+                  style={{ background: GRADIENT }}
+                >
+                  <GoogleIcon />
+                  Continue with Google
+                </button>
+                <p className="text-[11px] text-muted">Free to start — no card needed.</p>
               </div>
             </div>
 
-            {role === 'CLIENT' ? (
-              <div className="bg-card border border-border rounded-2xl p-6 text-center space-y-3">
-                <div className="text-2xl">📸</div>
-                <p className="text-sm font-semibold text-text-primary">Looking for your gallery?</p>
-                <p className="text-sm text-muted leading-relaxed">
-                  Your photographer sent you a unique link by email or WhatsApp. Open that link to access your photos — no separate login needed.
-                </p>
-                <p className="text-xs text-muted pt-1">
-                  Can&apos;t find the link?{' '}
-                  <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">
-                    Contact support
-                  </a>
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {role === 'ADMIN' && (
-                  <>
-                    <a
-                      href={googleHref}
-                      className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors"
-                    >
-                      <GoogleIcon />
-                      Continue with Google
-                    </a>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-px bg-border" />
-                      <span className="text-xs text-muted whitespace-nowrap">Or use your email</span>
-                      <div className="flex-1 h-px bg-border" />
-                    </div>
-                  </>
-                )}
-              <form onSubmit={handleLogin} className="bg-card border border-border rounded-2xl p-6 space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted">Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                    placeholder="you@studio.com"
-                    className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-                  />
-                </div>
+            {/* Studio Admin — compact, expandable */}
+            <div className="border border-border rounded-2xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAdminExpanded((v) => !v)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-border/20 transition-colors"
+                aria-expanded={adminExpanded}
+              >
+                <span className="w-9 h-9 rounded-xl bg-bg flex items-center justify-center text-base flex-shrink-0">📷</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold text-text-primary">Studio Admin</span>
+                  <span className="block text-[11px] text-muted">For photographers</span>
+                </span>
+                <svg
+                  className={`w-4 h-4 text-muted flex-shrink-0 transition-transform ${adminExpanded ? 'rotate-180' : ''}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted">Password</label>
-                  <PasswordInput
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoComplete="current-password"
-                    placeholder="••••••••"
-                    className="w-full bg-bg border border-border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
-                  />
-                </div>
-
-                {loginError && (
-                  <div className="bg-danger/10 border border-danger/30 rounded-lg px-3.5 py-2.5 text-sm text-danger">
-                    {loginError}
+              {adminExpanded && (
+                <div className="px-4 pb-4 pt-1 space-y-4 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => goToGoogle(googleHref)}
+                    className="flex items-center justify-center gap-2.5 w-full bg-card border border-border rounded-xl py-2.5 text-sm font-semibold text-text-primary hover:border-accent/40 transition-colors mt-3"
+                  >
+                    <GoogleIcon />
+                    Continue with Google
+                  </button>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-xs text-muted whitespace-nowrap">Or use your email</span>
+                    <div className="flex-1 h-px bg-border" />
                   </div>
-                )}
+                  <form onSubmit={handleLogin} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted">Email</label>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        autoComplete="email"
+                        placeholder="you@studio.com"
+                        className="w-full bg-bg border border-border rounded-lg px-3.5 py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                      />
+                    </div>
 
-                <button
-                  type="submit"
-                  disabled={loginLoading}
-                  className="w-full bg-accent text-bg font-bold py-2.5 rounded-xl text-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loginLoading ? 'Signing in…' : 'Sign in'}
-                </button>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted">Password</label>
+                      <PasswordInput
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        autoComplete="current-password"
+                        placeholder="••••••••"
+                        className="w-full bg-bg border border-border rounded-lg py-2.5 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+                      />
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => { setShowForgot(true); setFpEmail(email) }}
-                  className="w-full text-xs text-muted hover:text-accent transition-colors text-center"
-                >
-                  Forgot password?
-                </button>
-              </form>
-              </div>
-            )}
+                    {loginError && (
+                      <div className="bg-danger/10 border border-danger/30 rounded-lg px-3.5 py-2.5 text-sm text-danger">
+                        {loginError}
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={loginLoading}
+                      className="w-full bg-accent text-bg font-bold py-2.5 rounded-xl text-sm hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loginLoading ? 'Signing in…' : 'Sign in'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { setShowForgot(true); setFpEmail(email) }}
+                      className="w-full text-xs text-muted hover:text-accent transition-colors text-center"
+                    >
+                      Forgot password?
+                    </button>
+                  </form>
+                  <p className="text-xs text-muted text-center">
+                    New to VayuStudios?{' '}
+                    <Link href="/studio/get-started" className="text-accent hover:underline">
+                      Request studio setup →
+                    </Link>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <p className="text-center text-[11px] text-muted flex items-center justify-center gap-1">
+              Private by default <span aria-hidden>🔒</span>
+            </p>
           </>
         )}
       </div>

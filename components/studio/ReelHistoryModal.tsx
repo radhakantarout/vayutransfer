@@ -36,23 +36,27 @@ function fmtDate(iso: string) {
 // "My Reels" — fast-minimal-demo version (matches ReelMvpModal's scope).
 // Lists every reel ever generated for this event, newest first. Playing a
 // reel just expands it inline rather than opening yet another modal layer.
-export default function ReelHistoryModal({
-  token, projectId, onClose,
-}: {
-  token: string
-  projectId: string
-  onClose: () => void
-}) {
+// Shared by Client Gallery and VayuStudios Moments — `token` is omitted
+// entirely for Moments (cookie-authenticated, no share-token concept).
+type Props =
+  | { source?: 'client'; token: string; projectId: string; onClose: () => void }
+  | { source: 'moments'; projectId: string; onClose: () => void }
+
+export default function ReelHistoryModal(props: Props) {
+  const { projectId, onClose } = props
+  const listUrl = props.source === 'moments'
+    ? `/studio/api/moments/events/${projectId}/reels`
+    : `/studio/api/client/gallery/${props.token}/events/${projectId}/reels`
   const [reels, setReels] = useState<ReelHistoryItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`/studio/api/client/gallery/${token}/events/${projectId}/reels`)
+    fetch(listUrl)
       .then((r) => r.json())
       .then((d) => { if (d.success) setReels(d.data); else setError('Could not load your reels.') })
       .catch(() => setError('Could not load your reels.'))
-  }, [token, projectId])
+  }, [listUrl])
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center px-4" onClick={onClose}>

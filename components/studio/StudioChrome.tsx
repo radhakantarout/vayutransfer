@@ -19,7 +19,12 @@ function Chrome({ children }: { children: React.ReactNode }) {
   // that stays true after navigating away from the dashboard, which used to
   // leak into non-admin pages like /studio/home and hide their navbar too.
   const isAdminApp = pathname.startsWith('/studio/dashboard')
-  const hideNavbar = isAdminApp || expanded
+  // VayuStudios Moments pages ship their own self-contained header + sign-out
+  // (a lighter, gamified chrome — see app/studio/moments/page.tsx) — without
+  // this, the marketing StudioNavbar rendered on top of it, showing two
+  // navbars and two sign-out controls stacked on the same page.
+  const isMomentsApp = pathname.startsWith('/studio/moments')
+  const hideNavbar = isAdminApp || isMomentsApp || expanded
 
   return (
     // Admin app clips to exactly the viewport height so its internal
@@ -42,12 +47,12 @@ function Chrome({ children }: { children: React.ReactNode }) {
       <div className="flex-1 min-h-0 flex flex-col">
         {children}
       </div>
-      {!expanded && <ConditionalFooter />}
+      {!expanded && !isMomentsApp && <ConditionalFooter />}
       {/* Admin dashboard: no floating trigger bubble by default (looked
           cluttered on every page) — the sidebar's "?" Help icon is the only
           way in, opening this same panel via ChatWidgetContext. Marketing
           pages keep the floating trigger since they have no Help icon. */}
-      {!expanded && <ChatWidget showTrigger={!isAdminApp} />}
+      {!expanded && <ChatWidget showTrigger={!isAdminApp && !isMomentsApp} />}
     </div>
   )
 }

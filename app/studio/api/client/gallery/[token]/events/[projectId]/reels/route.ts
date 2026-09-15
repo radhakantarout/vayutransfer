@@ -5,7 +5,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
-import { deductReelCredits } from '@/lib/studio/billing'
+import { deductReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
@@ -151,8 +151,9 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible for AI Reel generation yet.' }, { status: 400 })
     }
 
-    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: entry.studioId })
+    let studio = await studioGetItem<Studio>(TABLES.studios, { studioId: entry.studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+    studio = await grantFreeTrialReelCreditsIfNeeded(studio)
 
     // MVP: every photo is a "hero clip" (Kling-only, no FFmpeg fallback yet).
     const durationSec = DEFAULT_AI_CLIP_DURATION_SEC

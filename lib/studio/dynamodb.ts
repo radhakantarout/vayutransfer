@@ -35,6 +35,22 @@ const TABLES = {
   // AI Reel Generator — PK reelId, GSI projectId-createdAt-index (for the
   // "My Reels" list). Test table provisioned 2026-09-09, production not yet.
   reels: process.env.DYNAMO_STUDIO_REELS_TABLE ?? 'vayustudio-reels',
+  // VayuStudios Moments (Phase 3/4) — NOT YET PROVISIONED in AWS as of
+  // 2026-09-11 (code written ahead of infra, same pattern as every other
+  // new table this session — needs explicit go-ahead before creation).
+  // galleryMembers: PK projectId, SK userId, GSI userId-index (for a future
+  //   "galleries I'm a member of" list).
+  // galleryLikes: PK fileId, SK userId, GSI userId-index (so "did I like
+  //   this" doesn't need N GetItems per gallery view).
+  // galleryComments: PK fileId, SK commentId — no GSI needed yet.
+  galleryMembers:  process.env.DYNAMO_STUDIO_GALLERY_MEMBERS_TABLE  ?? 'vayustudio-gallery-members',
+  galleryLikes:    process.env.DYNAMO_STUDIO_GALLERY_LIKES_TABLE    ?? 'vayustudio-gallery-likes',
+  galleryComments: process.env.DYNAMO_STUDIO_GALLERY_COMMENTS_TABLE ?? 'vayustudio-gallery-comments',
+  // One flat group chat per gallery — PK projectId, SK messageId (a
+  // timestamp-prefixed id, so the table's own key order is chronological,
+  // no GSI needed). Polled every few seconds, not push-based (see design
+  // doc discussion — WebSocket infra was scoped out for this pass).
+  galleryMessages: process.env.DYNAMO_STUDIO_GALLERY_MESSAGES_TABLE ?? 'vayustudio-gallery-messages',
 } as const
 
 export { TABLES }
@@ -89,6 +105,11 @@ export async function studioDeleteItem(
   }))
 }
 
+// When `limit` is passed, the caller explicitly wants a capped result (e.g.
+// "N most recent") — a single request, unchanged from before. Without it,
+// this now paginates through every page rather than silently returning only
+// the first ~1MB of results, which previously truncated large result sets
+// (a busy gallery's likes, an active chat's messages) with no error at all.
 export async function studioQueryByIndex<T>(
   table: string,
   indexName: string,
@@ -97,15 +118,33 @@ export async function studioQueryByIndex<T>(
   expressionNames?: Record<string, string>,
   limit?: number
 ): Promise<T[]> {
-  const res = await client.send(new QueryCommand({
-    TableName: table,
-    IndexName: indexName,
-    KeyConditionExpression: keyCondition,
-    ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
-    ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
-    ...(limit ? { Limit: limit } : {}),
-  }))
-  return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  if (limit) {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      IndexName: indexName,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
+      ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
+      Limit: limit,
+    }))
+    return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  }
+
+  const items: T[] = []
+  let lastKey: Record<string, AttributeValue> | undefined
+  do {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      IndexName: indexName,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
+      ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) items.push(unmarshall(item) as T)
+    lastKey = res.LastEvaluatedKey as Record<string, AttributeValue> | undefined
+  } while (lastKey)
+  return items
 }
 
 export async function studioScanTable<T>(table: string): Promise<T[]> {
@@ -122,6 +161,10 @@ export async function studioScanTable<T>(table: string): Promise<T[]> {
   return items
 }
 
+// Paginates through every page rather than a single QueryCommand — a
+// gallery with thousands of photos, or a table's largest partition, can
+// exceed DynamoDB's 1MB-per-query limit, which previously meant this
+// silently returned an incomplete list with no error at all.
 export async function studioQueryByPK<T>(
   table: string,
   pkName: string,
@@ -137,11 +180,18 @@ export async function studioQueryByPK<T>(
     ? { ':pk': pkValue, ...skCondition.values }
     : { ':pk': pkValue }
 
-  const res = await client.send(new QueryCommand({
-    TableName: table,
-    KeyConditionExpression: keyCondition,
-    ExpressionAttributeValues: marshall(expressionValues),
-    ...(consistentRead ? { ConsistentRead: true } : {}),
-  }))
-  return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  const items: T[] = []
+  let lastKey: Record<string, AttributeValue> | undefined
+  do {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues),
+      ...(consistentRead ? { ConsistentRead: true } : {}),
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) items.push(unmarshall(item) as T)
+    lastKey = res.LastEvaluatedKey as Record<string, AttributeValue> | undefined
+  } while (lastKey)
+  return items
 }

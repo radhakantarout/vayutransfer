@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from './dynamodb'
 import { GB, FREE_AI_SEARCH_CREDITS } from '@/constants/studioPricing'
+import { FREE_TRIAL_REEL_CREDITS } from '@/constants/videoProviders'
 import type { Studio, StudioTransaction, StudioTxnType } from '@/types/studio'
 
 // Idempotent — mirrors lib/wallet.ts#creditWallet's proven txnId-status-check
@@ -178,4 +179,61 @@ export async function refundReelCredits(studioId: string, credits: number): Prom
     'ADD reelCreditsBalance :credits SET updatedAt = :now',
     { ':credits': credits, ':now': new Date().toISOString() }
   )
+}
+
+// AI-search-credit spend/refund — mirrors the exact inline DynamoDB update
+// lambda/vayustudio-indexfaces/index.js already does after each Rekognition
+// call (`ADD aiSearchCreditsUsed :n`), just as a reusable function. No
+// DynamoDB-level ceiling guard: unlike reelCreditsBalance (a real prepaid
+// balance that must never go negative), aiSearchCreditsUsed is a cumulative
+// usage counter checked against a quota BEFORE spending (checkAiCreditsAvailable
+// in lib/studio/quota.ts) — the same check-then-add pattern the indexing
+// Lambda already uses, not a balance-decrement pattern. Used by Moments'
+// reel-generation route, which spends from this same AI-credit pool instead
+// of the separate reelCreditsBalance Studio Admin/Client Gallery use.
+export async function deductAiSearchCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+    { ':n': credits, ':now': new Date().toISOString() }
+  )
+}
+
+export async function refundAiSearchCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+    { ':n': -credits, ':now': new Date().toISOString() }
+  )
+}
+
+// Lazily grants the one-time free trial reel credits the first time ANY
+// studio (real photography studio or a VayuStudios Moments personal Studio —
+// same row shape) tries to generate a reel — call this right after loading
+// the Studio and before checkReelCreditsAvailable in every reel-creation
+// route (client gallery, guest selfie search, Moments), mirroring the
+// established lazy-backfill idiom already used for billing-cycle fields
+// (syncBillingCycle) rather than a one-off migration script. Returns the
+// studio object with its balance already reflecting the grant so the
+// caller's immediately-following credit check doesn't need a second read.
+export async function grantFreeTrialReelCreditsIfNeeded(studio: Studio): Promise<Studio> {
+  if (studio.reelCreditsFreeTrialUsed) return studio
+  try {
+    await studioUpdateItem(
+      TABLES.studios,
+      { studioId: studio.studioId },
+      'ADD reelCreditsBalance :credits SET reelCreditsFreeTrialUsed = :used, updatedAt = :now',
+      { ':credits': FREE_TRIAL_REEL_CREDITS, ':used': true, ':now': new Date().toISOString(), ':notUsed': false },
+      undefined,
+      'attribute_not_exists(reelCreditsFreeTrialUsed) OR reelCreditsFreeTrialUsed = :notUsed'
+    )
+  } catch {
+    // Already granted (concurrent request lost the race) or a transient
+    // error — either way, never grant twice, and never block reel creation
+    // over a free-credit bonus failing to apply.
+    return studio
+  }
+  return { ...studio, reelCreditsBalance: (studio.reelCreditsBalance ?? 0) + FREE_TRIAL_REEL_CREDITS, reelCreditsFreeTrialUsed: true }
 }

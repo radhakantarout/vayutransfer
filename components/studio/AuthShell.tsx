@@ -6,12 +6,16 @@ interface Props {
   // Optional right-hand panel (e.g. the product showcase on the register page).
   // Omit for a single centered column (the login page).
   aside?: React.ReactNode
+  // Optional visible text next to the close icon — omitted everywhere except
+  // where explicitly passed (e.g. Moments' register page), so every existing
+  // usage (login, etc.) stays pixel-identical by default.
+  closeLabel?: string
 }
 
 // Full-screen takeover shared by the login and Google-signup-completion pages —
 // brand mark top-left (matching StudioNavbar exactly), close (→ /studio/home)
 // top-right, centered content below.
-export default function AuthShell({ children, aside }: Props) {
+export default function AuthShell({ children, aside, closeLabel }: Props) {
   return (
     <div className="fixed inset-0 z-[100] bg-bg overflow-y-auto flex flex-col">
       <div className="flex items-center justify-between px-6 py-5 flex-shrink-0">
@@ -24,8 +28,9 @@ export default function AuthShell({ children, aside }: Props) {
         <Link
           href="/studio/home"
           aria-label="Close and return to VayuStudios home"
-          className="text-muted hover:text-text-primary transition-colors"
+          className="flex items-center gap-1.5 text-muted hover:text-text-primary transition-colors"
         >
+          {closeLabel && <span className="text-sm font-semibold">{closeLabel}</span>}
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>

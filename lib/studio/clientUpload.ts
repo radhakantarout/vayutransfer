@@ -56,8 +56,15 @@ export async function uploadPartWithRetry(url: string, chunk: Blob, signal?: Abo
 
 // Wraps fetch with a timeout for the small JSON init/complete/status calls —
 // callers just pass their usual fetch args, this only adds the abort signal.
-export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = UPLOAD_JSON_TIMEOUT_MS): Promise<Response> {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+// externalSignal is optional and additive (every existing caller omits it
+// and gets identical timeout-only behavior) — passing one (e.g. a per-item
+// user-cancel AbortController) lets the caller actually cancel this network
+// call in flight, not just the timeout.
+export async function fetchWithTimeout(
+  url: string, init: RequestInit = {}, timeoutMs = UPLOAD_JSON_TIMEOUT_MS, externalSignal?: AbortSignal
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return fetch(url, { ...init, signal: externalSignal ? AbortSignal.any([externalSignal, timeoutSignal]) : timeoutSignal })
 }
 
 // Runs `worker` over `items` with at most `limit` running concurrently —
@@ -131,4 +138,26 @@ export async function uploadFileInChunks(
   )
 
   return parts
+}
+
+// Shared progress-display formatting — kept here (not per-page) so any
+// upload surface adopting the richer progress UI (bytes/speed/ETA, first
+// built for VayuStudios Moments) renders it identically.
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+export function formatSpeed(bytesPerSec: number): string {
+  if (!bytesPerSec || !Number.isFinite(bytesPerSec)) return ''
+  return `${formatBytes(bytesPerSec)}/s`
+}
+
+export function formatEta(secondsRemaining: number): string {
+  if (!Number.isFinite(secondsRemaining) || secondsRemaining <= 0) return ''
+  if (secondsRemaining < 60) return `${Math.ceil(secondsRemaining)}s left`
+  const mins = Math.ceil(secondsRemaining / 60)
+  return `${mins}m left`
 }

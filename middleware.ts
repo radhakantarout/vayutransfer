@@ -6,7 +6,17 @@ import { verifyAdminJWT } from '@/lib/adminAuth'
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
 // Shared pages that live outside /studio but must still be reachable on the studio app domain
-const SHARED_PAGES = new Set(['/privacy', '/terms', '/robots.txt', '/sitemap.xml'])
+const SHARED_PAGES = new Set([
+  '/privacy', '/terms', '/robots.txt', '/sitemap.xml',
+  // Moments PWA assets (public/moments-manifest.json, public/moments-sw.js)
+  // — top-level paths, not under /studio, so without this they were being
+  // redirected to /studio/home on test.vayustudios.com/vayustudios.com
+  // (this gate only ever fires on those app-domain hosts; localhost isn't
+  // isStudioAppDomain, which is why the PWA install worked in local dev but
+  // not on the real deployed domain). The icon PNGs never hit this at all —
+  // they're excluded by this file's own matcher config below.
+  '/moments-manifest.json', '/moments-sw.js',
+])
 
 // Lets the VayuStudios dashboard's own live-preview panel (WebsiteManager.tsx /
 // LivePreviewPanel.tsx) embed a studio's public site in an iframe. CSP's
@@ -101,7 +111,19 @@ export async function middleware(request: NextRequest) {
   // ── VayuStudios app domain routing ──────────────────────────────────────
   if (isStudioAppDomain) {
     if (path === '/') {
-      return NextResponse.rewrite(new URL('/studio/home', request.url))
+      // A signed-in Moments user always goes straight to their galleries,
+      // regardless of any stale vayustudios-path cookie (see chooser below)
+      // — Studio Admin's own root behavior is untouched in every case that
+      // matters to them (still /studio/home unless they'd previously chosen
+      // otherwise via the cookie).
+      const auth = await verifyStudioJWT(request)
+      if (auth?.role === 'CLIENT') {
+        return NextResponse.rewrite(new URL('/studio/moments', request.url))
+      }
+      const savedPath = request.cookies.get('vayustudios-path')?.value
+      if (savedPath === 'moments') return NextResponse.rewrite(new URL('/studio/moments', request.url))
+      if (savedPath === 'studio') return NextResponse.rewrite(new URL('/studio/home', request.url))
+      return NextResponse.rewrite(new URL('/studio/welcome', request.url))
     }
     const isAllowed = path.startsWith('/studio') || path.startsWith('/api') || SHARED_PAGES.has(path)
     if (!isAllowed) {
@@ -120,6 +142,20 @@ export async function middleware(request: NextRequest) {
   if (path.startsWith('/studio/api/admin/')) {
     const auth = await verifyStudioJWT(request)
     if (!auth || !['ADMIN', 'OWNER'].includes(auth.role)) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+  }
+
+  // VayuStudios Moments — a Moments session is always role CLIENT (see
+  // moments-onboard/route.ts); this guard is what makes the identity
+  // separation from Studio Admin structural rather than just conventional.
+  // /studio/api/moments/join/* is exempt — its GET must work for someone who
+  // hasn't signed in yet (they're about to, via the invite link's own flow),
+  // and its POST does its own auth check so it can return a distinct
+  // "sign in first" signal instead of a bare 403.
+  if (path.startsWith('/studio/api/moments/') && !path.startsWith('/studio/api/moments/join/')) {
+    const auth = await verifyStudioJWT(request)
+    if (!auth || auth.role !== 'CLIENT') {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
   }

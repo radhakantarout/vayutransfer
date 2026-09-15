@@ -14,18 +14,28 @@ const razorpay = new Razorpay({
 // Mirrors storage-topup/route.ts exactly, for AI-search (face-indexing)
 // credits. Accepts an arbitrary credit amount, priced server-side. Applies
 // to the current billing cycle only — see lib/studio/quota.ts. Top-ups are
-// Pro+ only — server-side backstop, the UI already redirects Free studios
-// to Billing's upgrade options instead of showing this at all.
+// normally Pro+ only (server-side backstop below) — EXCEPT a VayuStudios
+// Moments personal Studio (Studio.isIndividual, set once at
+// app/studio/api/auth/moments-onboard/route.ts, never client-supplied),
+// which is always role CLIENT and always billingPlanId 'free' by design, and
+// would otherwise be structurally unable to ever buy more AI/reel credits
+// once its free monthly quota runs out. Real photography studios' rules
+// (ADMIN/OWNER role, Pro+ plan) are completely unchanged.
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || !['ADMIN', 'OWNER'].includes(auth.role) || !auth.studioId) {
-      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
-    }
+    if (!auth?.studioId) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
 
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })
-    if (!studio || (studio.billingPlanId ?? 'free') === 'free') {
-      return NextResponse.json({ success: false, error: 'PLAN_REQUIRED', message: 'Top-ups are available on Pro and Custom plans. Upgrade in Settings → Billing first.' }, { status: 403 })
+    if (!studio) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+
+    if (!studio.isIndividual) {
+      if (!['ADMIN', 'OWNER'].includes(auth.role)) {
+        return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+      }
+      if ((studio.billingPlanId ?? 'free') === 'free') {
+        return NextResponse.json({ success: false, error: 'PLAN_REQUIRED', message: 'Top-ups are available on Pro and Custom plans. Upgrade in Settings → Billing first.' }, { status: 403 })
+      }
     }
 
     const { credits } = await req.json().catch(() => ({})) as { credits?: number }

@@ -160,6 +160,30 @@ export async function deleteStudioR2Object(key: string): Promise<void> {
   await studioR2.send(new DeleteObjectCommand({ Bucket: STUDIO_R2_ORIGINAL_BUCKET, Key: key }))
 }
 
+// Separate client/credentials for the PREVIEW bucket — the same
+// R2_ACCESS_KEY_ID/SECRET_ACCESS_KEY + STUDIO_R2_BUCKET env vars already
+// present in this app's own environment (they're already read directly by
+// lib/studio/watermark.ts/videoTranscode.ts to pass into Lambda invoke
+// payloads), just not previously used to construct a client here. No new
+// credential provisioning needed. Used only to clean up a deleted file's
+// watermarked/transcoded preview + video thumbnail, which previously leaked
+// in R2 for up to 20 days (relying solely on the bucket's own lifecycle
+// rule) since deleteMediaObjects only ever deleted the original.
+const studioR2Preview = new S3Client({
+  region: 'auto',
+  endpoint: process.env.STUDIO_R2_ENDPOINT,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? '',
+  },
+})
+const STUDIO_R2_PREVIEW_BUCKET = process.env.STUDIO_R2_BUCKET ?? 'vayutransfer-studio-previews'
+
+export async function deleteStudioR2PreviewObject(key: string): Promise<void> {
+  await studioR2Preview.send(new DeleteObjectCommand({ Bucket: STUDIO_R2_PREVIEW_BUCKET, Key: key }))
+}
+
 export async function getStudioR2SignedViewUrl(key: string): Promise<string> {
   return getSignedUrl(
     studioR2,

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import type { StudioUser } from '@/types/studio'
+import { aiCreditsUsed, aiCreditsQuota } from '@/lib/studio/quota'
+import type { StudioUser, Studio } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
   const auth = await verifyStudioJWT(req)
@@ -10,7 +11,10 @@ export async function GET(req: NextRequest) {
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
   )
 
-  const user = await studioGetItem<StudioUser>(TABLES.users, { userId: auth.userId }).catch(() => null)
+  const [user, studio] = await Promise.all([
+    studioGetItem<StudioUser>(TABLES.users, { userId: auth.userId }).catch(() => null),
+    auth.studioId ? studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId }).catch(() => null) : Promise.resolve(null),
+  ])
 
   return NextResponse.json(
     {
@@ -22,6 +26,13 @@ export async function GET(req: NextRequest) {
         name:     user?.name  ?? '',
         email:    user?.email ?? '',
         phone:    user?.phone ?? '',
+        // Only rendered today by Moments' Profile (Plan/Usage section) —
+        // harmless to compute for a real studio too, just unused there
+        // (Settings → Billing has its own, richer usage view).
+        isIndividual:   studio?.isIndividual ?? false,
+        billingPlanId:  studio?.billingPlanId ?? 'free',
+        aiCreditsUsed:  studio ? aiCreditsUsed(studio) : 0,
+        aiCreditsQuota: studio ? aiCreditsQuota(studio) : 0,
       },
     },
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }

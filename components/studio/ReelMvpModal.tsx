@@ -102,24 +102,42 @@ function StyleCard({ style, selected, onClick, reducedMotion }: { style: ReelSty
   )
 }
 
-// Shared by both Client Gallery and Guest Selfie Search — only the auth
-// context and API paths differ (design doc: "components must work in both
-// surfaces, only authorization/data source should differ"). Guest mode
-// requires searchSessionId, the trust-boundary token proving these
-// photoIds actually came from THIS guest's own selfie search (see
+// Shared by Client Gallery, Guest Selfie Search, and VayuStudios Moments —
+// only the auth context and API paths differ (design doc: "components must
+// work in both surfaces, only authorization/data source should differ").
+// Guest mode requires searchSessionId, the trust-boundary token proving
+// these photoIds actually came from THIS guest's own selfie search (see
 // app/studio/api/guest/[token]/search/route.ts's session-persistence fix).
+// Moments has no share-token at all — the caller is already authenticated
+// via the studio_token cookie (role CLIENT, owner of their own personal
+// Studio), same as every other /studio/api/moments/* route.
 type ReelMvpModalProps =
   | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void }
   | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void }
+  | { source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void }
+
+// VayuStudios Moments-only accent — the same brand gradient used everywhere
+// else in that surface (bottom nav, hero cards, upload CTA). Client Gallery
+// and Guest keep their existing plain `bg-accent` primary buttons untouched.
+const MOMENTS_GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 
 export default function ReelMvpModal(props: ReelMvpModalProps) {
   const { photoIds, onClose } = props
+  const isMoments = props.source === 'moments'
+  const primaryBtnClass = `flex-1 text-sm font-bold py-3 rounded-xl active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none ${
+    isMoments ? 'text-white hover:opacity-90' : 'bg-accent text-bg hover:bg-accent/90'
+  }`
+  const primaryBtnStyle = isMoments ? { background: MOMENTS_GRADIENT } : undefined
   const createUrl = props.source === 'client'
     ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels`
-    : `/studio/api/guest/${props.token}/reels`
+    : props.source === 'moments'
+      ? `/studio/api/moments/events/${props.projectId}/reels`
+      : `/studio/api/guest/${props.token}/reels`
   const statusUrl = (reelId: string) => props.source === 'client'
     ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels/${reelId}/status`
-    : `/studio/api/guest/${props.token}/reels/${reelId}/status`
+    : props.source === 'moments'
+      ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/status`
+      : `/studio/api/guest/${props.token}/reels/${reelId}/status`
   const [stage, setStage] = useState<Stage>('template')
   const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
@@ -166,7 +184,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     const trimmedPrompt = customPrompt.trim() || undefined
     const body = props.source === 'guest'
       ? { photoIds, templateId, style, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, customPrompt: trimmedPrompt }
+      : { photoIds, templateId, style, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -201,7 +219,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 <TemplateCard key={t.id} template={t} selected={templateId === t.id} onClick={() => setTemplateId(t.id)} />
               ))}
             </div>
-            <button onClick={() => setStage('style')} className="w-full bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">
+            <button onClick={() => setStage('style')} className={`w-full ${primaryBtnClass}`} style={primaryBtnStyle}>
               Next →
             </button>
           </div>
@@ -220,7 +238,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </div>
             <div className="flex gap-3">
               <button onClick={() => setStage('template')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
-              <button onClick={() => setStage('prompt')} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">Next →</button>
+              <button onClick={() => setStage('prompt')} className={primaryBtnClass} style={primaryBtnStyle}>Next →</button>
             </div>
           </div>
         )}
@@ -257,7 +275,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </div>
             <div className="flex gap-3">
               <button onClick={() => setStage('style')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
-              <button onClick={() => setStage('confirm')} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all">Next →</button>
+              <button onClick={() => setStage('confirm')} className={primaryBtnClass} style={primaryBtnStyle}>Next →</button>
             </div>
           </div>
         )}
@@ -295,7 +313,8 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <button
                 onClick={handleGenerate}
                 disabled={!consentChecked}
-                className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none"
+                className={primaryBtnClass}
+                style={primaryBtnStyle}
               >
                 ✨ Generate
               </button>
@@ -346,7 +365,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             )}
             <div className="flex gap-3">
               <a href={outputUrl} download className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors text-center">Download</a>
-              <button onClick={onClose} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors">Done</button>
+              <button onClick={onClose} className={primaryBtnClass} style={primaryBtnStyle}>Done</button>
             </div>
           </div>
         )}
@@ -361,7 +380,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </div>
             <div className="flex gap-3">
               <button onClick={onClose} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Close</button>
-              <button onClick={() => setStage('confirm')} className="flex-1 bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 transition-colors">Try Again</button>
+              <button onClick={() => setStage('confirm')} className={primaryBtnClass} style={primaryBtnStyle}>Try Again</button>
             </div>
           </div>
         )}
