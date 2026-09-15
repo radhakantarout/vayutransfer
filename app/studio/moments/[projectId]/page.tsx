@@ -830,10 +830,12 @@ interface ReelHistoryItem {
   completedAt: string | null
   errorMessage: string | null
   outputUrl: string | null
+  progress: { stage: string; processed: number; total: number; percent: number } | null
 }
 
 const REEL_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', completed: 'Ready', failed: 'Failed' }
 const REEL_STATUS_DOT: Record<string, string> = { generating: 'bg-yellow-400 animate-pulse', completed: 'bg-success', failed: 'bg-danger' }
+const REEL_STAGE_LABEL: Record<string, string> = { generating: 'Generating clips', assembling: 'Assembling video', finalizing: 'Finalizing' }
 
 function fmtReelDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -852,6 +854,17 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
   }, [projectId])
 
   useEffect(() => { load() }, [load])
+
+  // Live-updates the tab while any reel is still generating — the modal that
+  // kicked off generation may already be closed/navigated away from, so this
+  // tab (not the modal) is the durable place to watch progress, per the
+  // "go to reels page and see live progress" ask.
+  const hasGenerating = reels?.some((r) => r.status === 'generating') ?? false
+  useEffect(() => {
+    if (!hasGenerating) return
+    const id = setInterval(load, 3000)
+    return () => clearInterval(id)
+  }, [hasGenerating, load])
 
   return (
     <div className="space-y-3">
@@ -895,8 +908,24 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
                 </span>
                 <span className="block text-[11px] text-muted">{fmtReelDate(r.createdAt)} · {r.creditsCharged} credits</span>
               </span>
-              <span className="text-[11px] font-semibold text-muted flex-shrink-0">{REEL_STATUS_LABEL[r.status] ?? r.status}</span>
+              <span className="text-[11px] font-semibold text-muted flex-shrink-0">
+                {r.status === 'generating' && r.progress ? `${r.progress.percent}%` : REEL_STATUS_LABEL[r.status] ?? r.status}
+              </span>
             </button>
+
+            {r.status === 'generating' && (
+              <div className="px-3.5 pb-3 space-y-1">
+                <div className="h-1.5 rounded-full bg-border overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-orange-400 via-pink-500 to-violet-500 transition-all duration-500"
+                    style={{ width: `${r.progress?.percent ?? 4}%` }}
+                  />
+                </div>
+                {r.progress && (
+                  <p className="text-[10px] text-muted">{REEL_STAGE_LABEL[r.progress.stage] ?? 'Generating'}…</p>
+                )}
+              </div>
+            )}
 
             {r.status === 'failed' && r.errorMessage && (
               <p className="text-[11px] text-danger px-3.5 pb-3">{r.errorMessage}</p>

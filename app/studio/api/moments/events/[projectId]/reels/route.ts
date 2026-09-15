@@ -8,6 +8,7 @@ import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits } from '@/lib/studio/billing'
 import { AI_SEARCH_CREDIT_PRICE_PAISE } from '@/constants/studioPricing'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
+import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
@@ -64,6 +65,7 @@ export async function GET(
       outputUrl: r.status === 'completed' && r.outputR2Key
         ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
         : null,
+      progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
     })))
 
     return NextResponse.json({ success: true, data })

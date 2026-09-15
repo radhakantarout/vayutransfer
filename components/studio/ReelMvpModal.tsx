@@ -148,11 +148,21 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [creditsCharged, setCreditsCharged] = useState<number | null>(null)
   const [outputUrl, setOutputUrl] = useState<string | null>(null)
   const [msgIdx, setMsgIdx] = useState(0)
+  const [progress, setProgress] = useState<{ stage: string; percent: number } | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reducedMotion = useReducedMotion()
 
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
   const { creditsRequired } = computeReelCost(photoIds.length, DEFAULT_AI_CLIP_DURATION_SEC)
+  // Guest (selfie-search) mode has no reel history list at all — the QR
+  // token is shared across every guest at the event, so per-token history
+  // would leak one guest's reel to everyone else (see the `source: 'guest'`
+  // completed-stage comment below). Closing mid-generation would strand a
+  // guest with zero way back to their reel, so only client/moments — both of
+  // which have a real "My Reels"/Reels tab to check back into — can dismiss
+  // the modal while it's still generating.
+  const canCloseWhileGenerating = props.source !== 'guest'
+  const reelsHomeLabel = isMoments ? 'the Reels tab' : 'My Reels'
 
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
@@ -173,6 +183,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
         setError(res.data.errorMessage ?? 'Something went wrong generating your reel.')
         setStage('failed')
       } else {
+        if (res.data.progress) setProgress({ stage: res.data.progress.stage, percent: res.data.progress.percent })
         poll(id)
       }
     }, 3000)
@@ -202,11 +213,25 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/70 flex items-end sm:items-center justify-center" onClick={stage === 'generating' ? undefined : onClose}>
+    <div
+      className="fixed inset-0 z-[80] bg-black/70 flex items-end sm:items-center justify-center"
+      onClick={stage === 'generating' && !canCloseWhileGenerating ? undefined : onClose}
+    >
       <div
-        className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md max-h-[92vh] sm:max-h-[85vh] overflow-y-auto"
+        className="relative bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md max-h-[92vh] sm:max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
+        {stage === 'generating' && canCloseWhileGenerating && (
+          <button
+            onClick={onClose}
+            aria-label="Continue in background"
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-border/60 hover:bg-border flex items-center justify-center text-text-primary transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
         {stage === 'template' && (
           <div className="space-y-5">
             <div className="text-center space-y-1">
@@ -332,8 +357,22 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="absolute inset-1.5 rounded-full bg-card flex items-center justify-center text-2xl">{REEL_STYLE_META[style].icon}</div>
             </div>
             <div>
-              <h2 className="text-base font-bold text-text-primary transition-opacity duration-500">{reducedMotion ? 'Creating your reel…' : GENERATING_MESSAGES[msgIdx]}</h2>
-              <p className="text-xs text-muted mt-1.5">This can take a few minutes. Feel free to keep browsing — it'll be ready when you come back.</p>
+              <h2 className="text-base font-bold text-text-primary transition-opacity duration-500">
+                {progress ? `${GENERATING_MESSAGES[msgIdx]} ${progress.percent}%` : reducedMotion ? 'Creating your reel…' : GENERATING_MESSAGES[msgIdx]}
+              </h2>
+              {progress && (
+                <div className="h-1.5 w-40 mx-auto mt-3 rounded-full bg-border overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${progress.percent}%`, background: styleGradient(style) }}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-muted mt-2.5">
+                {canCloseWhileGenerating
+                  ? `Tap ✕ to keep browsing — you can check progress anytime from ${reelsHomeLabel}.`
+                  : "This can take a few minutes. Feel free to keep browsing — it'll be ready when you come back."}
+              </p>
               {creditsCharged !== null && <p className="text-[11px] text-muted mt-2">{creditsCharged} credits used</p>}
             </div>
           </div>
