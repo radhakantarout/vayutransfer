@@ -15,6 +15,23 @@ export interface PricingConfig {
   minMarginFloor: number
   creditValuePaise: number
   momentsRetentionDays: number
+  // AI image editing (Kling) — pricing scaffolding for a feature that
+  // doesn't exist yet (no route/UI built). Spends from the same unified
+  // aiSearchCredits pool as everything else, no new credit type, so this is
+  // ready to wire up the moment the actual editing feature ships.
+  klingImageEditPaisePer100kUnits: number
+  klingImageEditUnitsPerImage: number
+  // Friendly display-only unit for Moments ("Moments Credits") — raw
+  // aiSearchCredits ÷ this divisor. Never used for accounting/enforcement,
+  // only presentation.
+  momentsCreditDivisor: number
+  // Off by default — see lib/studio/momentsRetentionSweep.ts. Every
+  // already-existing Moments gallery has had zero prior warning that
+  // age-based deletion could ever happen, so real enforcement (reminder
+  // emails + actual deletes) only starts once an owner explicitly flips
+  // this on after reviewing a dry-run count. Until then the daily cron only
+  // logs what it *would* do.
+  momentsRetentionEnforcementEnabled: boolean
 }
 
 export interface PricingConfigRecord extends PricingConfig {

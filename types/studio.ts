@@ -222,10 +222,22 @@ export interface StudioProject {
   eventOrder?: number
   // True only for a VayuStudios Moments event (created via /studio/moments/new
   // under a personal Studio) — never true for a real studio's client event.
-  // Distinguishes Moments galleries for the (not yet built) time-based 19-day
-  // retention sweep, and lets a shared component render the lighter Moments
-  // UI instead of studio-admin's full EventSection when it needs to branch.
+  // Distinguishes Moments galleries for the time-based retention sweep (see
+  // app/studio/api/cron/storage-check/route.ts#sweepExpiredMomentsGalleries),
+  // and lets a shared component render the lighter Moments UI instead of
+  // studio-admin's full EventSection when it needs to branch.
   isIndividualGallery?: boolean
+  // Retention-payment schema (Phase 3 pricing plan) — a gallery past its
+  // MOMENTS_RETENTION_DAYS deadline is exempt from the sweep if EITHER is
+  // set: retentionPaidUntil is a real future ISO date (a time-bound "pay to
+  // extend" grant), or isPermanent is a manually-granted lifetime exemption
+  // (e.g. an admin override) that never expires on its own.
+  retentionPaidUntil?: string
+  isPermanent?: boolean
+  // Set the first time a retention-deadline reminder email goes out, so the
+  // sweep never re-sends it on every subsequent daily run before deletion
+  // actually happens.
+  retentionReminderSentAt?: string
   // ── VayuStudios Moments membership (Phase 3) ──────────────────────────
   // The invite link deliberately REUSES clientShareToken/clientShareExpiresAt
   // (and its existing clientShareToken-index GSI) instead of a new field —

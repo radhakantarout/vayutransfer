@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useMomentsTheme } from '@/lib/momentsTheme'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
 import StudioTopupModal from '@/components/studio/StudioTopupModal'
+import { toMomentsCredits } from '@/constants/studioPricing'
 
 interface Me {
   name: string
@@ -207,6 +208,11 @@ export default function ProfilePanel() {
   const [checking, setChecking] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
   const [modal, setModal] = useState<'upgrade' | 'feedback' | 'legal' | 'deleteAll' | null>(null)
+  const [creditDivisor, setCreditDivisor] = useState(50)
+
+  useEffect(() => {
+    fetch('/studio/api/pricing-config').then((r) => r.json()).then((d) => { if (d.success) setCreditDivisor(d.data.momentsCreditDivisor) }).catch(() => {})
+  }, [])
 
   const loadMe = () => {
     return fetch('/studio/api/auth/me')
@@ -297,9 +303,11 @@ export default function ProfilePanel() {
           <div className="flex items-center gap-3 px-4 py-3.5">
             <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">✨</span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-text-primary">AI credits</span>
+              <span className="block text-sm font-semibold text-text-primary">Moments Credits</span>
               <span className="block text-[11px] text-muted mt-0.5">
-                {typeof me.aiCreditsQuota === 'number' ? `${Math.max(0, me.aiCreditsQuota - me.aiCreditsUsed)} left of ${me.aiCreditsQuota} this month · covers AI search & reels` : '—'}
+                {typeof me.aiCreditsQuota === 'number'
+                  ? `${toMomentsCredits(Math.max(0, me.aiCreditsQuota - me.aiCreditsUsed), creditDivisor)} left of ${toMomentsCredits(me.aiCreditsQuota, creditDivisor)} this month · covers AI search & reels`
+                  : '—'}
               </span>
             </span>
           </div>

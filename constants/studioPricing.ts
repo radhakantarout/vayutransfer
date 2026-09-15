@@ -87,11 +87,21 @@ export const RETENTION_GRACE_DAY_OPTIONS = [15, 25, 45] as const
 // Same Free quota as a real studio (FREE_STORAGE_GB/FREE_AI_SEARCH_CREDITS
 // above), bounded instead by this short fixed window since these accounts
 // have no conversion-to-paid expectation baked into the free-tier economics.
-// Kept below the R2 bucket's own 20-day hard-delete lifecycle rule with a
-// real 3-day safety margin — that rule runs once/day in day-granularity, so
-// a smaller margin risks the bucket silently deleting a photo before this
-// app-facing countdown says it will.
+// CORRECTION (2026-09-16): there is NO bucket-level lifecycle rule backing
+// this window — confirmed directly against the R2 console, the bucket only
+// has a "Default Multipart Abort Rule" (aborts incomplete uploads after 1
+// day), nothing that expires real objects. This constant was purely a
+// display countdown with zero enforcement until the (feature-flagged)
+// sweepExpiredMomentsGalleries in app/studio/api/cron/storage-check/route.ts.
 export const MOMENTS_RETENTION_DAYS = 17
+
+// Friendly display-only unit for Moments usage ("Moments Credits") — never
+// used for quota enforcement, only presentation. Divisor lives in
+// PricingConfig (lib/pricingConfig.ts) so an owner can retune the "feel" of
+// the number without touching the underlying AI-credit economics.
+export function toMomentsCredits(rawAiCredits: number, divisor: number = 50): number {
+  return Math.round((rawAiCredits / divisor) * 10) / 10
+}
 
 // Invite link — same "generate with a default duration, extend in fixed
 // increments" policy as the studio-admin client-gallery share-link

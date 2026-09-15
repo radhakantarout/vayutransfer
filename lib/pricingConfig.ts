@@ -19,6 +19,10 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   minMarginFloor: 0.35,
   creditValuePaise: 8000,           // ₹80 / reel credit (Client Gallery/Guest pool)
   momentsRetentionDays: 17,
+  klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1 — feature not live yet
+  klingImageEditUnitsPerImage: 8,
+  momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
+  momentsRetentionEnforcementEnabled: false,
 }
 
 const CONFIG_KEY = 'live'
@@ -42,6 +46,7 @@ export async function getPricingConfig(): Promise<PricingConfig> {
 const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'freeStorageGB', 'storageExtraPaisePer100GB', 'aiExtraPaisePer1000',
   'klingCostPaisePerAiSecond', 'creditValuePaise', 'momentsRetentionDays',
+  'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage', 'momentsCreditDivisor',
 ]
 
 export function validatePricingConfigPatch(patch: Partial<PricingConfig>): string | null {
@@ -65,6 +70,9 @@ export function validatePricingConfigPatch(patch: Partial<PricingConfig>): strin
   }
   if ((patch.targetMargin ?? 0) > 0 && (patch.minMarginFloor ?? 0) > (patch.targetMargin as number)) {
     return 'minMarginFloor cannot exceed targetMargin'
+  }
+  if (patch.momentsRetentionEnforcementEnabled !== undefined && typeof patch.momentsRetentionEnforcementEnabled !== 'boolean') {
+    return 'momentsRetentionEnforcementEnabled must be true or false'
   }
   return null
 }

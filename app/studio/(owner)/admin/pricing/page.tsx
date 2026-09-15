@@ -20,6 +20,7 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { key: 'freeStorageGB', label: 'Free storage', hint: 'Included storage on the free plan.', suffix: 'GB' },
       { key: 'freeAiSearchCredits', label: 'Free AI credits', hint: 'Included AI-search credits on the free plan — this is also every Moments studio\'s starting balance.', suffix: 'credits' },
       { key: 'momentsRetentionDays', label: 'Moments retention window', hint: 'Days a free Moments gallery is kept before it becomes eligible for deletion.', suffix: 'days' },
+      { key: 'momentsCreditDivisor', label: 'Moments Credits divisor', hint: 'Display-only: raw AI credits ÷ this number = the friendly "Moments Credits" shown to Moments users. Never affects billing/quota, only presentation.', suffix: 'raw credits per display credit' },
     ],
   },
   {
@@ -39,11 +40,20 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { key: 'creditValuePaise', label: 'Reel-credit pack value', hint: 'Retail value of one reel credit — used by Client Gallery/Guest\'s separate reel-credit pool (not Moments, which uses the AI-credit rate above).', suffix: 'paise' },
     ],
   },
+  {
+    title: 'AI image editing (Kling) — feature not live yet',
+    fields: [
+      { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-edit units.', suffix: 'paise/100k units' },
+      { key: 'klingImageEditUnitsPerImage', label: 'Units per image', hint: 'How many Kling units one edited image consumes.', suffix: 'units/image' },
+    ],
+  },
 ]
 
 export default function OwnerPricingPage() {
   const [config, setConfig] = useState<PricingConfig | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
+  const [retentionEnforced, setRetentionEnforced] = useState(false)
+  const [confirmRetention, setConfirmRetention] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -56,6 +66,7 @@ export default function OwnerPricingPage() {
       .then((d) => {
         if (d.success) {
           setConfig(d.data.config)
+          setRetentionEnforced(!!d.data.config.momentsRetentionEnforcementEnabled)
           const next: Record<string, string> = {}
           for (const [k, v] of Object.entries(d.data.config)) next[k] = String(v)
           setDraft(next)
@@ -73,7 +84,7 @@ export default function OwnerPricingPage() {
     setSaving(true)
     setError(null)
     setSuccess(null)
-    const patch: Record<string, number> = {}
+    const patch: Record<string, number | boolean> = { momentsRetentionEnforcementEnabled: retentionEnforced }
     for (const group of GROUPS) {
       for (const f of group.fields) {
         const n = Number(draft[f.key])
@@ -92,6 +103,7 @@ export default function OwnerPricingPage() {
       return
     }
     setConfig(res.data)
+    setConfirmRetention(false)
     setSuccess('Saved — takes effect for new price calculations within about a minute (cache TTL).')
     setSaving(false)
   }
@@ -114,6 +126,33 @@ export default function OwnerPricingPage() {
 
       {config && (
         <div className="space-y-6">
+          <div className="bg-danger/10 border border-danger/30 rounded-2xl p-5 space-y-3">
+            <h2 className="text-sm font-bold text-danger">Moments gallery auto-delete</h2>
+            <p className="text-xs text-muted leading-relaxed">
+              When ON, the daily cron permanently deletes any free Moments gallery past its retention window (above) — and sends a warning email a few days before, once per gallery. When OFF (default), the cron only <strong className="text-text-primary">counts and logs</strong> what it would delete — no emails, no deletions. Every gallery created before this existed has had zero prior warning, so review the dry-run count in the cron's own logs/response before turning this on.
+            </p>
+            <label className="flex items-center gap-2.5 text-sm font-semibold text-text-primary cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={retentionEnforced}
+                onChange={(e) => { setRetentionEnforced(e.target.checked); setConfirmRetention(false) }}
+                className="w-4 h-4 accent-danger rounded"
+              />
+              Enforce Moments retention deletion (real deletes + emails)
+            </label>
+            {retentionEnforced && !config.momentsRetentionEnforcementEnabled && (
+              <label className="flex items-start gap-2.5 text-xs text-danger cursor-pointer select-none pt-1 border-t border-danger/20">
+                <input
+                  type="checkbox"
+                  checked={confirmRetention}
+                  onChange={(e) => setConfirmRetention(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-danger rounded flex-shrink-0"
+                />
+                I've reviewed the dry-run count and understand this will start permanently deleting real galleries.
+              </label>
+            )}
+          </div>
+
           {GROUPS.map((group) => (
             <div key={group.title} className="bg-card border border-border rounded-2xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-text-primary">{group.title}</h2>
@@ -140,7 +179,7 @@ export default function OwnerPricingPage() {
 
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || (retentionEnforced && !config.momentsRetentionEnforcementEnabled && !confirmRetention)}
             className="w-full bg-accent text-bg text-sm font-bold py-3 rounded-xl hover:bg-accent/90 active:scale-[0.98] transition-all disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save pricing config'}
