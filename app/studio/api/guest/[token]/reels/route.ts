@@ -85,9 +85,14 @@ export async function POST(
     const allFiles = await Promise.all(
       Array.from(requestedSet).map((fileId) => studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId }))
     )
-    const selectedFiles = allFiles.filter((f): f is MediaFile => !!f && f.processingStatus === 'READY')
+    // fileType === 'IMAGE' is load-bearing — the Lambda calls Kling's
+    // image-to-video endpoint, passing each file's URL as the still
+    // "first_frame" to animate. It has no video-input capability at all, so
+    // without this filter a selected video's URL was passed straight
+    // through as if it were a photo, wasting a real paid Kling API call.
+    const selectedFiles = allFiles.filter((f): f is MediaFile => !!f && f.processingStatus === 'READY' && f.fileType === 'IMAGE')
     if (selectedFiles.length !== photoIds.length) {
-      return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'Some selected photos are not available.' }, { status: 400 })
+      return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'Only photos can be used for AI Reels — videos aren\'t supported as an input.' }, { status: 400 })
     }
 
     const photos = selectedFiles.map((f) => ({ fileId: f.fileId, filename: f.originalFilename, key: f.editedR2Key || f.r2Key }))

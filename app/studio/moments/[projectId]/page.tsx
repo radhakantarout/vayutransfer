@@ -1339,6 +1339,12 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   }
 
   const toggleReelSelect = (fileId: string) => {
+    // Videos were selectable here before this fix — Kling's image-to-video
+    // endpoint (what the reel Lambda actually calls) has no video-input
+    // capability at all, so a selected video previously sailed through the
+    // UI only to be rejected (now) or wastefully sent to a paid API call
+    // (before the matching backend fix) once "Generate" was tapped.
+    if (files.find((f) => f.fileId === fileId)?.fileType !== 'IMAGE') return
     setReelSelectedIds((prev) => {
       const next = new Set(prev)
       if (next.has(fileId)) next.delete(fileId)
@@ -1704,7 +1710,14 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           </div>
                         </div>
                       )}
-                      {anySelectMode && isReady && (
+                      {reelSelectMode && isReady && f.fileType === 'VIDEO' ? (
+                        // Videos can't be used as AI Reel input (Kling's
+                        // image-to-video endpoint has no video-input
+                        // capability) — shown dimmed with no checkbox during
+                        // reel selection instead of looking pickable and
+                        // silently no-op'ing on tap.
+                        <div className="absolute inset-0 bg-black/50 pointer-events-none" />
+                      ) : anySelectMode && isReady && (
                         <div className={`absolute inset-0 flex items-center justify-center transition-colors pointer-events-none ${isPicked ? 'bg-accent/25' : 'bg-black/10'}`}>
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isPicked ? 'bg-accent border-accent scale-100' : 'border-white/80 scale-90 bg-black/20'}`}>
                             {isPicked && (
