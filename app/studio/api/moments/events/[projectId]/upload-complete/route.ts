@@ -72,13 +72,21 @@ export async function POST(
     const lambdaArn = isVideo ? process.env.VIDEO_TRANSCODE_LAMBDA_ARN : process.env.WATERMARK_LAMBDA_ARN
 
     if (!lambdaArn) {
+      // Local-dev-without-Lambda convenience — but ONLY safe for IMAGE. A
+      // VIDEO marked READY with no real r2PreviewUrl serves the raw upload
+      // (often undecodable HEVC/.mov) as if it were a working preview,
+      // silently reintroducing the crash this whole pipeline was built to
+      // fix. Mark it FAILED instead so the UI shows a retry state rather
+      // than a broken "ready" file.
+      const status = isVideo ? 'FAILED' : 'READY'
+      if (isVideo) console.error(`[moments upload-complete] VIDEO_TRANSCODE_LAMBDA_ARN not set — marking ${fileId} FAILED instead of a silent no-op READY`)
       await studioUpdateItem(
         TABLES.mediafiles,
         { projectId, fileId },
         'SET processingStatus = :s, uploadedAt = :now',
-        { ':s': 'READY', ':now': now }
+        { ':s': status, ':now': now }
       )
-      return NextResponse.json({ success: true, data: { fileId, status: 'READY' } })
+      return NextResponse.json({ success: true, data: { fileId, status } })
     }
 
     await studioUpdateItem(
@@ -88,13 +96,28 @@ export async function POST(
       { ':s': 'PROCESSING', ':now': now }
     )
 
+    // Fire-and-forget by design (InvocationType: 'Event') — but if the
+    // invoke call itself rejects (not the Lambda's own execution — this is
+    // a synchronous failure to even hand off the job, e.g. a transient
+    // Lambda API error), the file must not stay stuck at PROCESSING forever
+    // with nothing ever re-checking it.
+    const markInvokeFailed = (err: unknown) => {
+      console.error('[moments lambda invoke failed]', err)
+      studioUpdateItem(
+        TABLES.mediafiles,
+        { projectId, fileId },
+        'SET processingStatus = :s',
+        { ':s': 'FAILED' }
+      ).catch((e) => console.error('[moments upload-complete] also failed to mark FAILED', e))
+    }
+
     if (isVideo) {
       invokeVideoTranscodeLambda({
         fileId,
         projectId,
         studioId,
         sourceKey: mediaFile.r2Key,
-      }).catch((err: unknown) => console.error('[moments vidtranscode-lambda invoke]', err))
+      }).catch(markInvokeFailed)
     } else {
       invokeStudioWatermarkLambda({
         fileId,
@@ -104,7 +127,7 @@ export async function POST(
         sourceBackend: 'R2',
         watermarkEnabled: mediaFile.watermarkEnabled,
         fileType: mediaFile.fileType,
-      }).catch((err: unknown) => console.error('[moments watermark-lambda invoke]', err))
+      }).catch(markInvokeFailed)
     }
 
     return NextResponse.json({ success: true, data: { fileId, status: 'PROCESSING' } })

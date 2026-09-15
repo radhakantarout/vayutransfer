@@ -56,6 +56,7 @@ export async function GET(
         autoApproveMembers: !!project.autoApproveMembers,
         allowMemberDownloads: !!project.allowMemberDownloads,
         allowMemberReels: !!project.allowMemberReels,
+        allowOriginalDownloads: !!project.allowOriginalDownloads,
       },
     })
   } catch (err) {
@@ -84,7 +85,8 @@ export async function POST(
     const { project } = resolved
 
     const body = await req.json().catch(() => ({})) as {
-      autoApproveMembers?: boolean; allowMemberDownloads?: boolean; allowMemberReels?: boolean; regenerate?: boolean
+      autoApproveMembers?: boolean; allowMemberDownloads?: boolean; allowMemberReels?: boolean
+      allowOriginalDownloads?: boolean; regenerate?: boolean
     }
     const now = new Date().toISOString()
     const isNewLink = body.regenerate || !project.clientShareToken
@@ -96,12 +98,13 @@ export async function POST(
     await studioUpdateItem(
       TABLES.projects,
       { studioId: project.studioId, projectId },
-      'SET clientShareToken = :token, clientShareExpiresAt = :exp, autoApproveMembers = :auto, allowMemberDownloads = :dl, allowMemberReels = :reels, updatedAt = :now',
+      'SET clientShareToken = :token, clientShareExpiresAt = :exp, autoApproveMembers = :auto, allowMemberDownloads = :dl, allowMemberReels = :reels, allowOriginalDownloads = :orig, updatedAt = :now',
       {
         ':token': token, ':exp': expiresAt,
         ':auto': body.autoApproveMembers === true,
         ':dl': body.allowMemberDownloads === true,
         ':reels': body.allowMemberReels === true,
+        ':orig': body.allowOriginalDownloads === true,
         ':now': now,
       }
     )
@@ -114,6 +117,7 @@ export async function POST(
         autoApproveMembers: body.autoApproveMembers === true,
         allowMemberDownloads: body.allowMemberDownloads === true,
         allowMemberReels: body.allowMemberReels === true,
+        allowOriginalDownloads: body.allowOriginalDownloads === true,
       },
     })
   } catch (err) {

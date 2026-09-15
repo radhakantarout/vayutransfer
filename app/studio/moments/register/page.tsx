@@ -82,7 +82,7 @@ function MomentsRegisterInner() {
     `${inputBase} ${fieldError(k) ? 'border-danger focus:border-danger' : 'border-border/60 focus:border-accent'}`
 
   return (
-    <AuthShell>
+    <AuthShell closeLabel="Cancel">
       <div className="w-full max-w-sm space-y-7 pt-8">
         <div className="text-center space-y-2.5">
           <div className="text-2xl animate-reel-float">✨</div>

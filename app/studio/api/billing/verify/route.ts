@@ -17,7 +17,16 @@ import type { Studio, StudioTransaction, StudioUser } from '@/types/studio'
 export async function POST(req: NextRequest) {
   try {
     const auth = await verifyStudioJWT(req)
-    if (!auth || !['ADMIN', 'OWNER'].includes(auth.role) || !auth.studioId) {
+    if (!auth?.studioId) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+
+    // Same isIndividual (VayuStudios Moments personal Studio) carve-out as
+    // ai-search-topup/route.ts — real studios still require ADMIN/OWNER.
+    // The pendingTxn.studioId === auth.studioId check below (already
+    // present) is what actually enforces "only your own studio's
+    // transaction," so relaxing the role check here doesn't weaken that.
+    const callerStudio = await studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId })
+    if (!callerStudio) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    if (!callerStudio.isIndividual && !['ADMIN', 'OWNER'].includes(auth.role)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 

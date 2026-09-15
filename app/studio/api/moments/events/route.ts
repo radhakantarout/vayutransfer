@@ -126,3 +126,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
   }
 }
+
+// DELETE /studio/api/moments/events — "Delete all galleries" from Profile's
+// Danger Zone. Only ever operates on galleries the caller's OWN studioId
+// owns (studioQueryByPK below, keyed on auth.studioId from the verified JWT
+// — never a client-supplied id, so there's no cross-account IDOR surface
+// here) — a gallery this user merely joined as a member is untouched.
+// Reuses the exact same per-gallery cascade the single-project delete path
+// already trusts (lib/studio/momentsDelete.ts), just looped.
+export async function DELETE(req: NextRequest) {
+  try {
+    const auth = await verifyStudioJWT(req)
+    if (!auth?.studioId) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+
+    const { deleteMomentsGalleryCascade } = await import('@/lib/studio/momentsDelete')
+    const owned = await studioQueryByPK<StudioProject>(TABLES.projects, 'studioId', auth.studioId)
+
+    const results = await Promise.allSettled(
+      owned.map((p) => deleteMomentsGalleryCascade(auth.studioId!, p.projectId))
+    )
+    const failed = results.filter((r) => r.status === 'rejected').length
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') console.error('[moments/events DELETE] cascade failed for', owned[i].projectId, r.reason)
+    })
+
+    return NextResponse.json({ success: true, data: { deleted: owned.length - failed, failed } })
+  } catch (err) {
+    console.error('[moments/events DELETE]', err)
+    return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
+  }
+}

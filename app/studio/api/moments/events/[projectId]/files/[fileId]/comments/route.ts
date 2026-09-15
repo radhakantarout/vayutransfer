@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
-import { resolveProjectForViewer, isApprovedMember, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
-import type { GalleryComment } from '@/types/studio'
+import { studioQueryByPK, studioGetItem, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { resolveProjectForViewer, isApprovedMember, isOwnerOrAdmin, checkAndBumpMemberRateLimit } from '@/lib/studio/galleryMembers'
+import type { GalleryComment, MediaFile } from '@/types/studio'
 
 const MAX_COMMENT_LENGTH = 500
 
@@ -23,6 +23,11 @@ export async function GET(
     if (!isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member) && !isApprovedMember(resolved.member)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
+    // galleryComments is keyed by fileId alone — without this check, a member
+    // of ANY gallery could read another gallery's comments by passing that
+    // gallery's fileId in the URL while projectId still points at their own.
+    const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
+    if (!file) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
     const comments = await studioQueryByPK<GalleryComment>(TABLES.galleryComments, 'fileId', fileId)
     comments.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
@@ -53,6 +58,11 @@ export async function POST(
     if (!resolved) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     if (!isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member) && !isApprovedMember(resolved.member)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+    const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
+    if (!file) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+    if (!(await checkAndBumpMemberRateLimit(projectId, auth.userId))) {
+      return NextResponse.json({ success: false, error: 'RATE_LIMITED' }, { status: 429 })
     }
 
     const { text } = await req.json().catch(() => ({})) as { text?: string }

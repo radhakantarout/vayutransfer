@@ -56,8 +56,15 @@ export async function uploadPartWithRetry(url: string, chunk: Blob, signal?: Abo
 
 // Wraps fetch with a timeout for the small JSON init/complete/status calls —
 // callers just pass their usual fetch args, this only adds the abort signal.
-export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = UPLOAD_JSON_TIMEOUT_MS): Promise<Response> {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+// externalSignal is optional and additive (every existing caller omits it
+// and gets identical timeout-only behavior) — passing one (e.g. a per-item
+// user-cancel AbortController) lets the caller actually cancel this network
+// call in flight, not just the timeout.
+export async function fetchWithTimeout(
+  url: string, init: RequestInit = {}, timeoutMs = UPLOAD_JSON_TIMEOUT_MS, externalSignal?: AbortSignal
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return fetch(url, { ...init, signal: externalSignal ? AbortSignal.any([externalSignal, timeoutSignal]) : timeoutSignal })
 }
 
 // Runs `worker` over `items` with at most `limit` running concurrently —

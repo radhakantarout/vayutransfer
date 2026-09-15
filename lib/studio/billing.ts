@@ -181,6 +181,34 @@ export async function refundReelCredits(studioId: string, credits: number): Prom
   )
 }
 
+// AI-search-credit spend/refund — mirrors the exact inline DynamoDB update
+// lambda/vayustudio-indexfaces/index.js already does after each Rekognition
+// call (`ADD aiSearchCreditsUsed :n`), just as a reusable function. No
+// DynamoDB-level ceiling guard: unlike reelCreditsBalance (a real prepaid
+// balance that must never go negative), aiSearchCreditsUsed is a cumulative
+// usage counter checked against a quota BEFORE spending (checkAiCreditsAvailable
+// in lib/studio/quota.ts) — the same check-then-add pattern the indexing
+// Lambda already uses, not a balance-decrement pattern. Used by Moments'
+// reel-generation route, which spends from this same AI-credit pool instead
+// of the separate reelCreditsBalance Studio Admin/Client Gallery use.
+export async function deductAiSearchCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+    { ':n': credits, ':now': new Date().toISOString() }
+  )
+}
+
+export async function refundAiSearchCredits(studioId: string, credits: number): Promise<void> {
+  await studioUpdateItem(
+    TABLES.studios,
+    { studioId },
+    'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+    { ':n': -credits, ':now': new Date().toISOString() }
+  )
+}
+
 // Lazily grants the one-time free trial reel credits the first time ANY
 // studio (real photography studio or a VayuStudios Moments personal Studio —
 // same row shape) tries to generate a reel — call this right after loading

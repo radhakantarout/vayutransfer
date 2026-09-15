@@ -45,6 +45,13 @@ export function computeStorageAddOnPaise(extraGB: number): number {
 export function computeAiAddOnPaise(extraCredits: number): number {
   return Math.round((Math.max(0, extraCredits) / 1000) * AI_EXTRA_PAISE_PER_1000)
 }
+// Per-credit price derived from the same rate as computeAiAddOnPaise, rather
+// than a second hardcoded number — used by Moments' reel-generation route to
+// convert a reel's ₹ cost into AI-search-credit units (Moments consumers
+// spend one unified credit balance covering both AI indexing and reels,
+// unlike Studio Admin/Client Gallery which keep reel credits as a separate
+// pool — see app/studio/api/moments/events/[projectId]/reels/route.ts).
+export const AI_SEARCH_CREDIT_PRICE_PAISE = AI_EXTRA_PAISE_PER_1000 / 1000
 // Pro plan price for an arbitrary chosen storage/AI amount (the calculator's
 // live price, and the authoritative server-side price for a plan-change).
 export function computeProPlanPricePaise(storageGB: number, aiCredits: number): number {
@@ -67,7 +74,11 @@ export const RETENTION_GRACE_DAY_OPTIONS = [15, 25, 45] as const
 // Same Free quota as a real studio (FREE_STORAGE_GB/FREE_AI_SEARCH_CREDITS
 // above), bounded instead by this short fixed window since these accounts
 // have no conversion-to-paid expectation baked into the free-tier economics.
-export const MOMENTS_RETENTION_DAYS = 19
+// Kept below the R2 bucket's own 20-day hard-delete lifecycle rule with a
+// real 3-day safety margin — that rule runs once/day in day-granularity, so
+// a smaller margin risks the bucket silently deleting a photo before this
+// app-facing countdown says it will.
+export const MOMENTS_RETENTION_DAYS = 17
 
 // Invite link — same "generate with a default duration, extend in fixed
 // increments" policy as the studio-admin client-gallery share-link

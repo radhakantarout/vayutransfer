@@ -1003,6 +1003,48 @@ export async function sendAccountWarningEmail(
   }))
 }
 
+// Sends the report to support directly via SES rather than relying solely
+// on the client-side mailto: link, which silently does nothing if the
+// visitor has no mail client configured — this is the durable record.
+// Reply-To is set to the reporter's own email so support can respond
+// directly without needing to look anything up first.
+export async function sendMomentsFeedbackEmail(
+  kind: 'feedback' | 'legal',
+  reporterName: string,
+  reporterEmail: string,
+  text: string
+): Promise<void> {
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const subject = kind === 'legal' ? 'Moments — Legal/Safety Report' : 'Moments Feedback'
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${subject}</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuStudios Moments</div>
+    <h2 style="font-size:18px;font-weight:600;margin:0 0 16px;color:#E0EAF8;">${subject}</h2>
+    <p style="color:#5A7090;font-size:13px;margin:0 0 16px;">From ${escapeHtml(reporterName)} &lt;${escapeHtml(reporterEmail)}&gt;</p>
+    <div style="background:#0B0F1A;border-radius:8px;padding:16px;border:1px solid #1E2D45;color:#E0EAF8;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(text)}</div>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios Moments <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: ['support@vayutransfer.com'] },
+    ReplyToAddresses: [reporterEmail],
+    Message: {
+      Subject: { Data: subject },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `${subject}\nFrom ${reporterName} <${reporterEmail}>\n\n${text}`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
 export async function sendAccountBlockedEmail(email: string, name: string, reason: string): Promise<void> {
   const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
   const html = `

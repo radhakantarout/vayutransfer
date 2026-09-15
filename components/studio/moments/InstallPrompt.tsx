@@ -58,7 +58,10 @@ export default function InstallPrompt() {
       timer = setTimeout(() => setVisible(true), 2000)
     }
 
-    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+      if (timer) clearTimeout(timer)
+    }
   }, [])
 
   useEffect(() => {

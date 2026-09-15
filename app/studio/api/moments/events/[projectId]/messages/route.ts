@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByPK, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import { resolveProjectForViewer, isApprovedMember, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
+import { resolveProjectForViewer, isApprovedMember, isOwnerOrAdmin, checkAndBumpMemberRateLimit } from '@/lib/studio/galleryMembers'
 import type { GalleryMessage } from '@/types/studio'
 
 const MAX_MESSAGE_LENGTH = 1000
@@ -52,6 +52,9 @@ export async function POST(
     if (!resolved) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     if (!isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member) && !isApprovedMember(resolved.member)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
+    }
+    if (!(await checkAndBumpMemberRateLimit(projectId, auth.userId))) {
+      return NextResponse.json({ success: false, error: 'RATE_LIMITED' }, { status: 429 })
     }
 
     const { text } = await req.json().catch(() => ({})) as { text?: string }

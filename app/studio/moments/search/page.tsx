@@ -47,6 +47,7 @@ export default function MomentsSearchPage() {
       <TopNavBar />
 
       <header className="px-5 sm:px-8 py-6 space-y-4">
+        <button onClick={() => router.back()} className="text-sm text-accent hover:underline">← Back</button>
         <h1 className="text-xl sm:text-2xl font-extrabold text-text-primary">Search your galleries</h1>
         <div className="relative max-w-md">
           <svg className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

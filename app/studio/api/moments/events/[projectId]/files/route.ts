@@ -25,20 +25,55 @@ export async function GET(
 
     const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
 
-    if (!process.env.WATERMARK_LAMBDA_ARN) {
-      const stuckFiles = files.filter((f) => f.processingStatus === 'PROCESSING')
+    if (!process.env.WATERMARK_LAMBDA_ARN || !process.env.VIDEO_TRANSCODE_LAMBDA_ARN) {
+      // Only force-flip files whose OWN processing Lambda is actually
+      // unconfigured — previously checked WATERMARK_LAMBDA_ARN alone, which
+      // could force-flip a video legitimately mid-transcode (with its own
+      // Lambda configured and running) to READY prematurely whenever only
+      // the image Lambda's ARN happened to be missing.
+      const stuckFiles = files.filter((f) =>
+        f.processingStatus === 'PROCESSING' &&
+        !process.env[f.fileType === 'VIDEO' ? 'VIDEO_TRANSCODE_LAMBDA_ARN' : 'WATERMARK_LAMBDA_ARN']
+      )
       if (stuckFiles.length > 0) {
         const now = new Date().toISOString()
         await Promise.all(
-          stuckFiles.map((f) =>
-            studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId },
+          stuckFiles.map((f) => {
+            // Safe for IMAGE (raw upload is still directly viewable) but
+            // NOT for VIDEO — marking a video READY with no real
+            // r2PreviewUrl serves the raw, often-undecodable upload as if
+            // it were a working preview (the exact bug the transcode
+            // pipeline was built to fix). Matches upload-complete route's
+            // same IMAGE-only shortcut.
+            const status = f.fileType === 'VIDEO' ? 'FAILED' : 'READY'
+            return studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId },
               'SET processingStatus = :s, uploadedAt = :now',
-              { ':s': 'READY', ':now': f.uploadedAt ?? now }
-            ).catch(() => {})
-          )
+              { ':s': status, ':now': f.uploadedAt ?? now }
+            ).catch(() => {}).then(() => { f.processingStatus = status })
+          })
         )
-        stuckFiles.forEach((f) => { f.processingStatus = 'READY' })
       }
+    }
+
+    // Production safety net: a Lambda hard-timeout/OOM kill happens before
+    // its own catch block can write FAILED, and a rejected fire-and-forget
+    // invoke is handled at invoke time (upload-complete route) but can't
+    // cover every failure mode. Nothing else ever re-checks a PROCESSING
+    // row, so without this it can stay stuck forever with a permanent
+    // spinner. 20 minutes is comfortably past the Lambda's own 900s/15min
+    // hard cap.
+    const STALE_PROCESSING_MS = 20 * 60 * 1000
+    const staleCutoff = Date.now() - STALE_PROCESSING_MS
+    const staleFiles = files.filter(
+      (f) => f.processingStatus === 'PROCESSING' && f.uploadedAt && new Date(f.uploadedAt).getTime() < staleCutoff
+    )
+    if (staleFiles.length > 0) {
+      await Promise.all(
+        staleFiles.map((f) =>
+          studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId }, 'SET processingStatus = :s', { ':s': 'FAILED' }).catch(() => {})
+        )
+      )
+      staleFiles.forEach((f) => { f.processingStatus = 'FAILED' })
     }
 
     files.sort((a, b) => {
@@ -65,7 +100,11 @@ export async function GET(
     return NextResponse.json({
       success: true,
       data: enriched,
-      meta: { allowMemberDownloads: !!project.allowMemberDownloads, allowMemberReels: !!project.allowMemberReels },
+      meta: {
+        allowMemberDownloads: !!project.allowMemberDownloads,
+        allowMemberReels: !!project.allowMemberReels,
+        allowOriginalDownloads: !!project.allowOriginalDownloads,
+      },
     })
   } catch (err) {
     console.error('[moments files GET]', err)

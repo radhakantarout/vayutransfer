@@ -76,6 +76,15 @@ export default function PhotoLightbox({
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const current = photos[index]
 
+  // Without this, a pending rAF from handleStripScroll can fire after the
+  // lightbox has already been closed/unmounted — its callback still holds
+  // the (now stale) onIndexChange closure and calls it anyway, which in the
+  // parent flips lightboxIndex from null back to a number, silently
+  // reopening the viewer a frame after the user closed it.
+  useEffect(() => {
+    return () => { if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current) }
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape')     onClose()

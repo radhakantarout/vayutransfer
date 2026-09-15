@@ -6,7 +6,17 @@ import { verifyAdminJWT } from '@/lib/adminAuth'
 const RESERVED_SUBDOMAINS = new Set(['www', 'test', 'api', 'mail', 'smtp'])
 
 // Shared pages that live outside /studio but must still be reachable on the studio app domain
-const SHARED_PAGES = new Set(['/privacy', '/terms', '/robots.txt', '/sitemap.xml'])
+const SHARED_PAGES = new Set([
+  '/privacy', '/terms', '/robots.txt', '/sitemap.xml',
+  // Moments PWA assets (public/moments-manifest.json, public/moments-sw.js)
+  // — top-level paths, not under /studio, so without this they were being
+  // redirected to /studio/home on test.vayustudios.com/vayustudios.com
+  // (this gate only ever fires on those app-domain hosts; localhost isn't
+  // isStudioAppDomain, which is why the PWA install worked in local dev but
+  // not on the real deployed domain). The icon PNGs never hit this at all —
+  // they're excluded by this file's own matcher config below.
+  '/moments-manifest.json', '/moments-sw.js',
+])
 
 // Lets the VayuStudios dashboard's own live-preview panel (WebsiteManager.tsx /
 // LivePreviewPanel.tsx) embed a studio's public site in an iframe. CSP's

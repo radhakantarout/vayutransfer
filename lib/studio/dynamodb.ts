@@ -105,6 +105,11 @@ export async function studioDeleteItem(
   }))
 }
 
+// When `limit` is passed, the caller explicitly wants a capped result (e.g.
+// "N most recent") — a single request, unchanged from before. Without it,
+// this now paginates through every page rather than silently returning only
+// the first ~1MB of results, which previously truncated large result sets
+// (a busy gallery's likes, an active chat's messages) with no error at all.
 export async function studioQueryByIndex<T>(
   table: string,
   indexName: string,
@@ -113,15 +118,33 @@ export async function studioQueryByIndex<T>(
   expressionNames?: Record<string, string>,
   limit?: number
 ): Promise<T[]> {
-  const res = await client.send(new QueryCommand({
-    TableName: table,
-    IndexName: indexName,
-    KeyConditionExpression: keyCondition,
-    ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
-    ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
-    ...(limit ? { Limit: limit } : {}),
-  }))
-  return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  if (limit) {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      IndexName: indexName,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
+      ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
+      Limit: limit,
+    }))
+    return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  }
+
+  const items: T[] = []
+  let lastKey: Record<string, AttributeValue> | undefined
+  do {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      IndexName: indexName,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
+      ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) items.push(unmarshall(item) as T)
+    lastKey = res.LastEvaluatedKey as Record<string, AttributeValue> | undefined
+  } while (lastKey)
+  return items
 }
 
 export async function studioScanTable<T>(table: string): Promise<T[]> {
@@ -138,6 +161,10 @@ export async function studioScanTable<T>(table: string): Promise<T[]> {
   return items
 }
 
+// Paginates through every page rather than a single QueryCommand — a
+// gallery with thousands of photos, or a table's largest partition, can
+// exceed DynamoDB's 1MB-per-query limit, which previously meant this
+// silently returned an incomplete list with no error at all.
 export async function studioQueryByPK<T>(
   table: string,
   pkName: string,
@@ -153,11 +180,18 @@ export async function studioQueryByPK<T>(
     ? { ':pk': pkValue, ...skCondition.values }
     : { ':pk': pkValue }
 
-  const res = await client.send(new QueryCommand({
-    TableName: table,
-    KeyConditionExpression: keyCondition,
-    ExpressionAttributeValues: marshall(expressionValues),
-    ...(consistentRead ? { ConsistentRead: true } : {}),
-  }))
-  return (res.Items ?? []).map((i) => unmarshall(i) as T)
+  const items: T[] = []
+  let lastKey: Record<string, AttributeValue> | undefined
+  do {
+    const res = await client.send(new QueryCommand({
+      TableName: table,
+      KeyConditionExpression: keyCondition,
+      ExpressionAttributeValues: marshall(expressionValues),
+      ...(consistentRead ? { ConsistentRead: true } : {}),
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) items.push(unmarshall(item) as T)
+    lastKey = res.LastEvaluatedKey as Record<string, AttributeValue> | undefined
+  } while (lastKey)
+  return items
 }

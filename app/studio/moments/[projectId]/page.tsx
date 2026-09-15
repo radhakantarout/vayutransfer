@@ -63,12 +63,14 @@ function retentionCountdown(createdAt: string): { daysLeft: number; deadline: st
 async function initOrResumeUpload(
   projectId: string,
   file: File,
-  partCount: number
+  partCount: number,
+  signal?: AbortSignal
 ): Promise<{ fileId: string; uploadId: string; presignedUrls: string[]; completedParts: PartRecord[] }> {
   const existing = loadUploadResume(projectId, file.name, file.size, file.lastModified)
   if (existing) {
     const statusRes = await fetchWithTimeout(
-      `/studio/api/moments/events/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`
+      `/studio/api/moments/events/${projectId}/files/${existing.fileId}/upload-status?uploadId=${encodeURIComponent(existing.uploadId)}&partCount=${partCount}`,
+      {}, undefined, signal
     ).then((r) => r.json()).catch(() => null)
     if (statusRes?.success) {
       return {
@@ -85,7 +87,7 @@ async function initOrResumeUpload(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size, partCount }),
-  }).then((r) => r.json())
+  }, undefined, signal).then((r) => r.json())
   if (!initRes.success) throw new Error(initRes.message ?? 'Upload failed to start')
   const { fileId, uploadId, presignedUrls } = initRes.data
   saveUploadResume({ projectId, fileId, uploadId, filename: file.name, size: file.size, lastModified: file.lastModified })
@@ -112,12 +114,25 @@ function CommentsSheet({
   const [comments, setComments] = useState<CommentItem[] | null>(null)
   const [text, setText] = useState('')
   const [posting, setPosting] = useState(false)
+  // Backoff on repeated failures — without this, a backend hiccup gets
+  // amplified by every open sheet still hammering at full 4s cadence right
+  // through it, compounding whatever caused the hiccup in the first place.
+  const failCount = useRef(0)
+  const skipUntil = useRef(0)
 
   const load = useCallback(() => {
     fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/comments`)
       .then((r) => r.json())
-      .then((res) => setComments(res.success ? res.data : []))
-      .catch(() => setComments([]))
+      .then((res) => {
+        if (!res.success) throw new Error('not success')
+        failCount.current = 0
+        setComments(res.data)
+      })
+      .catch(() => {
+        setComments((prev) => prev ?? []) // keep last-known state on a transient failure instead of wiping it
+        failCount.current += 1
+        skipUntil.current = Date.now() + Math.min(30000, 4000 * 2 ** failCount.current)
+      })
   }, [projectId, fileId])
 
   useEffect(() => { load() }, [load])
@@ -125,7 +140,9 @@ function CommentsSheet({
   // Live-ish — polls for new comments from other people while this sheet is
   // open, so a conversation feels shared without anyone hitting refresh.
   useEffect(() => {
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, 4000)
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && Date.now() >= skipUntil.current) load()
+    }, 4000)
     return () => clearInterval(timer)
   }, [load])
 
@@ -312,21 +329,29 @@ function GroupChatModal({ projectId, onClose }: { projectId: string; onClose: ()
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const lastCountRef = useRef(0)
+  const failCount = useRef(0)
+  const skipUntil = useRef(0)
 
   const load = useCallback(() => {
     fetch(`/studio/api/moments/events/${projectId}/messages`)
       .then((r) => r.json())
       .then((res) => {
-        if (!res.success) return
+        if (!res.success) throw new Error('not success')
+        failCount.current = 0
         setMessages(res.data)
       })
-      .catch(() => {})
+      .catch(() => {
+        failCount.current += 1
+        skipUntil.current = Date.now() + Math.min(30000, 3000 * 2 ** failCount.current)
+      })
   }, [projectId])
 
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, 3000)
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && Date.now() >= skipUntil.current) load()
+    }, 3000)
     return () => clearInterval(timer)
   }, [load])
 
@@ -527,6 +552,7 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
   const [autoApprove, setAutoApprove] = useState(false)
   const [allowDownloads, setAllowDownloads] = useState(false)
   const [allowReels, setAllowReels] = useState(false)
+  const [allowOriginalDownloads, setAllowOriginalDownloads] = useState(false)
   const [members, setMembers] = useState<GalleryMember[] | null>(null)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -545,6 +571,7 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
       setAutoApprove(res.data.autoApproveMembers)
       setAllowDownloads(res.data.allowMemberDownloads)
       setAllowReels(res.data.allowMemberReels)
+      setAllowOriginalDownloads(res.data.allowOriginalDownloads)
     })
     fetch(`/studio/api/moments/events/${projectId}/members`).then((r) => r.json()).then((res) => {
       if (res.success) setMembers(res.data)
@@ -564,7 +591,7 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
     return () => { cancelled = true }
   }, [qrOpen, inviteUrl])
 
-  const generateOrSave = async (overrides: Partial<{ autoApproveMembers: boolean; allowMemberDownloads: boolean; allowMemberReels: boolean; regenerate: boolean }> = {}) => {
+  const generateOrSave = async (overrides: Partial<{ autoApproveMembers: boolean; allowMemberDownloads: boolean; allowMemberReels: boolean; allowOriginalDownloads: boolean; regenerate: boolean }> = {}) => {
     setSaving(true)
     try {
       const res = await fetch(`/studio/api/moments/events/${projectId}/invite`, {
@@ -574,6 +601,7 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
           autoApproveMembers: overrides.autoApproveMembers ?? autoApprove,
           allowMemberDownloads: overrides.allowMemberDownloads ?? allowDownloads,
           allowMemberReels: overrides.allowMemberReels ?? allowReels,
+          allowOriginalDownloads: overrides.allowOriginalDownloads ?? allowOriginalDownloads,
           regenerate: overrides.regenerate ?? false,
         }),
       }).then((r) => r.json())
@@ -718,6 +746,7 @@ function PeopleModal({ projectId, onClose }: { projectId: string; onClose: () =>
             {settingsOpen && [
               { label: 'Auto-approve join requests', desc: 'Skip manual approval for new people', value: autoApprove, set: setAutoApprove, key: 'autoApproveMembers' as const },
               { label: 'Let members download', desc: 'Show a download button to approved members', value: allowDownloads, set: setAllowDownloads, key: 'allowMemberDownloads' as const },
+              ...(allowDownloads ? [{ label: 'Let members download the original file', desc: 'Otherwise only the web-optimized version can be downloaded', value: allowOriginalDownloads, set: setAllowOriginalDownloads, key: 'allowOriginalDownloads' as const }] : []),
               { label: 'Let members create Reels', desc: 'Uses your free AI credits per reel', value: allowReels, set: setAllowReels, key: 'allowMemberReels' as const },
             ].map((t) => (
               <div key={t.key} className="flex items-center gap-3">
@@ -894,8 +923,28 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [access, setAccess]     = useState<AccessInfo | null>(null)
   const [event, setEvent]       = useState<EventDetail | null>(null)
   const [files, setFiles]       = useState<GalleryFile[]>([])
-  const [meta, setMeta]         = useState({ allowMemberDownloads: false, allowMemberReels: false })
+  const [meta, setMeta]         = useState({ allowMemberDownloads: false, allowMemberReels: false, allowOriginalDownloads: false })
+  // Set when Download is tapped (single photo or bulk) AND the admin has
+  // allowOriginalDownloads on — shows the Web version/Original choice sheet.
+  // When that setting is off, Download skips this entirely and goes
+  // straight to the web version, matching pre-existing single-tap behavior.
+  const [downloadChoiceIds, setDownloadChoiceIds] = useState<string[] | null>(null)
   const [uploads, setUploads]   = useState<UploadItem[]>([])
+  // Kept in sync purely so the unmount-cleanup effect below can always see
+  // the latest uploads without itself depending on `uploads` (which would
+  // otherwise re-run the effect — and re-register a new cleanup — on every
+  // single upload-progress tick).
+  const uploadsRef = useRef<UploadItem[]>([])
+  useEffect(() => { uploadsRef.current = uploads }, [uploads])
+  // Previously, blob URLs (URL.createObjectURL, one per queued file) were
+  // only ever revoked via the explicit per-item Dismiss button or "Back to
+  // gallery" — navigating away mid-upload via the bottom nav leaked every
+  // live blob URL from that batch for the rest of the session.
+  useEffect(() => {
+    return () => {
+      uploadsRef.current.forEach((u) => { if (u.previewUrl) URL.revokeObjectURL(u.previewUrl) })
+    }
+  }, [])
   // 'full' = dedicated full-screen "Uploading your moments" view (opens the
   // moment a batch starts); 'minimized' = a small floating tracker so the
   // person can keep browsing the gallery while it finishes in the background.
@@ -934,11 +983,22 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
 
   const isAdmin = access?.role === 'ADMIN'
 
+  const filesFailCount = useRef(0)
+  const filesSkipUntil = useRef(0)
   const refreshFiles = useCallback(async () => {
-    const res = await fetch(`/studio/api/moments/events/${projectId}/files`).then((r) => r.json())
-    if (res.success) {
-      setFiles(res.data)
-      if (res.meta) setMeta(res.meta)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${projectId}/files`).then((r) => r.json())
+      if (res.success) {
+        filesFailCount.current = 0
+        setFiles(res.data)
+        if (res.meta) setMeta(res.meta)
+      } else {
+        throw new Error('not success')
+      }
+    } catch (err) {
+      filesFailCount.current += 1
+      filesSkipUntil.current = Date.now() + Math.min(30000, 4000 * 2 ** filesFailCount.current)
+      console.error('[moments refreshFiles]', err)
     }
   }, [projectId])
 
@@ -975,7 +1035,9 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   // entirely until the event itself has loaded.
   useEffect(() => {
     if (!event) return
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') refreshFiles() }, 4000)
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && Date.now() >= filesSkipUntil.current) refreshFiles()
+    }, 4000)
     return () => clearInterval(timer)
   }, [event, refreshFiles])
 
@@ -1037,8 +1099,23 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     const partCount = Math.ceil(file.size / CHUNK_SIZE)
 
     try {
-      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(projectId, file, partCount)
-      if (controller.signal.aborted) throw new DOMException('Upload cancelled', 'AbortError')
+      const { fileId, uploadId, presignedUrls, completedParts } = await initOrResumeUpload(projectId, file, partCount, controller.signal)
+      if (controller.signal.aborted) {
+        // The init call already resolved with real server-created resources
+        // (a MediaFile row + R2 multipart upload) by the time we get here,
+        // even though the user cancelled while it was in flight. Clean up
+        // using these fresh values directly — waiting for cancelUpload's
+        // own item.fileId/item.uploadId (React state) would lag behind what
+        // this network call already knows, leaving an orphaned multipart
+        // upload and a row stuck at UPLOADING forever.
+        clearUploadResume(projectId, file.name, file.size, file.lastModified)
+        fetch(`/studio/api/moments/events/${projectId}/upload-abort`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId, uploadId }),
+        }).catch(() => {})
+        throw new DOMException('Upload cancelled', 'AbortError')
+      }
       update({ fileId, uploadId })
 
       const parts: PartRecord[] = await uploadFileInChunks(
@@ -1141,6 +1218,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     if (!res?.success) refreshFiles() // revert via a fresh fetch if the toggle failed
   }
 
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
+  const retryFile = async (fileId: string) => {
+    setRetryingIds((prev) => new Set(prev).add(fileId))
+    setFiles((prev) => prev.map((f) => (f.fileId === fileId ? { ...f, processingStatus: 'PROCESSING' } : f)))
+    await fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/retry`, { method: 'POST' }).catch(() => {})
+    setRetryingIds((prev) => { const next = new Set(prev); next.delete(fileId); return next })
+    refreshFiles()
+  }
+
   // Retroactively index photos that were skipped when uploaded — same
   // route/Lambda the upload-time effect above already calls, just with
   // whatever's currently unindexed instead of one fresh batch's fileIds.
@@ -1174,7 +1260,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const shareFiles = async (targets: { previewUrl: string; filename: string }[]) => {
     try {
       const fetched = await Promise.all(targets.map(async (t) => {
-        const blob = await fetch(t.previewUrl).then((r) => r.blob())
+        // cache: 'reload' — see saveFiles' comment: the same URL was very
+        // likely just loaded via a plain <img> tag, and a browser can reuse
+        // that cached opaque response for this fetch() instead of hitting
+        // the network, surfacing a spurious CORS error.
+        const blob = await fetch(t.previewUrl, { cache: 'reload' }).then((r) => r.blob())
         return new File([blob], t.filename, { type: blob.type })
       }))
       if (navigator.canShare?.({ files: fetched })) {
@@ -1186,6 +1276,62 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       if (err instanceof Error && err.name === 'AbortError') return // user cancelled the share sheet
       targets.forEach((t) => window.open(t.previewUrl, '_blank'))
     }
+  }
+
+  // "Save" (Download) intent — distinct from shareFiles' "Share" intent, but
+  // mechanically the same on mobile: there is no cross-browser web API to
+  // write directly into the OS Photos/gallery app, so the Web Share API's
+  // file form is the only thing that reliably surfaces a native "Save
+  // Image"/"Save to Photos" option on both iOS Safari and Android Chrome.
+  // Feature-detected via canShare, not platform-sniffed, so a desktop
+  // browser that happens to support it gets the same path; everything else
+  // falls back to a sequential blob+hidden-<a download> loop (NOT a
+  // window.open() loop, which most browsers don't treat as a download at
+  // all for an image, and which multi-file popups get throttled/blocked
+  // with no error — the same failure mode already fixed for VayuTransfer's
+  // own Download-All).
+  const saveFiles = async (targets: { url: string; filename: string }[]) => {
+    let fetched: File[]
+    try {
+      fetched = await Promise.all(targets.map(async (t) => {
+        // cache: 'reload' matters here, not just belt-and-braces: the exact
+        // same preview URL was very likely just loaded via a plain <img>
+        // tag for the grid thumbnail (a "no-cors" mode request under the
+        // hood). Some browsers reuse that cached opaque response for a
+        // later same-URL fetch() in "cors" mode instead of hitting the
+        // network again, and then can't expose it through the Fetch API —
+        // surfacing as a CORS error even though the server's CORS headers
+        // are (and were) completely correct. Forcing a real network
+        // round-trip sidesteps the bad cache entry entirely.
+        const blob = await fetch(t.url, { cache: 'reload' }).then((r) => r.blob())
+        return new File([blob], t.filename, { type: blob.type })
+      }))
+    } catch (err) {
+      console.error('[saveFiles] fetch failed', err)
+      return
+    }
+
+    if (navigator.canShare?.({ files: fetched })) {
+      try {
+        await navigator.share({ files: fetched })
+        return
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return // user cancelled the share sheet
+        // Fall through to the anchor-download fallback below.
+      }
+    }
+
+    const anchor = document.createElement('a')
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    for (const f of fetched) {
+      const url = URL.createObjectURL(f)
+      anchor.href = url
+      anchor.download = f.name
+      anchor.click()
+      URL.revokeObjectURL(url)
+    }
+    document.body.removeChild(anchor)
   }
 
   const bumpCommentCount = (fileId: string, delta: number) => {
@@ -1210,8 +1356,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     })
   }
 
-  const startLongPress = (fileId: string) => {
+  const longPressStart = useRef<{ x: number; y: number } | null>(null)
+  const LONG_PRESS_MOVE_THRESHOLD_PX = 10
+  const startLongPress = (fileId: string, x: number, y: number) => {
     longPressFiredRef.current = false
+    longPressStart.current = { x, y }
     longPressTimer.current = setTimeout(() => {
       longPressFiredRef.current = true
       setSelectMode(true)
@@ -1224,7 +1373,21 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   }
   const cancelLongPress = () => {
     if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+    longPressStart.current = null
   }
+  // pointercancel doesn't fire reliably during every touch-scroll on every
+  // browser — this move-distance check is the backstop that actually
+  // prevents an accidental selection-mode trigger while a finger is still
+  // down and scrolling, not just relying on the OS/browser to tell us.
+  const handleLongPressMove = (x: number, y: number) => {
+    if (!longPressStart.current) return
+    const dx = x - longPressStart.current.x
+    const dy = y - longPressStart.current.y
+    if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_THRESHOLD_PX) cancelLongPress()
+  }
+  // A long-press timer started just before navigating away would otherwise
+  // fire setSelectMode/setSelectedIds after this component has unmounted.
+  useEffect(() => cancelLongPress, [])
   const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()) }
 
   const bulkLike = async () => {
@@ -1232,9 +1395,26 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     await Promise.all(targets.map((f) => toggleLike(f.fileId)))
     exitSelectMode()
   }
+  // Web-version download uses each file's already-known public preview URL
+  // (no network round-trip beyond the actual save). Original goes through
+  // the download route, which redirects to a freshly-signed URL for the raw
+  // uploaded file — server-side gated on allowOriginalDownloads, never just
+  // a hidden client-side option (see the route itself).
+  const downloadWebVersion = (fileIds: string[]) => {
+    const targets = files.filter((f) => fileIds.includes(f.fileId) && f.r2PreviewUrl)
+      .map((f) => ({ url: f.r2PreviewUrl!, filename: f.originalFilename }))
+    saveFiles(targets)
+  }
+  const downloadOriginal = (fileIds: string[]) => {
+    const targets = files.filter((f) => fileIds.includes(f.fileId))
+      .map((f) => ({ url: `/studio/api/moments/events/${projectId}/files/${f.fileId}/download?original=true`, filename: f.originalFilename }))
+    saveFiles(targets)
+  }
   const bulkDownload = () => {
-    files.filter((f) => selectedIds.has(f.fileId) && f.r2PreviewUrl).forEach((f) => window.open(f.r2PreviewUrl, '_blank'))
+    const ids = Array.from(selectedIds)
     exitSelectMode()
+    if (meta.allowOriginalDownloads) setDownloadChoiceIds(ids)
+    else downloadWebVersion(ids)
   }
   const bulkShare = async () => {
     const targets = files.filter((f) => selectedIds.has(f.fileId) && f.r2PreviewUrl)
@@ -1249,9 +1429,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileIds: ids }),
-    }).then((r) => r.json())
-    if (res.success) setFiles((prev) => prev.filter((f) => !selectedIds.has(f.fileId)))
-    exitSelectMode()
+    }).then((r) => r.json()).catch(() => null)
+    if (res?.success) {
+      setFiles((prev) => prev.filter((f) => !selectedIds.has(f.fileId)))
+      exitSelectMode()
+    } else {
+      // Keep the selection active on failure instead of closing as if it
+      // worked — the user needs to know to retry, not believe it's done.
+      window.alert("Couldn't delete — please try again.")
+    }
   }
 
   // Sign out lives on /studio/moments/profile now — the per-gallery menu
@@ -1478,7 +1664,8 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           if (reelSelectMode) toggleReelSelect(f.fileId)
                           else setLightboxIndex(viewablePhotos.findIndex((p) => p.fileId === f.fileId))
                         }}
-                        onPointerDown={() => { if (isReady && !reelSelectMode) startLongPress(f.fileId) }}
+                        onPointerDown={(e) => { if (isReady && !reelSelectMode) startLongPress(f.fileId, e.clientX, e.clientY) }}
+                        onPointerMove={(e) => handleLongPressMove(e.clientX, e.clientY)}
                         onPointerUp={cancelLongPress}
                         onPointerLeave={cancelLongPress}
                         onPointerCancel={cancelLongPress}
@@ -1531,6 +1718,26 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                       {f.processingStatus === 'PROCESSING' && (
                         <div className="absolute inset-0 bg-black/35 backdrop-blur-[2px] flex items-center justify-center">
                           <div className="w-7 h-7 rounded-full border-[3px] border-white/30 border-t-white animate-spin" />
+                        </div>
+                      )}
+                      {f.processingStatus === 'FAILED' && isAdmin && (
+                        <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 px-2 text-center">
+                          <span className="text-lg">⚠️</span>
+                          <span className="text-[10px] text-white/80">Processing failed</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); retryFile(f.fileId) }}
+                            disabled={retryingIds.has(f.fileId)}
+                            className="text-[10px] font-bold px-2.5 py-1 rounded-full text-white disabled:opacity-60"
+                            style={{ background: GRADIENT }}
+                          >
+                            {retryingIds.has(f.fileId) ? 'Retrying…' : 'Retry'}
+                          </button>
+                        </div>
+                      )}
+                      {f.processingStatus === 'FAILED' && !isAdmin && (
+                        <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1 px-2 text-center">
+                          <span className="text-lg">⚠️</span>
+                          <span className="text-[10px] text-white/80">Processing failed</span>
                         </div>
                       )}
                       {isReady && !anySelectMode && (
@@ -1628,7 +1835,10 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           onClose={() => setLightboxIndex(null)}
           role="moments"
           onDelete={isAdmin ? (photo) => deleteFile(photo.fileId) : undefined}
-          onDownload={canDownload ? (photo) => window.open(photo.previewUrl, '_blank') : undefined}
+          onDownload={canDownload ? (photo) => {
+            if (meta.allowOriginalDownloads) setDownloadChoiceIds([photo.fileId])
+            else downloadWebVersion([photo.fileId])
+          } : undefined}
           onShare={(photo) => shareFiles([{ previewUrl: photo.previewUrl, filename: photo.filename }])}
           onInfo={(photo) => setInfoFor(photo.fileId)}
           onToggleLike={(photo) => toggleLike(photo.fileId)}
@@ -1654,6 +1864,32 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         const infoFile = files.find((f) => f.fileId === infoFor)
         return infoFile ? <PhotoInfoSheet file={infoFile} onClose={() => setInfoFor(null)} /> : null
       })()}
+
+      {downloadChoiceIds && (
+        <div className="fixed inset-0 z-[95] bg-black/70 flex items-end sm:items-center justify-center" onClick={() => setDownloadChoiceIds(null)}>
+          <div className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl w-full sm:max-w-xs" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 space-y-3">
+              <p className="text-sm font-bold text-text-primary text-center">
+                Download {downloadChoiceIds.length > 1 ? `${downloadChoiceIds.length} items` : ''}
+              </p>
+              <button
+                onClick={() => { downloadWebVersion(downloadChoiceIds); setDownloadChoiceIds(null) }}
+                className="w-full text-sm font-semibold py-3 rounded-xl border border-border text-text-primary hover:bg-border/40 transition-colors"
+              >
+                Web version
+              </button>
+              <button
+                onClick={() => { downloadOriginal(downloadChoiceIds); setDownloadChoiceIds(null) }}
+                className="w-full text-sm font-bold py-3 rounded-xl text-white hover:opacity-90 transition-opacity"
+                style={{ background: GRADIENT }}
+              >
+                Original
+              </button>
+              <button onClick={() => setDownloadChoiceIds(null)} className="w-full text-xs text-muted py-1">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPeople && <PeopleModal projectId={projectId} onClose={() => setShowPeople(false)} />}
 

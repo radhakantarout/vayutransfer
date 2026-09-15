@@ -4,8 +4,9 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
-import { checkReelCreditsAvailable } from '@/lib/studio/quota'
-import { deductReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
+import { checkAiCreditsAvailable } from '@/lib/studio/quota'
+import { deductAiSearchCredits } from '@/lib/studio/billing'
+import { AI_SEARCH_CREDIT_PRICE_PAISE } from '@/constants/studioPricing'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
@@ -16,12 +17,20 @@ import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle } from '@/type
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
 // Same "MVP" pipeline as the Client Gallery's reel routes — every selected
-// photo becomes one Kling AI clip, reusing the exact same Lambda/billing/job
+// photo becomes one Kling AI clip, reusing the exact same Lambda/job
 // plumbing. Only the auth shape differs: no clientShareToken lookup at all,
 // since a Moments session is already scoped to the caller's own personal
 // Studio via the JWT (same as every other /studio/api/moments/* route) —
 // there's no separate "client of someone else's project" concept here, the
 // uploader IS the owner.
+//
+// Billing DIVERGES from Client Gallery's reel route deliberately: Moments
+// consumers spend from the SAME aiSearchCredits pool used for face-indexing
+// (₹0.30/credit) rather than the separate reelCreditsBalance pool (₹80/
+// credit) — one balance to think about and top up, instead of two. The
+// reel's ₹ cost is computed exactly the same way (computeReelCost), just
+// converted into AI-credit units instead of reel-credit units before the
+// check/deduct. Client Gallery/Studio Admin's own reel route is untouched.
 
 // "My Reels" history for one Moments event.
 export async function GET(
@@ -115,17 +124,17 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible for AI Reel generation yet.' }, { status: 400 })
     }
 
-    let studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+    const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
-    studio = await grantFreeTrialReelCreditsIfNeeded(studio)
 
     const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
-    const { creditsRequired } = computeReelCost(photos.length, durationSec)
-    const creditCheck = checkReelCreditsAvailable(studio, creditsRequired)
+    const { sellPricePaise } = computeReelCost(photos.length, durationSec)
+    const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / AI_SEARCH_CREDIT_PRICE_PAISE))
+    const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired)
     if (!creditCheck.ok) {
       return NextResponse.json({
         success: false, error: 'INSUFFICIENT_CREDITS',
-        message: `This reel needs ${creditsRequired} credits — you have ${creditCheck.balance}.`,
+        message: `This reel needs ${aiCreditsRequired} AI credits — you have ${Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits)} left.`,
         data: creditCheck,
       }, { status: 402 })
     }
@@ -135,7 +144,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
     }
 
-    await deductReelCredits(studioId, creditsRequired)
+    const creditsRequired = aiCreditsRequired
+    await deductAiSearchCredits(studioId, creditsRequired)
 
     const reelId = randomUUID()
     const jobId = randomUUID()
@@ -187,7 +197,7 @@ export async function POST(
       })),
     })).catch(async (err: unknown) => {
       console.error('[moments reels POST] Lambda invoke failed', err)
-      await refundReelCreditsAndFail(studioId, creditsRequired, jobId, reelId)
+      await refundAiCreditsAndFail(studioId, creditsRequired, jobId, reelId)
     })
 
     return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
@@ -197,10 +207,10 @@ export async function POST(
   }
 }
 
-async function refundReelCreditsAndFail(studioId: string, credits: number, jobId: string, reelId: string) {
-  const { refundReelCredits } = await import('@/lib/studio/billing')
+async function refundAiCreditsAndFail(studioId: string, credits: number, jobId: string, reelId: string) {
+  const { refundAiSearchCredits } = await import('@/lib/studio/billing')
   const { studioUpdateItem } = await import('@/lib/studio/dynamodb')
-  await refundReelCredits(studioId, credits)
+  await refundAiSearchCredits(studioId, credits)
   const now = new Date().toISOString()
   await studioUpdateItem(TABLES.jobs, { jobId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'FAILED', ':msg': 'Could not start generation', ':now': now }, { '#s': 'status' })
   await studioUpdateItem(TABLES.reels, { reelId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'failed', ':msg': 'Could not start generation', ':now': now }, { '#s': 'status' })

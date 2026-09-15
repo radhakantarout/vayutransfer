@@ -239,6 +239,13 @@ export interface StudioProject {
   // every reel costs real Kling money.
   allowMemberDownloads?: boolean
   allowMemberReels?: boolean
+  // Gated behind allowMemberDownloads being on first (no original access
+  // without general download access) — lets a member download the raw
+  // uploaded file instead of only the web-optimized preview. Same concept/
+  // naming as the Guest QR flow's allowOriginalDownload JWT claim
+  // (app/studio/api/guest/[token]/download/[fileId]/route.ts), enforced
+  // server-side the same way — never trust a client query param alone.
+  allowOriginalDownloads?: boolean
   // Simple sliding-window join-request rate limit (design doc decision #4:
   // "max 50 join requests per link per hour") — reset whenever the window
   // has elapsed, incremented per request otherwise. Nothing fancier exists
@@ -273,6 +280,12 @@ export interface GalleryMember {
   createdAt: string
   updatedAt: string
   respondedAt?: string
+  // Simple sliding-window rate limit (comments+likes+chat combined) —
+  // mirrors StudioProject's own joinRequestCount/joinRequestWindowStart
+  // shape, just scoped per-member instead of per-link, since these are
+  // per-user write actions rather than join attempts against a shared link.
+  interactionWindowStart?: string
+  interactionCount?: number
 }
 
 // PK fileId, SK userId — existence of a row means "this user likes this

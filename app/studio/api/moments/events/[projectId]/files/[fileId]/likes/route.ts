@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
-import { studioQueryByPK, TABLES } from '@/lib/studio/dynamodb'
+import { studioQueryByPK, studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { resolveProjectForViewer, isApprovedMember, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
-import type { GalleryLike } from '@/types/studio'
+import type { GalleryLike, MediaFile } from '@/types/studio'
 
 // GET — who liked this photo/video, newest first. Any approved member can
 // see this (same "liked by" attribution WhatsApp/Instagram-style apps show).
@@ -20,6 +20,11 @@ export async function GET(
     if (!isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member) && !isApprovedMember(resolved.member)) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
+    // galleryLikes is keyed by fileId alone — without this check, a member
+    // of ANY gallery could read another gallery's likers by passing that
+    // gallery's fileId in the URL while projectId still points at their own.
+    const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
+    if (!file) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
     const likes = await studioQueryByPK<GalleryLike>(TABLES.galleryLikes, 'fileId', fileId)
     likes.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))

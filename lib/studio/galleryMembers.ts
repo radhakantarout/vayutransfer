@@ -104,3 +104,43 @@ export async function checkAndBumpJoinRateLimit(project: StudioProject): Promise
   )
   return true
 }
+
+const MEMBER_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
+const MEMBER_RATE_LIMIT_MAX = 100
+
+// Same sliding-window shape as checkAndBumpJoinRateLimit above, just scoped
+// per-member (comments+likes+chat combined, one shared budget) instead of
+// per-link — these are ongoing write actions by an already-approved member,
+// not one-off join attempts, so the counter lives on their own
+// GalleryMember row rather than the shared project row. An owner/admin
+// calling this for their own gallery (no GalleryMember row needed, since
+// isOwnerOrAdmin already grants access) is never rate-limited — only actual
+// approved members are.
+export async function checkAndBumpMemberRateLimit(projectId: string, userId: string): Promise<boolean> {
+  const member = await getGalleryMember(projectId, userId)
+  if (!member) return true // owner/admin path — no membership row to rate-limit against
+
+  const now = Date.now()
+  const windowStart = member.interactionWindowStart ? new Date(member.interactionWindowStart).getTime() : 0
+  const windowExpired = now - windowStart > MEMBER_RATE_LIMIT_WINDOW_MS
+
+  if (windowExpired) {
+    await studioUpdateItem(
+      TABLES.galleryMembers,
+      { projectId, userId },
+      'SET interactionCount = :one, interactionWindowStart = :now',
+      { ':one': 1, ':now': new Date(now).toISOString() }
+    )
+    return true
+  }
+
+  if ((member.interactionCount ?? 0) >= MEMBER_RATE_LIMIT_MAX) return false
+
+  await studioUpdateItem(
+    TABLES.galleryMembers,
+    { projectId, userId },
+    'ADD interactionCount :one',
+    { ':one': 1 }
+  )
+  return true
+}

@@ -66,6 +66,7 @@ export default function NewMomentsEventPage() {
       <TopNavBar />
 
       <main className="max-w-md mx-auto px-5 sm:px-0 py-6 sm:py-12 space-y-6">
+        <button onClick={() => router.back()} className="text-sm text-accent hover:underline">← Back</button>
         <div className="space-y-1.5">
           <h1 className="text-2xl font-extrabold text-text-primary">Start a new moment <span aria-hidden>✨</span></h1>
           <p className="text-sm text-muted">Give your event a name — the rest can come alive later.</p>

@@ -5,10 +5,14 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useMomentsTheme } from '@/lib/momentsTheme'
 import { useChatWidget } from '@/components/studio/ChatWidgetContext'
+import StudioTopupModal from '@/components/studio/StudioTopupModal'
 
 interface Me {
   name: string
   email: string
+  billingPlanId?: string
+  aiCreditsUsed: number
+  aiCreditsQuota: number
 }
 
 interface MomentsEventLite {
@@ -73,15 +77,22 @@ function MiniModal({ title, onClose, children }: { title: string; onClose: () =>
   )
 }
 
-// Feedback + legal-report both funnel to the same real support inbox via a
-// prefilled mailto: (same address EmailSupportButton/StudioFooter already
-// use elsewhere) — genuine working functionality with zero new backend.
-function MailtoModal({ title, subjectLine, placeholder, onClose }: { title: string; subjectLine: string; placeholder: string; onClose: () => void }) {
+// Feedback + legal-report both send a durable, server-side record via SES
+// (POST /studio/api/moments/feedback) — a real support-inbox record even if
+// the mailto: below (still opened as a redundant, familiar path) does
+// nothing because the visitor has no mail client configured.
+function MailtoModal({ kind, title, subjectLine, placeholder, onClose }: { kind: 'feedback' | 'legal'; title: string; subjectLine: string; placeholder: string; onClose: () => void }) {
   const [text, setText] = useState('')
   const [sent, setSent] = useState(false)
 
   const send = () => {
-    const body = encodeURIComponent(text.trim())
+    const trimmed = text.trim()
+    fetch('/studio/api/moments/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, text: trimmed }),
+    }).catch(() => {})
+    const body = encodeURIComponent(trimmed)
     window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subjectLine)}&body=${body}`
     setSent(true)
   }
@@ -118,41 +129,71 @@ function MailtoModal({ title, subjectLine, placeholder, onClose }: { title: stri
   )
 }
 
-function UpgradeModal({ onClose }: { onClose: () => void }) {
-  return (
-    <MiniModal title="Premium plans ✨" onClose={onClose}>
-      <div className="text-center py-4 space-y-3">
-        <div className="text-3xl">🚀</div>
-        <p className="text-sm text-text-primary font-semibold">Coming soon</p>
-        <p className="text-xs text-muted leading-relaxed">
-          We&apos;re working on premium plans with more storage, longer retention, and priority support. Stay tuned!
-        </p>
-      </div>
-      <button onClick={onClose} className="w-full border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border/40 transition-colors">
-        Got it
-      </button>
-    </MiniModal>
-  )
-}
+function DeleteAllModal({ onClose, onDeleted }: { onClose: () => void; onDeleted: () => void }) {
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<{ deleted: number; failed: number } | null>(null)
 
-function DeleteAllModal({ onClose }: { onClose: () => void }) {
+  const handleDelete = async () => {
+    setDeleting(true)
+    setError(null)
+    const res = await fetch('/studio/api/moments/events', { method: 'DELETE' }).then((r) => r.json()).catch(() => null)
+    setDeleting(false)
+    if (!res?.success) {
+      setError('Something went wrong — please try again.')
+      return
+    }
+    setDone(res.data)
+  }
+
+  if (done) {
+    return (
+      <MiniModal title="Delete all galleries" onClose={() => { onClose(); onDeleted() }}>
+        <div className="text-center space-y-3 py-2">
+          <div className="text-3xl">✅</div>
+          <p className="text-sm font-bold text-text-primary">
+            {done.deleted} galler{done.deleted === 1 ? 'y' : 'ies'} deleted{done.failed > 0 ? `, ${done.failed} failed` : ''}
+          </p>
+        </div>
+        <Link
+          href="/studio/moments"
+          onClick={() => { onClose(); onDeleted() }}
+          className="block w-full text-center text-white font-bold py-3 rounded-xl text-sm hover:opacity-90 transition-opacity"
+          style={{ background: GRADIENT }}
+        >
+          Go to My Galleries
+        </Link>
+      </MiniModal>
+    )
+  }
+
   return (
     <MiniModal title="Delete all galleries" onClose={onClose}>
       <div className="text-center space-y-3">
         <div className="text-3xl">⚠️</div>
-        <p className="text-sm font-bold text-text-primary">This isn&apos;t available yet</p>
+        <p className="text-sm font-bold text-text-primary">This permanently deletes every gallery you own</p>
         <p className="text-xs text-muted leading-relaxed">
-          Bulk-deleting every gallery at once needs a bit more work on our end before it&apos;s safe to offer. For now, delete galleries one at a time from My Galleries.
+          All photos, videos, comments, likes, and chat history in your own galleries will be gone for good — galleries you&apos;ve only joined as a member are not affected. This can&apos;t be undone.
         </p>
       </div>
-      <Link
-        href="/studio/moments"
-        onClick={onClose}
-        className="block w-full text-center text-white font-bold py-3 rounded-xl text-sm hover:opacity-90 transition-opacity"
-        style={{ background: GRADIENT }}
+      <div className="space-y-2">
+        <label className="block text-[11px] text-muted">Type <strong className="text-text-primary">delete</strong> to confirm</label>
+        <input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 text-sm text-text-primary focus:outline-none focus:border-danger"
+          autoFocus
+        />
+      </div>
+      {error && <p className="text-xs text-danger text-center">{error}</p>}
+      <button
+        onClick={handleDelete}
+        disabled={confirmText.trim().toLowerCase() !== 'delete' || deleting}
+        className="w-full bg-danger text-white font-bold py-3 rounded-xl text-sm hover:opacity-90 transition-opacity disabled:opacity-40"
       >
-        Go to My Galleries
-      </Link>
+        {deleting ? 'Deleting…' : 'Delete everything'}
+      </button>
     </MiniModal>
   )
 }
@@ -167,8 +208,8 @@ export default function ProfilePanel() {
   const [signingOut, setSigningOut] = useState(false)
   const [modal, setModal] = useState<'upgrade' | 'feedback' | 'legal' | 'deleteAll' | null>(null)
 
-  useEffect(() => {
-    fetch('/studio/api/auth/me')
+  const loadMe = () => {
+    return fetch('/studio/api/auth/me')
       .then((r) => r.json())
       .then((res) => {
         if (!res.success || !res.data || res.data.role !== 'CLIENT') {
@@ -186,7 +227,11 @@ export default function ProfilePanel() {
         })
       })
       .catch(() => router.replace('/studio/login?next=/studio/moments/profile'))
-      .finally(() => setChecking(false))
+  }
+
+  useEffect(() => {
+    loadMe().finally(() => setChecking(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
   const handleLogout = async () => {
@@ -228,22 +273,33 @@ export default function ProfilePanel() {
             <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">⭐</span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-text-primary">Plan</span>
-              <span className="inline-block text-[10px] font-bold text-accent bg-accent/10 rounded-full px-2 py-0.5 mt-0.5">Free</span>
+              <span className="inline-block text-[10px] font-bold text-accent bg-accent/10 rounded-full px-2 py-0.5 mt-0.5 capitalize">
+                {me.billingPlanId ?? 'Free'}
+              </span>
             </span>
             <button
               onClick={() => setModal('upgrade')}
               className="text-xs font-bold text-white rounded-full px-3.5 py-1.5 flex-shrink-0 hover:opacity-90 transition-opacity"
               style={{ background: GRADIENT }}
             >
-              Upgrade
+              Buy credits
             </button>
           </div>
           <div className="flex items-center gap-3 px-4 py-3.5">
             <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">📊</span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-text-primary">Usage</span>
+              <span className="block text-sm font-semibold text-text-primary">Galleries</span>
               <span className="block text-[11px] text-muted mt-0.5">
                 {usage ? `${usage.galleryCount} gallery${usage.galleryCount === 1 ? '' : 'ies'} · ${usage.mediaCount} photo${usage.mediaCount === 1 ? '' : 's'}/video${usage.mediaCount === 1 ? '' : 's'}` : '—'}
+              </span>
+            </span>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-3.5">
+            <span className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0 bg-bg">✨</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-text-primary">AI credits</span>
+              <span className="block text-[11px] text-muted mt-0.5">
+                {typeof me.aiCreditsQuota === 'number' ? `${Math.max(0, me.aiCreditsQuota - me.aiCreditsUsed)} left of ${me.aiCreditsQuota} this month · covers AI search & reels` : '—'}
               </span>
             </span>
           </div>
@@ -307,9 +363,16 @@ export default function ProfilePanel() {
         <p className="text-[10px] text-muted/70">© {new Date().getFullYear()} VayuStudios · Moments v1.0</p>
       </div>
 
-      {modal === 'upgrade' && <UpgradeModal onClose={() => setModal(null)} />}
+      {modal === 'upgrade' && (
+        <StudioTopupModal
+          kind="ai-search"
+          onClose={() => setModal(null)}
+          onSuccess={() => { setModal(null); loadMe() }}
+        />
+      )}
       {modal === 'feedback' && (
         <MailtoModal
+          kind="feedback"
           title="Send feedback"
           subjectLine="Moments Feedback"
           placeholder="What's working well, what's not, what would you love to see?"
@@ -318,13 +381,14 @@ export default function ProfilePanel() {
       )}
       {modal === 'legal' && (
         <MailtoModal
+          kind="legal"
           title="Report a legal issue"
           subjectLine="Moments — Legal/Safety Report"
           placeholder="Tell us what happened — include a gallery link if relevant."
           onClose={() => setModal(null)}
         />
       )}
-      {modal === 'deleteAll' && <DeleteAllModal onClose={() => setModal(null)} />}
+      {modal === 'deleteAll' && <DeleteAllModal onClose={() => setModal(null)} onDeleted={loadMe} />}
     </div>
   )
 }
