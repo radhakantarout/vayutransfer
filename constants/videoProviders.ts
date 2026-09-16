@@ -26,12 +26,28 @@ export type VideoProviderName = keyof typeof VIDEO_PROVIDER_CONFIG
 
 // ── Reel configuration defaults ─────────────────────────────────────────
 // No real minimum beyond "a reel needs at least one photo" — the earlier
-// 5-photo minimum was removed per explicit request (2026-09-11). Capped at
-// 10 (down from 30) — every photo becomes a full Kling clip today (no
-// hybrid FFmpeg mix yet, see design doc backlog item #3), so 10 keeps both
-// cost and generation time bounded until that lands.
+// 5-photo minimum was removed per explicit request (2026-09-11).
+//
+// MAX_REEL_PHOTOS reduced 10 -> 5 (2026-09-16) — a REAL cost leak, not just
+// a UI nicety: every photo becomes its own separately-billed Kling clip
+// (no hybrid FFmpeg mix yet, see design doc backlog item #3), so
+// MAX_REEL_PHOTOS x the longest REEL_CLIP_DURATION_OPTIONS value is the
+// actual worst-case Kling spend per reel. At 10 photos x 8s that was 80
+// real seconds of Kling generation (a real "1 min 20 sec" reel, real
+// money) — nothing capped the *combination*, only each factor
+// independently. Now 5 x 8s = 40s worst case. See
+// MAX_REEL_TOTAL_DURATION_SEC below for the actual enforced ceiling — this
+// constant alone was never sufficient on its own, by design now belt-and-
+// braces rather than relying on one number staying small forever.
 export const MIN_REEL_PHOTOS = 1
-export const MAX_REEL_PHOTOS = 10
+export const MAX_REEL_PHOTOS = 5
+// Hard ceiling on TOTAL reel length (sum across every clip), independent of
+// how MAX_REEL_PHOTOS or REEL_CLIP_DURATION_OPTIONS are tuned later — the
+// real cost driver is total Kling-generated seconds, not either factor
+// alone. Enforced server-side in every reel route; the UI never lets a
+// combination reach this ceiling today, but a future bump to either limit
+// must not silently reopen the leak this was built to close.
+export const MAX_REEL_TOTAL_DURATION_SEC = 40
 
 export const REEL_STYLES = ['CINEMATIC', 'ROMANTIC', 'BOLLYWOOD', 'LUXURY', 'MEMORIES', 'PHOTOGRAPHERS_CHOICE'] as const
 export const DEFAULT_REEL_STYLE = 'CINEMATIC'
