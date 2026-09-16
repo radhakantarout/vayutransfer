@@ -141,9 +141,11 @@ export const DRONE_SHOT_META: Record<DroneShotStyle, {
 }
 
 // Optional free-text creative direction, appended to the auto-generated
-// style prompt before it reaches Kling. Capped short — this augments the
-// preservation/style instructions, it isn't meant to replace them.
-export const MAX_CUSTOM_PROMPT_LENGTH = 150
+// style prompt before it reaches Kling. This is a text-length cap only —
+// Kling bills by output duration/resolution (see computeReelCost), never by
+// prompt length, so a longer prompt costs exactly the same. Room for a real
+// short scene description/shot direction, not just a one-line nudge.
+export const MAX_CUSTOM_PROMPT_LENGTH = 2000
 
 export const REEL_ASPECT_RATIOS = ['9:16', '4:5', '16:9'] as const
 export const DEFAULT_REEL_ASPECT_RATIO = '9:16'
