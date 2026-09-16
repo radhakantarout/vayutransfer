@@ -23,7 +23,12 @@ const client = new DynamoDBClient({ region: process.env.AWS_REGION ?? 'ap-south-
 const STUDIOS_TABLE = process.env.DYNAMO_STUDIO_STUDIOS_TABLE ?? 'vayustudio-studios'
 const PRICING_CONFIG_TABLE = process.env.DYNAMO_STUDIO_PRICING_CONFIG_TABLE ?? 'vayustudio-pricing-config'
 
-const MOMENTS_CREDITS_BONUS = 120
+// Fallbacks only — the live vayustudio-pricing-config table's
+// momentsWelcomeBonusCredits/momentsCreditDivisor/freeAiSearchCredits win
+// when present, so this script and the real signup path
+// (app/studio/api/auth/moments-onboard/route.ts) always agree on the same
+// bonus size without editing two places.
+const DEFAULT_BONUS_CREDITS = 120
 const DEFAULT_DIVISOR = 50
 const DEFAULT_FREE_AI_CREDITS = 200
 
@@ -49,8 +54,9 @@ async function main() {
   })).then((r) => (r.Item ? unmarshall(r.Item) : null)).catch(() => null)
   const divisor = configRow?.momentsCreditDivisor ?? DEFAULT_DIVISOR
   const freeAiCredits = configRow?.freeAiSearchCredits ?? DEFAULT_FREE_AI_CREDITS
-  const rawCreditsBonus = MOMENTS_CREDITS_BONUS * divisor
-  console.log(`[backfill] granting ${MOMENTS_CREDITS_BONUS} Moments Credits = ${rawCreditsBonus} raw AI credits (divisor=${divisor})`)
+  const bonusCredits = configRow?.momentsWelcomeBonusCredits ?? DEFAULT_BONUS_CREDITS
+  const rawCreditsBonus = bonusCredits * divisor
+  console.log(`[backfill] granting ${bonusCredits} Moments Credits = ${rawCreditsBonus} raw AI credits (divisor=${divisor})`)
 
   console.log(`[backfill] scanning ${STUDIOS_TABLE}...`)
   const studios = await scanAll(STUDIOS_TABLE)

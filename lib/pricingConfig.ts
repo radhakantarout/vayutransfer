@@ -23,6 +23,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   klingImageEditUnitsPerImage: 8,
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
+  momentsWelcomeBonusCredits: 120,
 }
 
 const CONFIG_KEY = 'live'
@@ -47,6 +48,7 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'freeStorageGB', 'storageExtraPaisePer100GB', 'aiExtraPaisePer1000',
   'klingCostPaisePerAiSecond', 'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage', 'momentsCreditDivisor',
+  'momentsWelcomeBonusCredits',
 ]
 
 export function validatePricingConfigPatch(patch: Partial<PricingConfig>): string | null {

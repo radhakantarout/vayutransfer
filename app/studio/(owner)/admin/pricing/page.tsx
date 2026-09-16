@@ -17,8 +17,9 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
   {
     title: 'Free plan',
     fields: [
-      { key: 'freeStorageGB', label: 'Free storage', hint: 'Included storage on the free plan.', suffix: 'GB' },
-      { key: 'freeAiSearchCredits', label: 'Free AI credits', hint: 'Included AI-search credits on the free plan — this is also every Moments studio\'s starting balance.', suffix: 'credits' },
+      { key: 'freeStorageGB', label: 'Free storage', hint: 'Included storage on the free plan (Studio Admin and Moments both use this).', suffix: 'GB' },
+      { key: 'freeAiSearchCredits', label: 'Free AI credits (Studio Admin)', hint: 'Included AI-search credits on a real photography studio\'s free plan. Moments signups do NOT use this — see the Moments welcome bonus below.', suffix: 'credits' },
+      { key: 'momentsWelcomeBonusCredits', label: 'Moments welcome bonus', hint: 'What every new Moments signup starts with, in Moments Credits — set explicitly at signup, independent of the Studio Admin free-tier number above.', suffix: 'Moments Credits' },
       { key: 'momentsRetentionDays', label: 'Moments retention window', hint: 'Days a free Moments gallery is kept before it becomes eligible for deletion.', suffix: 'days' },
       { key: 'momentsCreditDivisor', label: 'Moments Credits divisor', hint: 'Display-only: raw AI credits ÷ this number = the friendly "Moments Credits" shown to Moments users. Never affects billing/quota, only presentation.', suffix: 'raw credits per display credit' },
     ],

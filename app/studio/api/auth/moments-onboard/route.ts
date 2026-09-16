@@ -4,6 +4,7 @@ import { verifyGoogleSignupToken } from '@/lib/studio/googleAuth'
 import { signStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import type { Studio, StudioUser } from '@/types/studio'
 
 // Deterministic (not random) specifically for Moments personal studios —
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
 
     const studioId = momentsStudioIdFor(email)
     const userId   = existingClient?.userId ?? randomUUID()
+    const pricing = await getPricingConfig()
     const studio: Studio = {
       studioId,
       name: `${name}'s Moments`,
@@ -90,6 +92,15 @@ export async function POST(req: NextRequest) {
       billingPlanId: 'free',
       dataRetentionGraceDays: MOMENTS_RETENTION_DAYS,
       isIndividual: true,
+      // Explicit, Moments-only welcome bonus (in raw AI-search credits,
+      // computed from the live momentsWelcomeBonusCredits/momentsCreditDivisor
+      // config) — deliberately NOT the shared freeAiSearchCredits default,
+      // which is also Studio Admin's own free-tier lever and must stay
+      // independent of Moments' bonus sizing. Without this explicit set,
+      // aiCreditsQuota() would silently fall back to freeAiSearchCredits
+      // instead, under-granting every new Moments signup.
+      aiSearchCreditsTotal: pricing.momentsWelcomeBonusCredits * pricing.momentsCreditDivisor,
+      momentsWelcomeBonusGrantedAt: now,
       projectCount: 0,
       status: 'ACTIVE',
       createdAt: now,

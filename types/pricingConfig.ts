@@ -25,6 +25,15 @@ export interface PricingConfig {
   // aiSearchCredits ÷ this divisor. Never used for accounting/enforcement,
   // only presentation.
   momentsCreditDivisor: number
+  // Moments-only welcome bonus, in Moments Credits (not raw) — set
+  // explicitly on Studio.aiSearchCreditsTotal at signup
+  // (app/studio/api/auth/moments-onboard/route.ts), completely independent
+  // from freeAiSearchCredits above. Deliberately a SEPARATE field: a real
+  // photography studio's free-tier AI-search quota (freeAiSearchCredits,
+  // shared across both products) must never move just because this Moments-
+  // specific bonus changes. scripts/backfill-moments-credits-bonus.mjs
+  // reads this same field for already-onboarded studios.
+  momentsWelcomeBonusCredits: number
   // Off by default — see lib/studio/momentsRetentionSweep.ts. Every
   // already-existing Moments gallery has had zero prior warning that
   // age-based deletion could ever happen, so real enforcement (reminder
