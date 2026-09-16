@@ -1014,12 +1014,31 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
 
   const filesFailCount = useRef(0)
   const filesSkipUntil = useRef(0)
+  // Guards against the background poll clobbering an optimistic like toggle
+  // with stale pre-toggle data: a poll fetch already in flight when someone
+  // taps like can resolve AFTER the optimistic flip but BEFORE the like
+  // POST's own effect is visible server-side, overwriting likedByMe/
+  // likeCount back to the old value — then the *next* poll flips it again,
+  // producing the reported "reverts and re-applies" flicker. While a
+  // fileId's own like request is in flight, refreshFiles preserves its
+  // local likedByMe/likeCount instead of trusting the poll response; once
+  // that request resolves, polling resumes normal trust for it (still
+  // picking up other members' concurrent likes as before).
+  const pendingLikeIds = useRef<Set<string>>(new Set())
   const refreshFiles = useCallback(async () => {
     try {
       const res = await fetch(`/studio/api/moments/events/${projectId}/files`).then((r) => r.json())
       if (res.success) {
         filesFailCount.current = 0
-        setFiles(res.data)
+        setFiles((prev) => {
+          if (pendingLikeIds.current.size === 0) return res.data
+          const prevById = new Map(prev.map((f) => [f.fileId, f]))
+          return (res.data as GalleryFile[]).map((incoming) => {
+            if (!pendingLikeIds.current.has(incoming.fileId)) return incoming
+            const local = prevById.get(incoming.fileId)
+            return local ? { ...incoming, likedByMe: local.likedByMe, likeCount: local.likeCount } : incoming
+          })
+        })
         if (res.meta) setMeta(res.meta)
       } else {
         throw new Error('not success')
@@ -1240,10 +1259,24 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   }
 
   const toggleLike = async (fileId: string) => {
+    // Ignore a second tap while the first is still in flight — a fast
+    // double-tap otherwise fires two overlapping toggle requests whose
+    // responses can land out of order, flipping the like twice.
+    if (pendingLikeIds.current.has(fileId)) return
+    pendingLikeIds.current.add(fileId)
+    const nextLiked = !files.find((f) => f.fileId === fileId)?.likedByMe
     setFiles((prev) => prev.map((f) => f.fileId === fileId
-      ? { ...f, likedByMe: !f.likedByMe, likeCount: (f.likeCount ?? 0) + (f.likedByMe ? -1 : 1) }
+      ? { ...f, likedByMe: nextLiked, likeCount: (f.likeCount ?? 0) + (nextLiked ? 1 : -1) }
       : f))
-    const res = await fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/like`, { method: 'POST' }).then((r) => r.json()).catch(() => null)
+    // Sends the intended end state explicitly rather than asking the server
+    // to toggle blindly — see like/route.ts's header comment for why a pure
+    // toggle was a real race condition under concurrent/rapid requests.
+    const res = await fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/like`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ liked: nextLiked }),
+    }).then((r) => r.json()).catch(() => null)
+    pendingLikeIds.current.delete(fileId)
     if (!res?.success) refreshFiles() // revert via a fresh fetch if the toggle failed
   }
 

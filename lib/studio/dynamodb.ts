@@ -113,11 +113,13 @@ export async function studioUpdateItem(
 
 export async function studioDeleteItem(
   table: string,
-  key: Record<string, unknown>
+  key: Record<string, unknown>,
+  conditionExpression?: string
 ): Promise<void> {
   await client.send(new DeleteItemCommand({
     TableName: table,
     Key: marshall(key),
+    ...(conditionExpression ? { ConditionExpression: conditionExpression } : {}),
   }))
 }
 
