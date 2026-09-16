@@ -14,6 +14,7 @@ import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
+  DRONE_SHOT_STYLES, DRONE_SHOT_META,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
@@ -98,8 +99,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN', message: 'The gallery owner hasn\'t turned on Reels for members yet.' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number
+    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot } = await req.json().catch(() => ({})) as {
+      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
     }
     // Never trust a client-supplied resolution/duration blindly — fall back
     // to the defaults on anything outside the allowed sets rather than
@@ -110,6 +111,11 @@ export async function POST(
     const durationSec = (REEL_CLIP_DURATION_OPTIONS as readonly number[]).includes(requestedDurationSec ?? -1)
       ? (requestedDurationSec as number)
       : DEFAULT_AI_CLIP_DURATION_SEC
+    // Drone Mode is opt-in — undefined/invalid means off, never a silent
+    // fallback to some default drone shot the user never asked for.
+    const droneFragment = requestedDroneShot && (DRONE_SHOT_STYLES as readonly string[]).includes(requestedDroneShot)
+      ? DRONE_SHOT_META[requestedDroneShot as (typeof DRONE_SHOT_STYLES)[number]].promptFragment
+      : null
     if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS) {
       return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: 'Select at least 1 photo.' }, { status: 400 })
     }
@@ -246,9 +252,8 @@ export async function POST(
         jobId, reelId, studioId, projectId,
         photos, durationSec, resolution,
         style: reelStyle,
-        stylePromptFragment: sanitizedPrompt
-          ? `${sanitizedPrompt}, ${REEL_STYLE_META[reelStyle].promptFragment}`
-          : REEL_STYLE_META[reelStyle].promptFragment,
+        stylePromptFragment: [sanitizedPrompt || null, REEL_STYLE_META[reelStyle].promptFragment, droneFragment]
+          .filter(Boolean).join(', '),
         targetDimensions: REEL_ASPECT_RATIO_DIMENSIONS[template.aspectRatio],
         r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
         r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
