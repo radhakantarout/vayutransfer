@@ -392,9 +392,9 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <textarea
                 value={customPrompt}
                 onChange={(e) => setCustomPrompt(e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
-                placeholder="e.g. Slow-motion walk together at sunset…"
-                rows={3}
-                className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-none transition-colors"
+                placeholder="e.g. Slow-motion walk together at sunset… or a full shot description — candid banter, playful expressions, warm golden-hour light"
+                rows={6}
+                className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
               />
               <p className="text-[10px] text-muted text-right">{customPrompt.length}/{MAX_CUSTOM_PROMPT_LENGTH}</p>
             </div>
