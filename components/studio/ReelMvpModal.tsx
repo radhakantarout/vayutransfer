@@ -479,6 +479,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Quality · Length</span><span className="font-semibold text-text-primary">{resolution} · {durationSec}s/clip</span></div>
+              <div className="flex justify-between"><span className="text-muted">Total reel length</span><span className="font-semibold text-text-primary">{photoIds.length} × {durationSec}s = {photoIds.length * durationSec}s</span></div>
               {droneMode && (
                 <div className="flex justify-between"><span className="text-muted">Drone shot</span><span className="font-semibold text-text-primary">{DRONE_SHOT_META[droneShot].icon} {DRONE_SHOT_META[droneShot].label}</span></div>
               )}
