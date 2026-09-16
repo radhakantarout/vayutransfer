@@ -6,6 +6,7 @@ import {
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
   REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_DRONE_SHOT, type DroneShotStyle,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
@@ -30,6 +31,11 @@ function aspectClass(ratio: string) {
 
 function styleGradient(style: ReelStyle) {
   const [a, b, c] = REEL_STYLE_META[style].colors
+  return `linear-gradient(135deg, ${a}, ${b} 55%, ${c})`
+}
+
+function droneGradient(shot: DroneShotStyle) {
+  const [a, b, c] = DRONE_SHOT_META[shot].colors
   return `linear-gradient(135deg, ${a}, ${b} 55%, ${c})`
 }
 
@@ -105,6 +111,44 @@ function StyleCard({ style, selected, onClick, reducedMotion }: { style: ReelSty
   )
 }
 
+// Same premium "trading card" treatment as StyleCard — sky-toned gradients
+// instead of mood colors, no energy pips (not a meaningful concept for a
+// camera-motion choice).
+function DroneCard({ shot, selected, onClick, reducedMotion }: { shot: DroneShotStyle; selected: boolean; onClick: () => void; reducedMotion: boolean }) {
+  const meta = DRONE_SHOT_META[shot]
+  return (
+    <button
+      onClick={onClick}
+      style={{ background: droneGradient(shot) }}
+      className={`relative overflow-hidden rounded-2xl h-24 text-left p-3 flex flex-col justify-end
+        transition-transform duration-200 active:scale-95 hover:-translate-y-1 hover:scale-[1.02]
+        ${!reducedMotion ? 'animate-reel-float' : ''}
+        ${selected ? 'animate-reel-glow scale-[1.03]' : 'shadow-lg shadow-black/20'}`}
+    >
+      <span className="absolute -right-3 -top-3 text-5xl opacity-20 rotate-12 select-none">{meta.icon}</span>
+
+      {!reducedMotion && (
+        <span className="absolute inset-0 overflow-hidden pointer-events-none">
+          <span className="absolute left-0 top-0 w-1/3 h-[250%] bg-white/25 blur-md animate-reel-shimmer" />
+        </span>
+      )}
+
+      <span className="relative flex items-center gap-1 text-sm font-extrabold text-white drop-shadow-md">
+        <span>{meta.icon}</span>{meta.label}
+      </span>
+      <span className="relative text-[10px] text-white/85 leading-tight">{meta.description}</span>
+
+      {selected && (
+        <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white flex items-center justify-center shadow-lg animate-reel-pop-in">
+          <svg className="w-3.5 h-3.5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+        </span>
+      )}
+    </button>
+  )
+}
+
 // Shared by Client Gallery, Guest Selfie Search, and VayuStudios Moments —
 // only the auth context and API paths differ (design doc: "components must
 // work in both surfaces, only authorization/data source should differ").
@@ -146,6 +190,9 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
   const [resolution, setResolution] = useState<ReelResolution>(DEFAULT_REEL_RESOLUTION as ReelResolution)
   const [durationSec, setDurationSec] = useState<number>(DEFAULT_AI_CLIP_DURATION_SEC)
+  // Drone Mode — off by default (opt-in, recommended for outdoor photos).
+  const [droneMode, setDroneMode] = useState(false)
+  const [droneShot, setDroneShot] = useState<DroneShotStyle>(DEFAULT_DRONE_SHOT)
   const [customPrompt, setCustomPrompt] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -226,9 +273,10 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     setStage('generating')
     setError(null)
     const trimmedPrompt = customPrompt.trim() || undefined
+    const droneShotField = droneMode ? droneShot : undefined
     const body = props.source === 'guest'
-      ? { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt } // client + moments share this shape
+      ? { photoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+      : { photoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -294,6 +342,39 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 <StyleCard key={s} style={s} selected={style === s} onClick={() => setStyle(s)} reducedMotion={reducedMotion} />
               ))}
             </div>
+
+            <label className="flex items-center justify-between gap-3 cursor-pointer select-none bg-bg border border-border rounded-2xl px-4 py-3">
+              <span className="flex items-center gap-2.5 min-w-0">
+                <span className={`text-xl flex-shrink-0 ${droneMode && !reducedMotion ? 'animate-bounce' : ''}`}>🚁</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold text-text-primary">Drone Mode</span>
+                  <span className="block text-[11px] text-muted leading-tight">Sweeping aerial motion — best for outdoor shots: hills, beaches, open spaces</span>
+                </span>
+              </span>
+              <button
+                type="button" role="switch" aria-checked={droneMode}
+                onClick={() => setDroneMode((v) => !v)}
+                className={`relative flex-shrink-0 rounded-full transition-colors ${droneMode ? 'bg-sky-500' : 'bg-border'}`}
+                style={{ height: '22px', width: '38px' }}
+              >
+                <span className={`absolute top-0.5 left-0.5 rounded-full bg-white shadow transition-transform ${droneMode ? 'translate-x-4' : 'translate-x-0'}`} style={{ height: '18px', width: '18px' }} />
+              </button>
+            </label>
+
+            {droneMode && (
+              <div className="space-y-2.5">
+                <p className="text-[11px] font-bold text-sky-500 flex items-center gap-1.5">
+                  <span className={reducedMotion ? '' : 'animate-spin inline-block'}>🌀</span>
+                  Taking it to the skies — pick a shot!
+                </p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {DRONE_SHOT_STYLES.map((d) => (
+                    <DroneCard key={d} shot={d} selected={droneShot === d} onClick={() => setDroneShot(d)} reducedMotion={reducedMotion} />
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button onClick={() => setStage('template')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
               <button onClick={() => setStage('prompt')} className={primaryBtnClass} style={primaryBtnStyle}>Next →</button>
@@ -385,6 +466,9 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Quality · Length</span><span className="font-semibold text-text-primary">{resolution} · {durationSec}s/clip</span></div>
+              {droneMode && (
+                <div className="flex justify-between"><span className="text-muted">Drone shot</span><span className="font-semibold text-text-primary">{DRONE_SHOT_META[droneShot].icon} {DRONE_SHOT_META[droneShot].label}</span></div>
+              )}
               {customPrompt && (
                 <div className="flex justify-between gap-3"><span className="text-muted flex-shrink-0">Your note</span><span className="font-semibold text-text-primary text-right truncate">"{customPrompt}"</span></div>
               )}

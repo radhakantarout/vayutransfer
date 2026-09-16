@@ -103,6 +103,43 @@ export const REEL_STYLE_META: Record<(typeof REEL_STYLES)[number], {
   },
 }
 
+// Drone Mode — an OPTIONAL layer on top of the mood/style chosen above, off
+// by default (opt-in, recommended for outdoor photos: hills, beaches, open
+// landscapes — the aerial framing reads oddly for indoor/close-up shots).
+// Purely a prompt-engineering addition: Kling has no literal "drone" camera
+// mode, this just appends real aerial-cinematography language onto the
+// existing stylePromptFragment sent to the Lambda — zero API/Lambda changes
+// needed, same mechanism as the mood styles above.
+export const DRONE_SHOT_STYLES = ['DRONE_RISE', 'DRONE_ORBIT', 'DRONE_SWEEP', 'DRONE_REVEAL'] as const
+export type DroneShotStyle = (typeof DRONE_SHOT_STYLES)[number]
+export const DEFAULT_DRONE_SHOT: DroneShotStyle = 'DRONE_RISE'
+
+export const DRONE_SHOT_META: Record<DroneShotStyle, {
+  label: string; description: string; colors: [string, string, string]; icon: string
+  promptFragment: string
+}> = {
+  DRONE_RISE: {
+    label: 'Slow Rise', description: 'Gentle upward lift revealing the view',
+    colors: ['#38bdf8', '#0ea5e9', '#075985'], icon: '🚁',
+    promptFragment: 'aerial drone shot, slow smooth vertical rise from ground level, cinematic reveal of the surrounding landscape',
+  },
+  DRONE_ORBIT: {
+    label: '360° Orbit', description: 'Smooth circle around the subject',
+    colors: ['#a5f3fc', '#22d3ee', '#0e7490'], icon: '🌀',
+    promptFragment: 'aerial drone shot, smooth 360-degree orbit circling the subject, cinematic continuous rotation',
+  },
+  DRONE_SWEEP: {
+    label: 'Sweeping Pan', description: 'Wide left-to-right aerial sweep',
+    colors: ['#fef08a', '#fb923c', '#0369a1'], icon: '🌄',
+    promptFragment: 'aerial drone shot, smooth wide sweeping pan moving left to right across the landscape, cinematic aerial motion',
+  },
+  DRONE_REVEAL: {
+    label: 'Close to Wide', description: 'Starts on the face, pulls back to nature',
+    colors: ['#bae6fd', '#38bdf8', '#1e3a8a'], icon: '🏞️',
+    promptFragment: 'aerial drone shot, starting close on the subject\'s face then smoothly pulling back and rising to reveal the wide natural surroundings, cinematic reveal shot',
+  },
+}
+
 // Optional free-text creative direction, appended to the auto-generated
 // style prompt before it reaches Kling. Capped short — this augments the
 // preservation/style instructions, it isn't meant to replace them.
