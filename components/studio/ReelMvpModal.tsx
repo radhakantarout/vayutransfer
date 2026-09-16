@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC, REEL_CLIP_DURATION_OPTIONS,
+  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC, REEL_CLIP_DURATION_OPTIONS, MAX_REEL_TOTAL_DURATION_SEC,
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
   REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
@@ -446,18 +446,31 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="space-y-1.5">
                 <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
                 <div className="flex gap-1.5">
-                  {REEL_CLIP_DURATION_OPTIONS.map((d) => (
-                    <button
-                      key={d}
-                      onClick={() => setDurationSec(d)}
-                      className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
-                        durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
-                      }`}
-                    >
-                      {d}s
-                    </button>
-                  ))}
+                  {REEL_CLIP_DURATION_OPTIONS.map((d) => {
+                    // Hard total-duration ceiling (constants/videoProviders.ts)
+                    // enforced here too, not just server-side — a combination
+                    // that would exceed it should be unselectable, not
+                    // rejected only after tapping Generate.
+                    const disabled = photoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => !disabled && setDurationSec(d)}
+                        disabled={disabled}
+                        className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                          disabled
+                            ? 'border-border text-muted/40 cursor-not-allowed'
+                            : durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                        }`}
+                      >
+                        {d}s
+                      </button>
+                    )
+                  })}
                 </div>
+                {photoIds.length * durationSec >= MAX_REEL_TOTAL_DURATION_SEC - 2 && (
+                  <p className="text-[10px] text-muted">Max total reel length is {MAX_REEL_TOTAL_DURATION_SEC}s — some lengths are greyed out at this photo count.</p>
+                )}
               </div>
             </div>
 

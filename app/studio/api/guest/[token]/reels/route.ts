@@ -6,7 +6,7 @@ import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from '@/lib/st
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
 import { deductReelCredits, refundReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META,
@@ -64,6 +64,12 @@ export async function POST(
     }
     if (photoIds.length > MAX_REEL_PHOTOS) {
       return NextResponse.json({ success: false, error: 'TOO_MANY_PHOTOS', message: `You can select up to ${MAX_REEL_PHOTOS} photos per reel.` }, { status: 400 })
+    }
+    if (photoIds.length * durationSec > MAX_REEL_TOTAL_DURATION_SEC) {
+      return NextResponse.json({
+        success: false, error: 'REEL_TOO_LONG',
+        message: `This reel would be ${photoIds.length * durationSec}s long — the max is ${MAX_REEL_TOTAL_DURATION_SEC}s. Pick fewer photos or a shorter clip length.`,
+      }, { status: 400 })
     }
     if (!searchSessionId) {
       return NextResponse.json({ success: false, error: 'MISSING_SEARCH_SESSION' }, { status: 400 })
