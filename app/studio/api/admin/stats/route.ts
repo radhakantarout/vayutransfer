@@ -6,6 +6,7 @@ import {
   aiCreditsQuota, aiCreditsUsed, isOverAiQuota, aiUsagePct, syncBillingCycle,
   planStorageBytes, planAiCredits,
 } from '@/lib/studio/quota'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import { DEFAULT_RETENTION_GRACE_DAYS, GB } from '@/constants/studioPricing'
 import type { Studio } from '@/types/studio'
 
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
     // forward + resets AI credits if the daily cron hasn't run yet) so this
     // route's numbers are never stale even if the cron is delayed.
     studio = await syncBillingCycle(studio)
+    const pricing = await getPricingConfig()
 
     return NextResponse.json({
       success: true,
@@ -38,18 +40,20 @@ export async function GET(req: NextRequest) {
           billingPlanId: studio.billingPlanId ?? 'free',
           // Goes through the same live-constant-for-Free logic as every
           // other quota number (see lib/studio/quota.ts) — never a stale
-          // per-studio snapshot for a Free studio.
-          planStorageGB: planStorageBytes(studio) / GB,
-          planAiCreditsPerMonth: planAiCredits(studio),
+          // per-studio snapshot for a Free studio. Overrides passed from the
+          // live, owner-editable PricingConfig rather than the hardcoded
+          // constant, so a pricing-page edit is reflected immediately.
+          planStorageGB: planStorageBytes(studio, pricing.freeStorageGB) / GB,
+          planAiCreditsPerMonth: planAiCredits(studio, pricing.freeAiSearchCredits),
           billingCycle: studio.billingCycle ?? 'monthly',
           billingPeriodStart: studio.billingPeriodStart ?? null,
           billingPeriodEnd: studio.billingPeriodEnd ?? null,
           planRenewsAt: studio.planRenewsAt ?? null,
 
           storageUsedBytes:  currentStorageBytes(studio),
-          storageGrantBytes: activeStorageGrantBytes(studio),
-          storageOverQuota:  isOverStorageQuota(studio),
-          storageUsagePct:   storageUsagePct(studio),
+          storageGrantBytes: activeStorageGrantBytes(studio, pricing.freeStorageGB),
+          storageOverQuota:  isOverStorageQuota(studio, pricing.freeStorageGB),
+          storageUsagePct:   storageUsagePct(studio, pricing.freeStorageGB),
           storageOverageStartedAt: studio.storageOverageStartedAt ?? null,
           dataRetentionGraceDays: studio.dataRetentionGraceDays ?? DEFAULT_RETENTION_GRACE_DAYS,
 
@@ -57,9 +61,9 @@ export async function GET(req: NextRequest) {
           // decremented on delete, so this always reflects what was
           // actually billed by Rekognition, not just what still exists.
           aiSearchCreditsUsed: aiCreditsUsed(studio),
-          aiSearchCreditsTotal: aiCreditsQuota(studio),
-          aiSearchOverQuota: isOverAiQuota(studio),
-          aiSearchUsagePct: aiUsagePct(studio),
+          aiSearchCreditsTotal: aiCreditsQuota(studio, pricing.freeAiSearchCredits),
+          aiSearchOverQuota: isOverAiQuota(studio, pricing.freeAiSearchCredits),
+          aiSearchUsagePct: aiUsagePct(studio, pricing.freeAiSearchCredits),
         },
       },
     })

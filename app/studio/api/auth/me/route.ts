@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { aiCreditsUsed, aiCreditsQuota, aiUsagePct, currentStorageBytes, activeStorageGrantBytes, storageUsagePct } from '@/lib/studio/quota'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import type { StudioUser, Studio } from '@/types/studio'
 
 export async function GET(req: NextRequest) {
@@ -11,9 +12,10 @@ export async function GET(req: NextRequest) {
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
   )
 
-  const [user, studio] = await Promise.all([
+  const [user, studio, pricing] = await Promise.all([
     studioGetItem<StudioUser>(TABLES.users, { userId: auth.userId }).catch(() => null),
     auth.studioId ? studioGetItem<Studio>(TABLES.studios, { studioId: auth.studioId }).catch(() => null) : Promise.resolve(null),
+    getPricingConfig(),
   ])
 
   return NextResponse.json(
@@ -28,15 +30,20 @@ export async function GET(req: NextRequest) {
         phone:    user?.phone ?? '',
         // Only rendered today by Moments' Profile (Plan/Usage section) —
         // harmless to compute for a real studio too, just unused there
-        // (Settings → Billing has its own, richer usage view).
+        // (Settings → Billing has its own, richer usage view). Passes the
+        // live PricingConfig's free-tier defaults through explicitly — a
+        // free-plan studio with no stored aiSearchCreditsTotal must reflect
+        // an admin's pricing-page edit immediately, not the old hardcoded
+        // constant (this was a real bug: editing freeAiSearchCredits in
+        // /studio/admin/pricing had zero visible effect here).
         isIndividual:   studio?.isIndividual ?? false,
         billingPlanId:  studio?.billingPlanId ?? 'free',
         aiCreditsUsed:  studio ? aiCreditsUsed(studio) : 0,
-        aiCreditsQuota: studio ? aiCreditsQuota(studio) : 0,
-        aiUsagePct:     studio ? aiUsagePct(studio) : 0,
+        aiCreditsQuota: studio ? aiCreditsQuota(studio, pricing.freeAiSearchCredits) : 0,
+        aiUsagePct:     studio ? aiUsagePct(studio, pricing.freeAiSearchCredits) : 0,
         storageUsedBytes:  studio ? currentStorageBytes(studio) : 0,
-        storageGrantBytes: studio ? activeStorageGrantBytes(studio) : 0,
-        storageUsagePct:   studio ? storageUsagePct(studio) : 0,
+        storageGrantBytes: studio ? activeStorageGrantBytes(studio, pricing.freeStorageGB) : 0,
+        storageUsagePct:   studio ? storageUsagePct(studio, pricing.freeStorageGB) : 0,
       },
     },
     { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }

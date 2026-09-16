@@ -17,9 +17,10 @@ import type { Studio } from '@/types/studio'
 // silently not apply to any studio that already had the old value frozen
 // in, and would need a manual data backfill every time — this way it just
 // applies immediately, everywhere, the moment the constant changes.
-export function planStorageBytes(studio: Studio): number {
-  if ((studio.billingPlanId ?? 'free') === 'free') return FREE_STORAGE_GB * GB
-  return (studio.planStorageGB ?? FREE_STORAGE_GB) * GB
+export function planStorageBytes(studio: Studio, freeStorageGBOverride?: number): number {
+  const freeDefault = freeStorageGBOverride ?? FREE_STORAGE_GB
+  if ((studio.billingPlanId ?? 'free') === 'free') return freeDefault * GB
+  return (studio.planStorageGB ?? freeDefault) * GB
 }
 
 // `freeAiSearchCreditsOverride` lets a caller that already fetched the live,
@@ -36,12 +37,12 @@ export function planAiCredits(studio: Studio, freeAiSearchCreditsOverride?: numb
 // unexpired top-up grants. Storage top-ups purchased under the new pricing
 // model are permanent (expiresAt: null) — only legacy pre-migration grants
 // carry a real expiry, honored here for backward compatibility.
-export function activeStorageGrantBytes(studio: Studio): number {
+export function activeStorageGrantBytes(studio: Studio, freeStorageGBOverride?: number): number {
   const now = Date.now()
   const topupBytes = (studio.storageGrants ?? [])
     .filter((g) => g.source === 'topup' && (!g.expiresAt || new Date(g.expiresAt).getTime() > now))
     .reduce((sum, g) => sum + g.bytes, 0)
-  return planStorageBytes(studio) + topupBytes
+  return planStorageBytes(studio, freeStorageGBOverride) + topupBytes
 }
 
 // billableStorageBytes only ever decrements via best-effort ADD with no
@@ -52,12 +53,12 @@ export function currentStorageBytes(studio: Studio): number {
   return Math.max(0, studio.billableStorageBytes ?? 0)
 }
 
-export function isOverStorageQuota(studio: Studio): boolean {
-  return currentStorageBytes(studio) > activeStorageGrantBytes(studio)
+export function isOverStorageQuota(studio: Studio, freeStorageGBOverride?: number): boolean {
+  return currentStorageBytes(studio) > activeStorageGrantBytes(studio, freeStorageGBOverride)
 }
 
-export function storageUsagePct(studio: Studio): number {
-  const grant = activeStorageGrantBytes(studio)
+export function storageUsagePct(studio: Studio, freeStorageGBOverride?: number): number {
+  const grant = activeStorageGrantBytes(studio, freeStorageGBOverride)
   return grant > 0 ? Math.round((currentStorageBytes(studio) / grant) * 100) : 0
 }
 
@@ -66,10 +67,10 @@ export function storageUsagePct(studio: Studio): number {
 // known until upload-complete, so this can't be a hard reservation, but it
 // stops the common case (already full, about to add more) before the studio
 // wastes time picking files.
-export function checkStorageAvailable(studio: Studio, extraBytes = 0): { ok: boolean; usedBytes: number; quotaBytes: number; usedPct: number } {
+export function checkStorageAvailable(studio: Studio, extraBytes = 0, freeStorageGBOverride?: number): { ok: boolean; usedBytes: number; quotaBytes: number; usedPct: number } {
   const usedBytes = currentStorageBytes(studio)
-  const quotaBytes = activeStorageGrantBytes(studio)
-  return { ok: usedBytes + extraBytes <= quotaBytes, usedBytes, quotaBytes, usedPct: storageUsagePct(studio) }
+  const quotaBytes = activeStorageGrantBytes(studio, freeStorageGBOverride)
+  return { ok: usedBytes + extraBytes <= quotaBytes, usedBytes, quotaBytes, usedPct: storageUsagePct(studio, freeStorageGBOverride) }
 }
 
 // This cycle's AI-search credit ceiling — plan base + any top-ups bought
@@ -99,8 +100,8 @@ export function aiCreditsUsed(studio: Studio): number {
   return studio.aiSearchCreditsUsed ?? 0
 }
 
-export function isOverAiQuota(studio: Studio): boolean {
-  return aiCreditsUsed(studio) >= aiCreditsQuota(studio)
+export function isOverAiQuota(studio: Studio, freeAiSearchCreditsOverride?: number): boolean {
+  return aiCreditsUsed(studio) >= aiCreditsQuota(studio, freeAiSearchCreditsOverride)
 }
 
 export function aiUsagePct(studio: Studio, freeAiSearchCreditsOverride?: number): number {

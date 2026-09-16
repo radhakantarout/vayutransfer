@@ -3,6 +3,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { formatTxnLabel } from '@/lib/studio/receiptLabel'
 import { currentStorageBytes, activeStorageGrantBytes, aiCreditsUsed, aiCreditsQuota } from '@/lib/studio/quota'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import { formatPaiseAsRupees } from '@/constants/studioPricing'
 import type { Studio, StudioTransaction } from '@/types/studio'
 
@@ -55,6 +56,7 @@ export async function GET(req: NextRequest) {
       }))
 
     if (req.nextUrl.searchParams.get('format') === 'csv') {
+      const pricing = await getPricingConfig()
       const lines = [
         ['Date', 'Type', 'Description', 'Amount'].map(csvCell).join(','),
         ...data.map((t) => [
@@ -65,8 +67,8 @@ export async function GET(req: NextRequest) {
         ].map(csvCell).join(',')),
         '',
         `Exported,${new Date().toLocaleString('en-IN')}`,
-        `Current storage usage,${(currentStorageBytes(studio) / (1024 ** 3)).toFixed(2)} GB of ${(activeStorageGrantBytes(studio) / (1024 ** 3)).toFixed(2)} GB`,
-        `Current AI-credit usage,${aiCreditsUsed(studio)} of ${aiCreditsQuota(studio)}`,
+        `Current storage usage,${(currentStorageBytes(studio) / (1024 ** 3)).toFixed(2)} GB of ${(activeStorageGrantBytes(studio, pricing.freeStorageGB) / (1024 ** 3)).toFixed(2)} GB`,
+        `Current AI-credit usage,${aiCreditsUsed(studio)} of ${aiCreditsQuota(studio, pricing.freeAiSearchCredits)}`,
       ]
       return new NextResponse(lines.join('\r\n'), {
         headers: {
