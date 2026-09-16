@@ -141,6 +141,12 @@ export interface Studio {
   // eligible for Studio Admin capabilities even though it's the same Studio
   // type — its owning StudioUser row has role CLIENT, never ADMIN/OWNER.
   isIndividual?: boolean
+  // Set once by scripts/backfill-moments-credits-bonus.mjs — the one-time
+  // 120 Moments Credit (6,000 raw AI credit) welcome bonus every
+  // already-onboarded Moments studio was granted when the new pricing
+  // platform shipped. Guards against the backfill script ever double-
+  // applying if re-run; never set by any runtime code path.
+  momentsWelcomeBonusGrantedAt?: string
   projectCount: number
   status: StudioStatus
   createdAt: string

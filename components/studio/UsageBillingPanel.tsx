@@ -111,8 +111,13 @@ export default function UsageBillingPanel({
       </div>
 
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h3 className="text-xs font-bold text-muted uppercase tracking-wider">Billing history</h3>
+          {!!history?.length && (
+            <a href="/studio/api/billing/history?format=csv" className="text-[11px] font-semibold text-accent hover:underline">
+              Export CSV
+            </a>
+          )}
         </div>
         <div className="divide-y divide-border">
           {historyError && <p className="px-4 py-6 text-sm text-danger text-center">Could not load billing history.</p>}

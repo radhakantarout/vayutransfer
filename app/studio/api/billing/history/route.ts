@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { formatTxnLabel } from '@/lib/studio/receiptLabel'
+import { currentStorageBytes, activeStorageGrantBytes, aiCreditsUsed, aiCreditsQuota } from '@/lib/studio/quota'
+import { formatPaiseAsRupees } from '@/constants/studioPricing'
 import type { Studio, StudioTransaction } from '@/types/studio'
+
+// CSV escaping — wrap in quotes and double any embedded quotes whenever a
+// field could contain a comma/quote/newline (transaction labels can, e.g.
+// `"461 AI credits (₹1,234.00)"`).
+function csvCell(value: string | number): string {
+  const s = String(value)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
 
 // Lists a studio's successful billing transactions, newest first, for the
 // Settings > Billing "Billing history" list, and (via the shared
@@ -43,6 +53,28 @@ export async function GET(req: NextRequest) {
         amountPaise: t.amountPaise,
         createdAt: t.createdAt,
       }))
+
+    if (req.nextUrl.searchParams.get('format') === 'csv') {
+      const lines = [
+        ['Date', 'Type', 'Description', 'Amount'].map(csvCell).join(','),
+        ...data.map((t) => [
+          new Date(t.createdAt).toLocaleString('en-IN'),
+          t.type,
+          t.label,
+          formatPaiseAsRupees(t.amountPaise),
+        ].map(csvCell).join(',')),
+        '',
+        `Exported,${new Date().toLocaleString('en-IN')}`,
+        `Current storage usage,${(currentStorageBytes(studio) / (1024 ** 3)).toFixed(2)} GB of ${(activeStorageGrantBytes(studio) / (1024 ** 3)).toFixed(2)} GB`,
+        `Current AI-credit usage,${aiCreditsUsed(studio)} of ${aiCreditsQuota(studio)}`,
+      ]
+      return new NextResponse(lines.join('\r\n'), {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="VayuStudios-Billing-History-${new Date().toISOString().slice(0, 10)}.csv"`,
+        },
+      })
+    }
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
