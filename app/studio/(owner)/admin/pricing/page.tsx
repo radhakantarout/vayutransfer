@@ -34,7 +34,9 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
   {
     title: 'AI Reel generation (Kling)',
     fields: [
-      { key: 'klingCostPaisePerAiSecond', label: 'Kling raw cost', hint: 'What Kling actually charges per AI-video-second at 1080p, no audio.', suffix: 'paise/sec' },
+      { key: 'klingCostPaisePerUnit', label: 'Kling cost per unit', hint: 'Real Kling billing rate — from the current unit-pack deal (e.g. $0.14/unit).', suffix: 'paise/unit' },
+      { key: 'klingUnitsPerSec720', label: 'Units/sec — 720p', hint: 'Kling units consumed per second of output at 720p (the default resolution).', step: 0.1 },
+      { key: 'klingUnitsPerSec1080', label: 'Units/sec — 1080p', hint: 'Kling units consumed per second of output at 1080p (user-selectable upgrade).', step: 0.1 },
       { key: 'fixedOverheadPaisePerReel', label: 'Fixed overhead per reel', hint: 'Rekognition analysis + Lambda compute + R2 storage, per reel.', suffix: 'paise' },
       { key: 'targetMargin', label: 'Target margin', hint: 'Gross margin applied on top of raw cost to get the sell price.', step: 0.01 },
       { key: 'minMarginFloor', label: 'Minimum margin floor', hint: 'Hard floor — discounts/packs must never price below this.', step: 0.01 },

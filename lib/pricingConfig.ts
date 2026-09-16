@@ -13,7 +13,9 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   freeAiSearchCredits: 200,
   storageExtraPaisePer100GB: 30000, // ₹300 / 100GB
   aiExtraPaisePer1000: 30000,       // ₹300 / 1,000 AI-search credits
-  klingCostPaisePerAiSecond: 970,   // ~$0.10/s, 1080p, no audio — PROVISIONAL
+  klingCostPaisePerUnit: 1358,      // $0.14/unit @ ~₹97/$1 — real deal (5,000 units/$700)
+  klingUnitsPerSec720: 0.8,
+  klingUnitsPerSec1080: 1.0,
   fixedOverheadPaisePerReel: 400,
   targetMargin: 0.55,
   minMarginFloor: 0.35,
@@ -46,7 +48,8 @@ export async function getPricingConfig(): Promise<PricingConfig> {
 
 const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'freeStorageGB', 'storageExtraPaisePer100GB', 'aiExtraPaisePer1000',
-  'klingCostPaisePerAiSecond', 'creditValuePaise', 'momentsRetentionDays',
+  'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
+  'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage', 'momentsCreditDivisor',
   'momentsWelcomeBonusCredits',
 ]

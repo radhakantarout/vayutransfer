@@ -9,7 +9,13 @@ export interface PricingConfig {
   freeAiSearchCredits: number
   storageExtraPaisePer100GB: number
   aiExtraPaisePer1000: number
-  klingCostPaisePerAiSecond: number
+  // Real Kling billing is unit-based (confirmed against an actual invoice:
+  // $0.14/unit on the current 5,000-unit deal), with per-second unit
+  // consumption varying by output resolution — replaces the old flat
+  // klingCostPaisePerAiSecond guess, which didn't distinguish resolution.
+  klingCostPaisePerUnit: number
+  klingUnitsPerSec720: number
+  klingUnitsPerSec1080: number
   fixedOverheadPaisePerReel: number
   targetMargin: number
   minMarginFloor: number

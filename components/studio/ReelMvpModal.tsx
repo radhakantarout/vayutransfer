@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC,
+  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC, REEL_CLIP_DURATION_OPTIONS,
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
+  REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
-import type { ReelStyle } from '@/types/studio'
+import type { ReelStyle, ReelResolution } from '@/types/studio'
 import type { PricingConfig } from '@/types/pricingConfig'
 
 // "Fast minimal demo" scope (AI Reel Generator design doc, Phase 1) with a
@@ -143,6 +144,8 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [stage, setStage] = useState<Stage>('template')
   const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
+  const [resolution, setResolution] = useState<ReelResolution>(DEFAULT_REEL_RESOLUTION as ReelResolution)
+  const [durationSec, setDurationSec] = useState<number>(DEFAULT_AI_CLIP_DURATION_SEC)
   const [customPrompt, setCustomPrompt] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -166,7 +169,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   }, [])
 
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
-  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(photoIds.length, DEFAULT_AI_CLIP_DURATION_SEC, pricing ?? undefined)
+  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(photoIds.length, durationSec, resolution, pricing ?? undefined)
   // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
   // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
   // component was originally built for — same real ₹ cost, wildly
@@ -224,8 +227,8 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     setError(null)
     const trimmedPrompt = customPrompt.trim() || undefined
     const body = props.source === 'guest'
-      ? { photoIds, templateId, style, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, customPrompt: trimmedPrompt } // client + moments share this shape
+      ? { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+      : { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -341,10 +344,47 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="text-4xl">🎬</div>
               <h2 className="text-lg font-bold text-text-primary">Ready to create your reel</h2>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                <div className="flex gap-1.5">
+                  {REEL_RESOLUTIONS.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setResolution(r)}
+                      className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                        resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
+                <div className="flex gap-1.5">
+                  {REEL_CLIP_DURATION_OPTIONS.map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setDurationSec(d)}
+                      className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                        durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                      }`}
+                    >
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             <div className="bg-bg border border-border rounded-2xl px-4 py-3 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-muted">Photos</span><span className="font-semibold text-text-primary">{photoIds.length}</span></div>
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
+              <div className="flex justify-between"><span className="text-muted">Quality · Length</span><span className="font-semibold text-text-primary">{resolution} · {durationSec}s/clip</span></div>
               {customPrompt && (
                 <div className="flex justify-between gap-3"><span className="text-muted flex-shrink-0">Your note</span><span className="font-semibold text-text-primary text-right truncate">"{customPrompt}"</span></div>
               )}

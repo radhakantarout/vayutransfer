@@ -144,7 +144,7 @@ export function getReelTemplate(templateId: string): ReelTemplate | undefined {
 }
 
 export const REEL_RESOLUTIONS = ['720p', '1080p'] as const
-export const DEFAULT_REEL_RESOLUTION = '1080p'
+export const DEFAULT_REEL_RESOLUTION = '720p'
 
 export const REEL_DURATIONS = [15, 30, 45, 60] as const
 export const DEFAULT_REEL_DURATION_SEC = 30
@@ -165,6 +165,10 @@ export const DEFAULT_HERO_CLIP_RATIO = 0.5
 export const MIN_HERO_CLIPS = 3
 export const MAX_HERO_CLIPS = 6
 export const DEFAULT_AI_CLIP_DURATION_SEC = 3
+// User-selectable per-clip durations — real Kling billing scales linearly
+// with seconds, so the cost quote already recomputes correctly for any of
+// these via computeReelCost, no separate pricing table needed.
+export const REEL_CLIP_DURATION_OPTIONS = [3, 5, 8] as const
 
 export function estimateHeroClipCount(photoCount: number): number {
   const raw = Math.round(photoCount * DEFAULT_HERO_CLIP_RATIO)
@@ -174,7 +178,13 @@ export function estimateHeroClipCount(photoCount: number): number {
 // ── Dynamic per-video pricing (design doc §7) ───────────────────────────
 // Forex/cost-basis assumption aligned to constants/studioPricing.ts's own
 // documented rate (~₹97/$1, July 2026) for consistency across the codebase.
-export const KLING_COST_PAISE_PER_AI_SECOND = 970 // ~$0.10/s AI-video-second, no audio, 1080p — PROVISIONAL, see file header
+// Real Kling billing is unit-based (confirmed against a real invoice:
+// $0.14/unit on the current 5,000-unit deal), consuming units/sec at a rate
+// that varies by output resolution — replaces the old flat
+// KLING_COST_PAISE_PER_AI_SECOND guess, which didn't distinguish resolution.
+export const KLING_COST_PAISE_PER_UNIT = 1358 // $0.14/unit @ ~₹97/$1
+export const KLING_UNITS_PER_SEC_720 = 0.8
+export const KLING_UNITS_PER_SEC_1080 = 1.0
 export const FIXED_OVERHEAD_PAISE_PER_REEL = 400  // Rekognition analysis + Lambda compute + R2 storage, ~₹4/reel
 export const TARGET_MARGIN = 0.55                 // matches the ~50-60% band storage/AI-search already target
 export const MIN_MARGIN_FLOOR = 0.35              // hard floor — stacked pack+annual discounts must never price below this
@@ -198,16 +208,24 @@ export interface ReelCostEstimate {
 // itself has no DynamoDB dependency, so it stays a plain sync function
 // usable from both server routes and client components (e.g. the modal's
 // pre-generation cost estimate).
+//
+// `resolution` selects which units/sec rate applies — real Kling billing
+// consumes more units/sec at 1080p than 720p, so the same clip length costs
+// different amounts depending on the chosen output quality.
 export function computeReelCost(
   heroClipCount: number,
   avgClipDurationSec: number,
-  rates?: { klingCostPaisePerAiSecond?: number; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
+  resolution: '720p' | '1080p' = DEFAULT_REEL_RESOLUTION as '720p' | '1080p',
+  rates?: { klingCostPaisePerUnit?: number; klingUnitsPerSec720?: number; klingUnitsPerSec1080?: number; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
 ): ReelCostEstimate {
-  const klingRate = rates?.klingCostPaisePerAiSecond ?? KLING_COST_PAISE_PER_AI_SECOND
+  const costPerUnit = rates?.klingCostPaisePerUnit ?? KLING_COST_PAISE_PER_UNIT
+  const unitsPerSec720 = rates?.klingUnitsPerSec720 ?? KLING_UNITS_PER_SEC_720
+  const unitsPerSec1080 = rates?.klingUnitsPerSec1080 ?? KLING_UNITS_PER_SEC_1080
+  const unitsPerSec = resolution === '1080p' ? unitsPerSec1080 : unitsPerSec720
   const overhead = rates?.fixedOverheadPaisePerReel ?? FIXED_OVERHEAD_PAISE_PER_REEL
   const margin = rates?.targetMargin ?? TARGET_MARGIN
   const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
-  const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * klingRate + overhead)
+  const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * unitsPerSec * costPerUnit + overhead)
   const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
   return { rawCostPaise, sellPricePaise, creditsRequired }

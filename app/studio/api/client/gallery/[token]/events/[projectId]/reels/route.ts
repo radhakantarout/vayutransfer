@@ -7,10 +7,12 @@ import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
 import { deductReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
+  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
-import type { StudioProject, MediaFile, Studio, StudioJob, StudioReel, ReelStyle } from '@/types/studio'
+import { getPricingConfig } from '@/lib/pricingConfig'
+import type { StudioProject, MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
@@ -111,9 +113,15 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string
+    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec } = await req.json().catch(() => ({})) as {
+      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number
     }
+    const resolution: ReelResolution = (REEL_RESOLUTIONS as readonly string[]).includes(requestedResolution ?? '')
+      ? (requestedResolution as ReelResolution)
+      : DEFAULT_REEL_RESOLUTION
+    const durationSec = (REEL_CLIP_DURATION_OPTIONS as readonly number[]).includes(requestedDurationSec ?? -1)
+      ? (requestedDurationSec as number)
+      : DEFAULT_AI_CLIP_DURATION_SEC
     if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS) {
       return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: 'Select at least 1 photo.' }, { status: 400 })
     }
@@ -161,8 +169,8 @@ export async function POST(
     studio = await grantFreeTrialReelCreditsIfNeeded(studio)
 
     // MVP: every photo is a "hero clip" (Kling-only, no FFmpeg fallback yet).
-    const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
-    const { creditsRequired } = computeReelCost(photos.length, durationSec)
+    const pricing = await getPricingConfig()
+    const { creditsRequired } = computeReelCost(photos.length, durationSec, resolution, pricing)
     const creditCheck = checkReelCreditsAvailable(studio, creditsRequired)
     if (!creditCheck.ok) {
       return NextResponse.json({
@@ -191,7 +199,7 @@ export async function POST(
       style: reelStyle,
       templateId: template.id,
       aspectRatio: template.aspectRatio,
-      resolution: DEFAULT_REEL_RESOLUTION,
+      resolution,
       durationSec: durationSec * photos.length,
       status: 'generating',
       provider: 'kling',
@@ -213,7 +221,7 @@ export async function POST(
       InvocationType: 'Event',
       Payload: Buffer.from(JSON.stringify({
         jobId, reelId, studioId: entry.studioId, projectId,
-        photos, durationSec, resolution: DEFAULT_REEL_RESOLUTION,
+        photos, durationSec, resolution,
         style: reelStyle,
         stylePromptFragment: sanitizedPrompt
           ? `${sanitizedPrompt}, ${REEL_STYLE_META[reelStyle].promptFragment}`
