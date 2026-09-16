@@ -6,7 +6,7 @@ import {
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
-import { aiSearchCreditPricePaise } from '@/constants/studioPricing'
+import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle } from '@/types/studio'
 import type { PricingConfig } from '@/types/pricingConfig'
 
@@ -176,6 +176,14 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const creditsRequired = isMoments
     ? Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(pricing?.aiExtraPaisePer1000)))
     : reelPoolCreditsRequired
+  // Moments' Profile/UsageBillingPanel show this same underlying pool in the
+  // friendly "Moments Credits" unit (raw ÷ momentsCreditDivisor) — showing
+  // the raw AI-search-credit number here instead (e.g. "568 credits
+  // required" against a Profile screen that says "20 Moments Credits
+  // available") was a real, confusing unit mismatch, even though the
+  // backend charge itself was correct all along.
+  const displayCreditsRequired = isMoments ? toMomentsCredits(creditsRequired, pricing?.momentsCreditDivisor) : creditsRequired
+  const creditsLabel = isMoments ? 'Moments Credits' : 'credits'
   // Guest (selfie-search) mode has no reel history list at all — the QR
   // token is shared across every guest at the event, so per-token history
   // would leak one guest's reel to everyone else (see the `source: 'guest'`
@@ -340,7 +348,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               {customPrompt && (
                 <div className="flex justify-between gap-3"><span className="text-muted flex-shrink-0">Your note</span><span className="font-semibold text-text-primary text-right truncate">"{customPrompt}"</span></div>
               )}
-              <div className="flex justify-between border-t border-border pt-2"><span className="text-muted">Cost</span><span className="font-bold text-accent">{creditsRequired} credits</span></div>
+              <div className="flex justify-between border-t border-border pt-2"><span className="text-muted">Cost</span><span className="font-bold text-accent">{displayCreditsRequired} {creditsLabel}</span></div>
             </div>
 
             <label className="flex items-start gap-2.5 text-left cursor-pointer select-none">
@@ -395,7 +403,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                   ? `Tap ✕ to keep browsing — you can check progress anytime from ${reelsHomeLabel}.`
                   : "This can take a few minutes. Feel free to keep browsing — it'll be ready when you come back."}
               </p>
-              {creditsCharged !== null && <p className="text-[11px] text-muted mt-2">{creditsCharged} credits used</p>}
+              {creditsCharged !== null && (
+                <p className="text-[11px] text-muted mt-2">
+                  {isMoments ? toMomentsCredits(creditsCharged, pricing?.momentsCreditDivisor) : creditsCharged} {creditsLabel} used
+                </p>
+              )}
             </div>
           </div>
         )}

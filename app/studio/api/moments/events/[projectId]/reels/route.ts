@@ -6,7 +6,7 @@ import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABL
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits } from '@/lib/studio/billing'
-import { aiSearchCreditPricePaise } from '@/constants/studioPricing'
+import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { reelJobProgress } from '@/lib/studio/reelProgress'
@@ -164,9 +164,18 @@ export async function POST(
     const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
     const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
     if (!creditCheck.ok) {
+      // This route is Moments-only — always the friendly "Moments Credits"
+      // unit here, matching Profile/UsageBillingPanel's display, not the raw
+      // AI-search-credit count the backend actually accounts in. Showing
+      // raw units here (e.g. "568 AI credits" against a Profile screen that
+      // says "20 Moments Credits") was a real, confusing mismatch even
+      // though the underlying math/enforcement was always correct.
+      const divisor = pricing.momentsCreditDivisor
+      const neededDisplay = toMomentsCredits(aiCreditsRequired, divisor)
+      const leftDisplay = toMomentsCredits(Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits), divisor)
       return NextResponse.json({
         success: false, error: 'INSUFFICIENT_CREDITS',
-        message: `This reel needs ${aiCreditsRequired} AI credits — you have ${Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits)} left.`,
+        message: `This reel needs ${neededDisplay} Moments Credits — you have ${leftDisplay} left.`,
         data: creditCheck,
       }, { status: 402 })
     }
