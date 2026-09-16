@@ -1045,6 +1045,63 @@ export async function sendMomentsFeedbackEmail(
   }))
 }
 
+// One-time warning before a free Moments gallery's retention window ends —
+// see app/studio/api/cron/storage-check/route.ts#sweepExpiredMomentsGalleries.
+// Sent once per gallery (tracked via StudioProject.retentionReminderSentAt),
+// days before the actual deletion, not a repeating nag like the storage-
+// overage reminders.
+export async function sendMomentsRetentionReminderEmail(
+  to: string,
+  galleryName: string,
+  daysRemaining: number,
+  projectId: string
+): Promise<void> {
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  const subject = `Your Moments gallery "${galleryName}" expires in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${subject}</title></head>
+<body style="font-family:Inter,system-ui,sans-serif;background:#0B0F1A;color:#E0EAF8;margin:0;padding:40px 20px;">
+  <div style="max-width:520px;margin:0 auto;background:#131929;border-radius:12px;padding:40px;border:1px solid #1E2D45;">
+    <div style="font-size:24px;font-weight:700;color:#00C6FF;margin-bottom:8px;">VayuStudios Moments</div>
+    <h2 style="font-size:18px;font-weight:700;margin:0 0 16px;color:#FBBF24;">${subject}</h2>
+
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 20px;">
+      <strong style="color:#E0EAF8;">${escapeHtml(galleryName)}</strong> was created on the free plan, which keeps
+      galleries for a limited time. After that, the gallery and its photos are permanently deleted.
+    </p>
+
+    <div style="background:#0B0F1A;border:1px solid #1E2D45;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+      <div style="color:#5A7090;font-size:12px;margin-bottom:4px;">Time remaining</div>
+      <div style="font-size:20px;color:#FBBF24;font-weight:800;">${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}</div>
+    </div>
+
+    <p style="color:#8BAAB8;font-size:14px;line-height:1.7;margin:0 0 24px;">
+      Open the gallery and download anything you want to keep, or extend its retention to keep it safe.
+    </p>
+
+    <a href="https://vayustudios.com/studio/moments/${projectId}"
+      style="display:inline-block;background:#0099CC;color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;">
+      Open gallery →
+    </a>
+  </div>
+</body>
+</html>`.trim()
+
+  await sesClient.send(new SendEmailCommand({
+    Source: `VayuStudios Moments <${FROM_EMAIL}>`,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: subject },
+      Body: {
+        Html: { Data: html, Charset: 'UTF-8' },
+        Text: { Data: `${subject}\n\n"${galleryName}" was created on the free plan and will be permanently deleted in ${daysRemaining} day(s) unless you extend its retention.\n\nOpen: https://vayustudios.com/studio/moments/${projectId}`, Charset: 'UTF-8' },
+      },
+    },
+  }))
+}
+
 export async function sendAccountBlockedEmail(email: string, name: string, reason: string): Promise<void> {
   const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
   const html = `

@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { verifyGoogleSignupToken } from '@/lib/studio/googleAuth'
 import { signStudioJWT } from '@/lib/studio/auth'
-import { studioPutItem, studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioPutItem, studioQueryByIndex, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
 import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import type { Studio, StudioUser } from '@/types/studio'
+
+// Deterministic (not random) specifically for Moments personal studios —
+// the SAME email always produces the SAME studioId, which is what makes
+// the conditional PUT below ("attribute_not_exists(studioId)") an atomic,
+// database-enforced "one personal studio per email" guarantee instead of
+// the previous plain read-then-write, which let concurrent signups with
+// the same (replayable, 30-minute-lived) Google signup token each create
+// a full new free Studio. Real studios (photographers) are entirely
+// unaffected — they still get random UUIDs via a separate code path
+// (app/studio/api/auth/google-onboard/route.ts), never this function.
+function momentsStudioIdFor(email: string): string {
+  return `moments-${createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 32)}`
+}
 
 // GET — same shape as google-onboard's: the register page calls this on
 // mount to validate the token and pre-fill the form.
@@ -63,8 +77,9 @@ export async function POST(req: NextRequest) {
       return response
     }
 
-    const studioId = randomUUID()
+    const studioId = momentsStudioIdFor(email)
     const userId   = existingClient?.userId ?? randomUUID()
+    const pricing = await getPricingConfig()
     const studio: Studio = {
       studioId,
       name: `${name}'s Moments`,
@@ -77,6 +92,15 @@ export async function POST(req: NextRequest) {
       billingPlanId: 'free',
       dataRetentionGraceDays: MOMENTS_RETENTION_DAYS,
       isIndividual: true,
+      // Explicit, Moments-only welcome bonus (in raw AI-search credits,
+      // computed from the live momentsWelcomeBonusCredits/momentsCreditDivisor
+      // config) — deliberately NOT the shared freeAiSearchCredits default,
+      // which is also Studio Admin's own free-tier lever and must stay
+      // independent of Moments' bonus sizing. Without this explicit set,
+      // aiCreditsQuota() would silently fall back to freeAiSearchCredits
+      // instead, under-granting every new Moments signup.
+      aiSearchCreditsTotal: pricing.momentsWelcomeBonusCredits * pricing.momentsCreditDivisor,
+      momentsWelcomeBonusGrantedAt: now,
       projectCount: 0,
       status: 'ACTIVE',
       createdAt: now,
@@ -90,7 +114,40 @@ export async function POST(req: NextRequest) {
         aiFaceRecognition: true,
       },
     }
-    await studioPutItem(TABLES.studios, studio as unknown as Record<string, unknown>)
+    try {
+      // Atomic create-if-not-exists — the Google signup token this route
+      // trusts is stateless with no single-use tracking, so it can be
+      // replayed any number of times within its 30-minute window. Without
+      // this guard, a burst of concurrent/replayed requests for the same
+      // email each raced past the plain existingClient read above and each
+      // created a full new free Studio (storage + AI credits). Whichever
+      // request loses this race did NOT create a studio and must not
+      // proceed to create a StudioUser row either — it falls through to
+      // the catch block and logs in as whichever request won instead.
+      await studioPutItem(TABLES.studios, studio as unknown as Record<string, unknown>, 'attribute_not_exists(studioId)')
+    } catch (err) {
+      // Brief single retry — the winning request's studio PUT above just
+      // succeeded, but its StudioUser row write (a few lines below, in that
+      // request) may not have landed yet in this narrow window. One short
+      // wait covers that without a full retry loop.
+      let winnerStudio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      let winnerClients = await studioQueryByIndex<StudioUser>(TABLES.users, 'email-index', 'email = :e', { ':e': email })
+      let winnerClient = winnerClients.find((u) => u.role === 'CLIENT' && u.personalStudioId === studioId)
+      if (!winnerClient) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        winnerStudio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+        winnerClients = await studioQueryByIndex<StudioUser>(TABLES.users, 'email-index', 'email = :e', { ':e': email })
+        winnerClient = winnerClients.find((u) => u.role === 'CLIENT' && u.personalStudioId === studioId)
+      }
+      if (!winnerStudio || !winnerClient) {
+        console.error('[moments-onboard POST] lost the create race but could not find the winner', err)
+        return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
+      }
+      const token = await signStudioJWT({ userId: winnerClient.userId, role: 'CLIENT', studioId })
+      const response = NextResponse.json({ success: true, data: { alreadyExists: true } })
+      setCookies(response, token, { role: 'CLIENT', name: winnerClient.name ?? name, email })
+      return response
+    }
 
     if (existingClient) {
       // Already a CLIENT of some photographer's gallery — attach the new

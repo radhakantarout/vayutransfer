@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC,
+  computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC, REEL_CLIP_DURATION_OPTIONS,
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
+  REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
 } from '@/constants/videoProviders'
-import type { ReelStyle } from '@/types/studio'
+import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
+import type { ReelStyle, ReelResolution } from '@/types/studio'
+import type { PricingConfig } from '@/types/pricingConfig'
 
 // "Fast minimal demo" scope (AI Reel Generator design doc, Phase 1) with a
 // real premium-feeling flow layered on top per explicit request: template
@@ -141,6 +144,8 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [stage, setStage] = useState<Stage>('template')
   const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
+  const [resolution, setResolution] = useState<ReelResolution>(DEFAULT_REEL_RESOLUTION as ReelResolution)
+  const [durationSec, setDurationSec] = useState<number>(DEFAULT_AI_CLIP_DURATION_SEC)
   const [customPrompt, setCustomPrompt] = useState('')
   const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -148,11 +153,49 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [creditsCharged, setCreditsCharged] = useState<number | null>(null)
   const [outputUrl, setOutputUrl] = useState<string | null>(null)
   const [msgIdx, setMsgIdx] = useState(0)
+  const [progress, setProgress] = useState<{ stage: string; percent: number } | null>(null)
+  const [pricing, setPricing] = useState<PricingConfig | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reducedMotion = useReducedMotion()
 
+  // Live, owner-editable rates (lib/pricingConfig.ts) — falls back to
+  // whatever computeReelCost's own hardcoded defaults are if this hasn't
+  // loaded yet, so the quote never blocks on the fetch. Fetching here
+  // (rather than trusting a build-time constant) is what keeps this preview
+  // in sync with the server's actual charge the moment an admin changes a
+  // price, with zero redeploy.
+  useEffect(() => {
+    fetch('/studio/api/pricing-config').then((r) => r.json()).then((d) => { if (d.success) setPricing(d.data) }).catch(() => {})
+  }, [])
+
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
-  const { creditsRequired } = computeReelCost(photoIds.length, DEFAULT_AI_CLIP_DURATION_SEC)
+  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(photoIds.length, durationSec, resolution, pricing ?? undefined)
+  // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
+  // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
+  // component was originally built for — same real ₹ cost, wildly
+  // different credit COUNT. Showing the wrong pool's number here used to
+  // quote a small figure that had nothing to do with what the server
+  // actually charged/rejected against.
+  const creditsRequired = isMoments
+    ? Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(pricing?.aiExtraPaisePer1000)))
+    : reelPoolCreditsRequired
+  // Moments' Profile/UsageBillingPanel show this same underlying pool in the
+  // friendly "Moments Credits" unit (raw ÷ momentsCreditDivisor) — showing
+  // the raw AI-search-credit number here instead (e.g. "568 credits
+  // required" against a Profile screen that says "20 Moments Credits
+  // available") was a real, confusing unit mismatch, even though the
+  // backend charge itself was correct all along.
+  const displayCreditsRequired = isMoments ? toMomentsCredits(creditsRequired, pricing?.momentsCreditDivisor) : creditsRequired
+  const creditsLabel = isMoments ? 'Moments Credits' : 'credits'
+  // Guest (selfie-search) mode has no reel history list at all — the QR
+  // token is shared across every guest at the event, so per-token history
+  // would leak one guest's reel to everyone else (see the `source: 'guest'`
+  // completed-stage comment below). Closing mid-generation would strand a
+  // guest with zero way back to their reel, so only client/moments — both of
+  // which have a real "My Reels"/Reels tab to check back into — can dismiss
+  // the modal while it's still generating.
+  const canCloseWhileGenerating = props.source !== 'guest'
+  const reelsHomeLabel = isMoments ? 'the Reels tab' : 'My Reels'
 
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
@@ -173,6 +216,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
         setError(res.data.errorMessage ?? 'Something went wrong generating your reel.')
         setStage('failed')
       } else {
+        if (res.data.progress) setProgress({ stage: res.data.progress.stage, percent: res.data.progress.percent })
         poll(id)
       }
     }, 3000)
@@ -183,8 +227,8 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     setError(null)
     const trimmedPrompt = customPrompt.trim() || undefined
     const body = props.source === 'guest'
-      ? { photoIds, templateId, style, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, customPrompt: trimmedPrompt } // client + moments share this shape
+      ? { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+      : { photoIds, templateId, style, resolution, durationSec, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -202,11 +246,25 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/70 flex items-end sm:items-center justify-center" onClick={stage === 'generating' ? undefined : onClose}>
+    <div
+      className="fixed inset-0 z-[80] bg-black/70 flex items-end sm:items-center justify-center"
+      onClick={stage === 'generating' && !canCloseWhileGenerating ? undefined : onClose}
+    >
       <div
-        className="bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md max-h-[92vh] sm:max-h-[85vh] overflow-y-auto"
+        className="relative bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md max-h-[92vh] sm:max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
+        {stage === 'generating' && canCloseWhileGenerating && (
+          <button
+            onClick={onClose}
+            aria-label="Continue in background"
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-border/60 hover:bg-border flex items-center justify-center text-text-primary transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
         {stage === 'template' && (
           <div className="space-y-5">
             <div className="text-center space-y-1">
@@ -286,14 +344,51 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="text-4xl">🎬</div>
               <h2 className="text-lg font-bold text-text-primary">Ready to create your reel</h2>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                <div className="flex gap-1.5">
+                  {REEL_RESOLUTIONS.map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setResolution(r)}
+                      className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                        resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
+                <div className="flex gap-1.5">
+                  {REEL_CLIP_DURATION_OPTIONS.map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setDurationSec(d)}
+                      className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                        durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                      }`}
+                    >
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             <div className="bg-bg border border-border rounded-2xl px-4 py-3 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-muted">Photos</span><span className="font-semibold text-text-primary">{photoIds.length}</span></div>
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
+              <div className="flex justify-between"><span className="text-muted">Quality · Length</span><span className="font-semibold text-text-primary">{resolution} · {durationSec}s/clip</span></div>
               {customPrompt && (
                 <div className="flex justify-between gap-3"><span className="text-muted flex-shrink-0">Your note</span><span className="font-semibold text-text-primary text-right truncate">"{customPrompt}"</span></div>
               )}
-              <div className="flex justify-between border-t border-border pt-2"><span className="text-muted">Cost</span><span className="font-bold text-accent">{creditsRequired} credits</span></div>
+              <div className="flex justify-between border-t border-border pt-2"><span className="text-muted">Cost</span><span className="font-bold text-accent">{displayCreditsRequired} {creditsLabel}</span></div>
             </div>
 
             <label className="flex items-start gap-2.5 text-left cursor-pointer select-none">
@@ -332,9 +427,27 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               <div className="absolute inset-1.5 rounded-full bg-card flex items-center justify-center text-2xl">{REEL_STYLE_META[style].icon}</div>
             </div>
             <div>
-              <h2 className="text-base font-bold text-text-primary transition-opacity duration-500">{reducedMotion ? 'Creating your reel…' : GENERATING_MESSAGES[msgIdx]}</h2>
-              <p className="text-xs text-muted mt-1.5">This can take a few minutes. Feel free to keep browsing — it'll be ready when you come back.</p>
-              {creditsCharged !== null && <p className="text-[11px] text-muted mt-2">{creditsCharged} credits used</p>}
+              <h2 className="text-base font-bold text-text-primary transition-opacity duration-500">
+                {progress ? `${GENERATING_MESSAGES[msgIdx]} ${progress.percent}%` : reducedMotion ? 'Creating your reel…' : GENERATING_MESSAGES[msgIdx]}
+              </h2>
+              {progress && (
+                <div className="h-1.5 w-40 mx-auto mt-3 rounded-full bg-border overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${progress.percent}%`, background: styleGradient(style) }}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-muted mt-2.5">
+                {canCloseWhileGenerating
+                  ? `Tap ✕ to keep browsing — you can check progress anytime from ${reelsHomeLabel}.`
+                  : "This can take a few minutes. Feel free to keep browsing — it'll be ready when you come back."}
+              </p>
+              {creditsCharged !== null && (
+                <p className="text-[11px] text-muted mt-2">
+                  {isMoments ? toMomentsCredits(creditsCharged, pricing?.momentsCreditDivisor) : creditsCharged} {creditsLabel} used
+                </p>
+              )}
             </div>
           </div>
         )}

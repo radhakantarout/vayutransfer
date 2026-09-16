@@ -3,6 +3,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { resolveProjectForViewer, isOwnerOrApprovedMember } from '@/lib/studio/galleryMembers'
+import { reelJobProgress } from '@/lib/studio/reelProgress'
 import type { StudioReel } from '@/types/studio'
 
 export async function GET(
@@ -32,10 +33,11 @@ export async function GET(
     const outputUrl = reel.status === 'completed' && reel.outputR2Key
       ? await getStudioR2SignedDownloadUrl(reel.outputR2Key, `reel-${reelId}.mp4`, 3600)
       : null
+    const progress = reel.status === 'generating' ? await reelJobProgress(reel.jobId) : null
 
     return NextResponse.json({
       success: true,
-      data: { status: reel.status, outputUrl, errorMessage: reel.errorMessage ?? null },
+      data: { status: reel.status, outputUrl, errorMessage: reel.errorMessage ?? null, progress },
     })
   } catch (err) {
     console.error('[moments reel status GET]', err)

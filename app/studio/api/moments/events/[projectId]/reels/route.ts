@@ -6,13 +6,16 @@ import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABL
 import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits } from '@/lib/studio/billing'
-import { AI_SEARCH_CREDIT_PRICE_PAISE } from '@/constants/studioPricing'
+import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
+import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, DEFAULT_REEL_RESOLUTION, DEFAULT_AI_CLIP_DURATION_SEC,
+  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
-import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle } from '@/types/studio'
+import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
@@ -64,6 +67,7 @@ export async function GET(
       outputUrl: r.status === 'completed' && r.outputR2Key
         ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
         : null,
+      progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
     })))
 
     return NextResponse.json({ success: true, data })
@@ -94,9 +98,18 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN', message: 'The gallery owner hasn\'t turned on Reels for members yet.' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string
+    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec } = await req.json().catch(() => ({})) as {
+      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number
     }
+    // Never trust a client-supplied resolution/duration blindly — fall back
+    // to the defaults on anything outside the allowed sets rather than
+    // rejecting the whole request, same posture as templateId/style below.
+    const resolution: ReelResolution = (REEL_RESOLUTIONS as readonly string[]).includes(requestedResolution ?? '')
+      ? (requestedResolution as ReelResolution)
+      : DEFAULT_REEL_RESOLUTION
+    const durationSec = (REEL_CLIP_DURATION_OPTIONS as readonly number[]).includes(requestedDurationSec ?? -1)
+      ? (requestedDurationSec as number)
+      : DEFAULT_AI_CLIP_DURATION_SEC
     if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS) {
       return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: 'Select at least 1 photo.' }, { status: 400 })
     }
@@ -113,9 +126,16 @@ export async function POST(
 
     const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
     const requestedSet = new Set(photoIds)
-    const selectedFiles = allFiles.filter((f) => requestedSet.has(f.fileId) && f.processingStatus === 'READY')
+    // fileType === 'IMAGE' is load-bearing, not cosmetic: the Lambda calls
+    // Kling's image-to-video endpoint, passing each selected file's URL as
+    // the still "first_frame" to animate — it has no video-input capability
+    // at all (that would be a different Kling endpoint/feature entirely).
+    // Without this filter, a selected video file's URL got passed straight
+    // through as if it were a photo, wasting a real paid Kling API call on
+    // an input its own API was never going to accept.
+    const selectedFiles = allFiles.filter((f) => requestedSet.has(f.fileId) && f.processingStatus === 'READY' && f.fileType === 'IMAGE')
     if (selectedFiles.length !== photoIds.length) {
-      return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'Some selected photos are not available.' }, { status: 400 })
+      return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'Only photos can be used for AI Reels — videos aren\'t supported as an input.' }, { status: 400 })
     }
 
     const photos = selectedFiles.map((f) => ({ fileId: f.fileId, filename: f.originalFilename, key: f.editedR2Key || f.r2Key }))
@@ -127,14 +147,44 @@ export async function POST(
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
-    const durationSec = DEFAULT_AI_CLIP_DURATION_SEC
-    const { sellPricePaise } = computeReelCost(photos.length, durationSec)
-    const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / AI_SEARCH_CREDIT_PRICE_PAISE))
-    const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired)
+    // Same dedupe pattern as face-indexing (faces/index/route.ts) — without
+    // this, nothing stopped a scripted rapid-fire loop of POSTs (each
+    // triggering a real, paid Kling Lambda invoke) beyond the credit check
+    // alone, which itself only narrowly stops overspend, not repeated
+    // legitimate-looking requests for the same gallery.
+    const runningJobs = await studioQueryByIndex<StudioJob>(
+      TABLES.jobs,
+      'projectId-status-index',
+      'projectId = :pid AND #s = :processing',
+      { ':pid': projectId, ':processing': 'PROCESSING' },
+      { '#s': 'status' },
+      25
+    )
+    const runningReelJob = runningJobs.find((j) => j.jobType === 'AI_REEL')
+    if (runningReelJob) {
+      return NextResponse.json({
+        success: false, error: 'JOB_RUNNING', data: { jobId: runningReelJob.jobId },
+      }, { status: 409 })
+    }
+
+    const pricing = await getPricingConfig()
+    const { sellPricePaise } = computeReelCost(photos.length, durationSec, resolution, pricing)
+    const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
+    const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
+    const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
     if (!creditCheck.ok) {
+      // This route is Moments-only — always the friendly "Moments Credits"
+      // unit here, matching Profile/UsageBillingPanel's display, not the raw
+      // AI-search-credit count the backend actually accounts in. Showing
+      // raw units here (e.g. "568 AI credits" against a Profile screen that
+      // says "20 Moments Credits") was a real, confusing mismatch even
+      // though the underlying math/enforcement was always correct.
+      const divisor = pricing.momentsCreditDivisor
+      const neededDisplay = toMomentsCredits(aiCreditsRequired, divisor)
+      const leftDisplay = toMomentsCredits(Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits), divisor)
       return NextResponse.json({
         success: false, error: 'INSUFFICIENT_CREDITS',
-        message: `This reel needs ${aiCreditsRequired} AI credits — you have ${Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits)} left.`,
+        message: `This reel needs ${neededDisplay} Moments Credits — you have ${leftDisplay} left.`,
         data: creditCheck,
       }, { status: 402 })
     }
@@ -145,7 +195,20 @@ export async function POST(
     }
 
     const creditsRequired = aiCreditsRequired
-    await deductAiSearchCredits(studioId, creditsRequired)
+    try {
+      // ceilingCredits comes from the check just above — deductAiSearchCredits
+      // re-verifies atomically against the item's live aiSearchCreditsUsed at
+      // write time, so a concurrent request that already consumed the
+      // remaining headroom correctly fails here even though both requests
+      // passed the read-only check above.
+      await deductAiSearchCredits(studioId, creditsRequired, creditCheck.quotaCredits)
+    } catch (err) {
+      console.error('[moments reels POST] credit deduction lost a concurrency race', err)
+      return NextResponse.json({
+        success: false, error: 'INSUFFICIENT_CREDITS',
+        message: 'Someone just used the last of these credits — please check your balance and try again.',
+      }, { status: 402 })
+    }
 
     const reelId = randomUUID()
     const jobId = randomUUID()
@@ -159,7 +222,7 @@ export async function POST(
       style: reelStyle,
       templateId: template.id,
       aspectRatio: template.aspectRatio,
-      resolution: DEFAULT_REEL_RESOLUTION,
+      resolution,
       durationSec: durationSec * photos.length,
       status: 'generating',
       provider: 'kling',
@@ -181,7 +244,7 @@ export async function POST(
       InvocationType: 'Event',
       Payload: Buffer.from(JSON.stringify({
         jobId, reelId, studioId, projectId,
-        photos, durationSec, resolution: DEFAULT_REEL_RESOLUTION,
+        photos, durationSec, resolution,
         style: reelStyle,
         stylePromptFragment: sanitizedPrompt
           ? `${sanitizedPrompt}, ${REEL_STYLE_META[reelStyle].promptFragment}`

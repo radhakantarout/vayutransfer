@@ -4,6 +4,7 @@ import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioGetItem, studioPutItem, studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import { accuracyToQualityFilter, DEFAULT_AI_ACCURACY } from '@/lib/studio/faceAccuracy'
 import { syncBillingCycle, checkAiCreditsAvailable } from '@/lib/studio/quota'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import type { Studio, StudioProject, StudioJob } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
@@ -49,8 +50,9 @@ export async function POST(
     // this can only guarantee at least 1 credit of headroom exists — still
     // stops the common case (already fully out of credits).
     studio = await syncBillingCycle(studio)
+    const pricing = await getPricingConfig()
     const requestedCount = fileIds?.length ?? 1
-    const aiQuota = checkAiCreditsAvailable(studio, requestedCount)
+    const aiQuota = checkAiCreditsAvailable(studio, requestedCount, pricing.freeAiSearchCredits)
     if (!aiQuota.ok) {
       return NextResponse.json({
         success: false, error: 'QUOTA_EXCEEDED', quotaType: 'ai',

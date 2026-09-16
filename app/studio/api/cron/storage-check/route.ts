@@ -3,14 +3,17 @@ import {
   studioScanTable, studioQueryByPK, studioGetItem, studioUpdateItem, studioDeleteItem, TABLES,
 } from '@/lib/studio/dynamodb'
 import { deleteMediaObjects } from '@/lib/studio/storage'
-import { deleteStudioR2Object } from '@/lib/studio/r2'
-import { getStudioAdminEmails } from '@/lib/studio/notify'
-import { sendStorageOverageReminderEmail } from '@/lib/aws/ses'
+import { deleteStudioR2Object, listStudioR2IncompleteMultipartUploads, abortStudioR2MultipartUpload } from '@/lib/studio/r2'
+import { getStudioAdminEmails, getMomentsGalleryOwnerEmail } from '@/lib/studio/notify'
+import { sendStorageOverageReminderEmail, sendMomentsRetentionReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, syncBillingCycle } from '@/lib/studio/quota'
 import { refundReelCredits } from '@/lib/studio/billing'
 import { logAuditEvent } from '@/lib/studio/auditLog'
+import { deleteMomentsGalleryCascade } from '@/lib/studio/momentsDelete'
+import { getPricingConfig } from '@/lib/pricingConfig'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
 import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer, StudioJob, StudioReel } from '@/types/studio'
+import type { PricingConfig } from '@/types/pricingConfig'
 
 // A Lambda timeout, crash, or lost invoke can leave an AI_REEL job sitting
 // at PENDING/PROCESSING forever with credits already deducted and nothing
@@ -61,6 +64,30 @@ async function sweepStuckReelJobs(): Promise<{ count: number }> {
   }
 
   return { count: stuck.length }
+}
+
+// Incomplete multipart uploads (browser closed mid-upload, network drop) are
+// real, billed R2 bytes that are invisible to a normal object listing and,
+// before this, were never counted toward billableStorageBytes OR ever
+// cleaned up — an unbounded, silent storage-cost leak. Shared bucket, so
+// this covers Studio Admin and Moments uploads in one pass. 48h (not
+// VayuTransfer's own 6h default) since a real event video on a slow
+// connection can legitimately take a while; never touches anything younger.
+const ORPHANED_UPLOAD_STALE_HOURS = 48
+
+async function sweepOrphanedMultipartUploads(): Promise<{ count: number }> {
+  const uploads = await listStudioR2IncompleteMultipartUploads()
+  const cutoffMs = Date.now() - ORPHANED_UPLOAD_STALE_HOURS * 60 * 60 * 1000
+  const stale = uploads.filter((u) => new Date(u.initiated).getTime() < cutoffMs)
+
+  await Promise.all(
+    stale.map((u) =>
+      abortStudioR2MultipartUpload(u.key, u.uploadId)
+        .catch((err) => console.error('[storage-check] failed to abort orphaned upload', u.key, err))
+    )
+  )
+
+  return { count: stale.length }
 }
 
 // Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on every
@@ -168,12 +195,84 @@ async function sweepExpiredTransfers(transfers: StudioTransfer[]): Promise<{ fre
   return { freedByStudio, count: expired.length }
 }
 
+// Every free Moments gallery older than MOMENTS_RETENTION_DAYS is eligible
+// for deletion — but this is the FIRST time that enforcement has ever
+// existed (previously purely a display countdown, see the correction
+// comment on MOMENTS_RETENTION_DAYS), so real photos in production have had
+// zero prior warning. Defaults OFF (PricingConfig.momentsRetentionEnforcementEnabled
+// — /studio/admin/pricing) — while off, this only counts+logs what it WOULD
+// do, sends no emails, deletes nothing. An owner reviews that dry-run count
+// first, then flips it on when satisfied it's safe.
+const MOMENTS_RETENTION_REMINDER_WINDOW_MS = 3 * 24 * 60 * 60 * 1000
+
+async function sweepExpiredMomentsGalleries(pricing: PricingConfig): Promise<{ wouldDeleteCount: number; deletedCount: number; remindedCount: number; enforced: boolean }> {
+  const projects = await studioScanTable<StudioProject>(TABLES.projects)
+  const galleries = projects.filter((p) => p.isIndividualGallery === true)
+  const now = Date.now()
+  const retentionMs = pricing.momentsRetentionDays * 24 * 60 * 60 * 1000
+  const enforced = pricing.momentsRetentionEnforcementEnabled
+
+  let wouldDeleteCount = 0, deletedCount = 0, remindedCount = 0
+
+  for (const project of galleries) {
+    if (project.isPermanent) continue
+    if (project.retentionPaidUntil && new Date(project.retentionPaidUntil).getTime() > now) continue
+
+    const deadlineMs = new Date(project.createdAt).getTime() + retentionMs
+    const msRemaining = deadlineMs - now
+
+    if (msRemaining <= 0) {
+      wouldDeleteCount++
+      if (!enforced) continue
+
+      await deleteMomentsGalleryCascade(project.studioId, project.projectId)
+        .catch((e) => { console.error('[storage-check] moments retention delete failed', project.projectId, e); wouldDeleteCount--; return })
+      logAuditEvent({
+        studioId: project.studioId, actorId: 'system-cron', actorRole: 'SYSTEM',
+        action: 'DELETE_PROJECT', targetType: 'PROJECT', targetId: project.projectId,
+        metadata: { trigger: 'moments-retention-cron', reason: 'Free Moments gallery past its retention window', clientName: project.clientName, createdAt: project.createdAt },
+      })
+      deletedCount++
+      continue
+    }
+
+    if (enforced && msRemaining <= MOMENTS_RETENTION_REMINDER_WINDOW_MS && !project.retentionReminderSentAt) {
+      const email = await getMomentsGalleryOwnerEmail(project.studioId)
+      const daysRemaining = Math.max(1, Math.ceil(msRemaining / (24 * 60 * 60 * 1000)))
+      if (email) {
+        await sendMomentsRetentionReminderEmail(email, project.clientName || 'Your gallery', daysRemaining, project.projectId)
+          .catch((e) => console.error('[storage-check] moments retention reminder email failed', e))
+      }
+      await studioUpdateItem(
+        TABLES.projects, { studioId: project.studioId, projectId: project.projectId },
+        'SET retentionReminderSentAt = :now', { ':now': new Date().toISOString() }
+      )
+      remindedCount++
+    }
+  }
+
+  if (!enforced && wouldDeleteCount > 0) {
+    console.log(`[storage-check] Moments retention DRY RUN: would delete ${wouldDeleteCount} gallery(ies) — enable momentsRetentionEnforcementEnabled in /studio/admin/pricing to go live`)
+  }
+
+  return { wouldDeleteCount, deletedCount, remindedCount, enforced }
+}
+
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
   }
 
+  const pricing = await getPricingConfig()
   const stuckReels = await sweepStuckReelJobs()
+  const momentsRetention = await sweepExpiredMomentsGalleries(pricing).catch((err) => {
+    console.error('[storage-check] moments retention sweep failed', err)
+    return { wouldDeleteCount: 0, deletedCount: 0, remindedCount: 0, enforced: pricing.momentsRetentionEnforcementEnabled }
+  })
+  const orphanedUploads = await sweepOrphanedMultipartUploads().catch((err) => {
+    console.error('[storage-check] orphaned-upload sweep failed', err)
+    return { count: 0 }
+  })
 
   const studios = await studioScanTable<Studio>(TABLES.studios)
   const allTransfers = await studioScanTable<StudioTransfer>(TABLES.transfers)
@@ -303,5 +402,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count, orphanedUploadsAborted: orphanedUploads.count, momentsRetention } })
 }

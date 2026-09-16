@@ -10,7 +10,9 @@
 //
 // Usage: node scripts/verify-reel-pricing.mjs
 
-const KLING_COST_PAISE_PER_AI_SECOND = 970
+const KLING_COST_PAISE_PER_UNIT = 1358 // $0.14/unit @ ~₹97/$1
+const KLING_UNITS_PER_SEC_720 = 0.8
+const KLING_UNITS_PER_SEC_1080 = 1.0
 const FIXED_OVERHEAD_PAISE_PER_REEL = 400
 const TARGET_MARGIN = 0.55
 const MIN_MARGIN_FLOOR = 0.35
@@ -22,8 +24,9 @@ const REEL_CREDIT_PACKS = [
   { id: 'pro',     credits: 60, monthlyPricePaise: 384000, annualPricePaise: 337920 },
 ]
 
-function computeReelCost(heroClipCount, avgClipDurationSec) {
-  const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * KLING_COST_PAISE_PER_AI_SECOND + FIXED_OVERHEAD_PAISE_PER_REEL)
+function computeReelCost(heroClipCount, avgClipDurationSec, resolution) {
+  const unitsPerSec = resolution === '1080p' ? KLING_UNITS_PER_SEC_1080 : KLING_UNITS_PER_SEC_720
+  const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * unitsPerSec * KLING_COST_PAISE_PER_UNIT + FIXED_OVERHEAD_PAISE_PER_REEL)
   const sellPricePaise = Math.round(rawCostPaise / (1 - TARGET_MARGIN))
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / CREDIT_VALUE_PAISE))
   return { rawCostPaise, sellPricePaise, creditsRequired }
@@ -47,12 +50,13 @@ function assert(label, condition, detail) {
 }
 
 console.log('== Dynamic per-reel credit cost ==')
-for (const [label, heroClips, avgSec] of [
-  ['15s light (3 clips x 3s)', 3, 3],
-  ['30s default (5 clips x 3s)', 5, 3],
-  ['60s heavy (6 clips x 5s)', 6, 5],
+for (const [label, heroClips, avgSec, resolution] of [
+  ['720p default (3 clips x 3s)', 3, 3, '720p'],
+  ['720p longer clips (5 clips x 5s)', 5, 5, '720p'],
+  ['1080p upgrade (5 clips x 8s)', 5, 8, '1080p'],
+  ['1080p heavy (6 clips x 8s)', 6, 8, '1080p'],
 ]) {
-  const r = computeReelCost(heroClips, avgSec)
+  const r = computeReelCost(heroClips, avgSec, resolution)
   console.log(`  ${label}: raw ₹${(r.rawCostPaise / 100).toFixed(2)}, sell ₹${(r.sellPricePaise / 100).toFixed(2)}, ${r.creditsRequired} credits`)
   assert(`${label} — credits required is a positive integer`, Number.isInteger(r.creditsRequired) && r.creditsRequired > 0)
   assert(`${label} — sell price implies >= ${Math.round(TARGET_MARGIN * 100)}% margin over raw cost`, r.sellPricePaise * (1 - TARGET_MARGIN) >= r.rawCostPaise - 1)

@@ -9,6 +9,7 @@ import {
   PutObjectCommand,
   CopyObjectCommand,
   ListPartsCommand,
+  ListMultipartUploadsCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -110,6 +111,35 @@ export async function completeStudioR2MultipartUpload(
 
 export async function abortStudioR2MultipartUpload(r2Key: string, uploadId: string): Promise<void> {
   await studioR2.send(new AbortMultipartUploadCommand({ Bucket: STUDIO_R2_ORIGINAL_BUCKET, Key: r2Key, UploadId: uploadId }))
+}
+
+// Lists every incomplete multipart upload in the originals bucket — shared
+// by Studio Admin and Moments, both write here — so a scheduled cron can
+// abort ones abandoned mid-upload (browser closed, network drop). These are
+// invisible to a normal object listing but are real, billed bytes, and
+// nothing else in this codebase currently counts or bills for them at all.
+export async function listStudioR2IncompleteMultipartUploads(): Promise<{ key: string; uploadId: string; initiated: string }[]> {
+  const uploads: { key: string; uploadId: string; initiated: string }[] = []
+  let keyMarker: string | undefined
+  let uploadIdMarker: string | undefined
+  let pages = 0
+  do {
+    const res = await studioR2.send(new ListMultipartUploadsCommand({
+      Bucket: STUDIO_R2_ORIGINAL_BUCKET,
+      KeyMarker: keyMarker,
+      UploadIdMarker: uploadIdMarker,
+      MaxUploads: 1000,
+    }))
+    for (const u of res.Uploads ?? []) {
+      if (u.Key && u.UploadId && u.Initiated) {
+        uploads.push({ key: u.Key, uploadId: u.UploadId, initiated: u.Initiated.toISOString() })
+      }
+    }
+    keyMarker = res.IsTruncated ? res.NextKeyMarker : undefined
+    uploadIdMarker = res.IsTruncated ? res.NextUploadIdMarker : undefined
+    pages += 1
+  } while (keyMarker && pages < 20)
+  return uploads
 }
 
 // Server-side source of truth for which parts an in-progress multipart
