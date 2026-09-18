@@ -355,6 +355,15 @@ export function ArrowRightIcon(props: IconProps) {
   )
 }
 
+export function HelpCircleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.783.38-1.45 1.02-1.45 1.887V14M12 17h.01" />
+      <circle cx="12" cy="12" r="9" />
+    </svg>
+  )
+}
+
 // Small, simplified triangle glyph in Google Drive's brand colors — not the
 // exact official logo path (avoids hand-transcribing complex brand SVG path
 // data that's easy to get subtly wrong), but reads clearly as "Drive" at a

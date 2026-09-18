@@ -9,6 +9,7 @@ import { ROLE_LABEL } from '@/lib/studio/roleLabels'
 import { useTheme } from '@/lib/theme-context'
 import ProfileMenu from './ProfileMenu'
 import SettingsModal, { type SettingsTab } from './settings/SettingsModal'
+import { useChatWidget } from './ChatWidgetContext'
 
 type Auth = { role: StudioRole; userId: string; studioId?: string; name: string; email: string; projectToken?: string }
 
@@ -41,6 +42,7 @@ function HomeIcon()      { return <svg className="w-4 h-4" viewBox="0 0 20 20" f
 function SunIcon()       { return <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg> }
 function MoonIcon()      { return <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> }
 function SettingsIcon()  { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> }
+function HelpIcon()      { return <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.783.38-1.45 1.02-1.45 1.887V14M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
 
 function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   const initials = name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
@@ -66,6 +68,7 @@ export default function StudioNavbar() {
   const router      = useRouter()
   const pathname    = usePathname()
   const { theme, toggle: toggleTheme } = useTheme()
+  const { setOpen: setChatOpen } = useChatWidget()
 
   useEffect(() => {
     const match = document.cookie.split('; ').find((c) => c.startsWith('studio_ui='))
@@ -209,6 +212,19 @@ export default function StudioNavbar() {
 
           {/* Desktop right */}
           <div className="hidden md:flex items-center gap-2">
+            {/* Help — opens the chat panel via ChatWidgetContext, same "no
+                floating trigger, Help icon is the only way in" pattern
+                already used by the admin dashboard and Moments (see
+                StudioChrome.tsx's showTrigger comment) — this is what
+                replaces the always-visible bottom-right bubble on
+                marketing/client/guest/print pages. */}
+            <button
+              onClick={() => setChatOpen(true)}
+              title="Help & support"
+              className={`flex items-center justify-center w-8 h-8 rounded-full border transition-colors flex-shrink-0 ${isHome ? 'border-[#0D3B6E]/40 text-[#0D3B6E] hover:bg-[#0D3B6E]/10' : 'border-border text-muted hover:text-accent hover:border-accent'}`}
+            >
+              <HelpIcon />
+            </button>
             {/* Theme toggle — Studio's own light/dark preference, stored and
                 defaulted independently from VayuTransfer's (see lib/theme-context.tsx) */}
             <button
@@ -349,6 +365,9 @@ export default function StudioNavbar() {
                   {label} <span className="text-muted text-sm">→</span>
                 </Link>
               ))}
+              <button onClick={() => { closeAll(); setChatOpen(true) }} className="flex items-center gap-2 w-full py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                <HelpIcon /><span>Help & Support</span>
+              </button>
               <button onClick={handleLogout} className="mt-4 w-full text-center py-3 rounded-xl border border-danger/30 text-danger text-sm font-semibold hover:bg-danger/10 transition-colors">Sign out</button>
             </>
           ) : (
@@ -380,6 +399,9 @@ export default function StudioNavbar() {
                   {label} <span className="text-muted text-sm">→</span>
                 </Link>
               ))}
+              <button onClick={() => { closeAll(); setChatOpen(true) }} className="flex items-center gap-2 w-full py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors">
+                <HelpIcon /><span>Help & Support</span>
+              </button>
 
               <div className="grid grid-cols-2 gap-3 mt-5">
                 <Link href="/studio/login" onClick={closeAll} className="py-3 rounded-xl border border-border text-text-primary text-sm font-semibold text-center hover:bg-border/40 transition-colors">Login</Link>

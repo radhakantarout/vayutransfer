@@ -8,8 +8,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '@/lib/theme-context'
 import { useUpload } from '@/lib/upload-context'
 import { useWallet } from '@/lib/wallet-context'
+import { useChatWidget } from '@/lib/chat-widget-context'
 import TopupModal from '@/components/TopupModal'
-import { ChevronDownIcon, SendIcon, InboxIcon, FolderIcon, ListIcon, WalletIcon, UploadCloudIcon } from '@/components/icons'
+import { ChevronDownIcon, SendIcon, InboxIcon, FolderIcon, ListIcon, WalletIcon, UploadCloudIcon, HelpCircleIcon } from '@/components/icons'
 
 const MOBILE_NAV_ITEMS = [
   { label: 'My Transfers', href: '/transfers', icon: FolderIcon },
@@ -51,6 +52,7 @@ export default function Navbar() {
   const { theme, toggle } = useTheme()
   const { uploads, abortUpload } = useUpload()
   const { walletId, balancePaise, topupOpen, openTopup, closeTopup, refreshBalance } = useWallet()
+  const { setOpen: setChatOpen } = useChatWidget()
   // Set only while a just-clicked mobile-drawer destination is waiting on
   // the "transfer in progress" confirmation — mirrors Sidebar.tsx's own
   // guard so navigating away mid-upload from the mobile drawer (which now
@@ -159,6 +161,17 @@ export default function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2 ml-auto">
+
+            {/* Help — opens the chat panel via lib/chat-widget-context, the
+                only way in now that the always-visible floating bubble is
+                off by default (see ChatWidget.tsx's showTrigger prop). */}
+            <button
+              onClick={() => setChatOpen(true)}
+              title="Help & support"
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-border text-muted shadow-sm hover:shadow-md hover:border-accent hover:text-accent hover:-translate-y-0.5 transition-all"
+            >
+              <HelpCircleIcon className="w-4 h-4" />
+            </button>
 
             {/* Theme toggle */}
             <button
@@ -365,6 +378,17 @@ export default function Navbar() {
               <span className={isActive(href) ? 'text-accent text-sm' : 'text-muted text-sm'}>→</span>
             </Link>
           ))}
+
+          {/* Help & support — opens the chat panel, same as the desktop icon */}
+          <button
+            onClick={() => { closeAll(); setChatOpen(true) }}
+            className="flex items-center gap-3 w-full py-3.5 text-base font-medium text-text-primary border-b border-border/40 hover:text-accent transition-colors"
+          >
+            <span className="w-7 h-7 rounded-lg border border-border bg-bg text-muted flex items-center justify-center flex-shrink-0">
+              <HelpCircleIcon className="w-3.5 h-3.5" />
+            </span>
+            Help & Support
+          </button>
 
           {/* VayuStudios link — opens in a new tab, same reasoning as desktop */}
           <a
