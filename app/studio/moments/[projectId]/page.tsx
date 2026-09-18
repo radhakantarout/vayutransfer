@@ -19,7 +19,7 @@ import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
 import TopNavBar from '@/components/studio/moments/TopNavBar'
 import InstallPrompt from '@/components/studio/moments/InstallPrompt'
-import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
+import { REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 
 const MAX_CONCURRENT_UPLOADS = 4
 const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
@@ -1038,11 +1038,10 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [indexingUntil, setIndexingUntil] = useState<number | null>(null)
   const [indexError, setIndexError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'photos' | 'reels'>('photos')
-  const [reelSelectMode, setReelSelectMode] = useState(false)
-  const [reelSelectedIds, setReelSelectedIds] = useState<Set<string>>(new Set())
-  // Long-press multi-select — separate from reel-select (different action
-  // set: Love/Download/Share/Bin, not "create a reel"), mutually exclusive
-  // with it so the two gestures can't both be active at once.
+  // Long-press multi-select for bulk Love/Download/Share/Delete/Edit-with-AI
+  // — Reels no longer pre-selects photos on this grid at all (ReelMvpModal's
+  // own 'compose' stage owns photo selection now); this is purely the
+  // generic bulk-action flow.
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1050,9 +1049,8 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [showReelModal, setShowReelModal] = useState(false)
   // Set only when opening ReelMvpModal from My Reels history's "Regenerate"
   // action (completed or failed reel) — takes over photoIds/initial values
-  // for that one open instead of the normal reelSelectedIds multi-select
-  // flow. Cleared on close so a later fresh "Reel it" tap doesn't
-  // accidentally inherit a stale regenerate target.
+  // for that one open. Cleared on close so a later fresh "Reel it" tap
+  // doesn't accidentally inherit a stale regenerate target.
   const [regenerateReel, setRegenerateReel] = useState<{ photoIds: string[]; initial: ReelRegeneratePrefill } | null>(null)
   const [showAiImageModal, setShowAiImageModal] = useState(false)
   // Non-empty only when the modal should open in edit mode (bulk-select
@@ -1191,12 +1189,17 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     }
   }, [uploads, aiEnabled, projectId, isAdmin])
 
-  const uploadFile = async (file: File, itemId: string) => {
+  // Returns the new fileId on success, null on failure/cancellation — purely
+  // additive (existing bulk-upload caller via runWithConcurrencyLimit
+  // already ignores the return value) — used by uploadSinglePhotoForReel
+  // below so ReelMvpModal's compose stage can add the freshly-uploaded
+  // photo straight to its selection without waiting on a separate refetch.
+  const uploadFile = async (file: File, itemId: string): Promise<string | null> => {
     const update = (patch: Partial<UploadItem>) =>
       setUploads((prev) => prev.map((u) => (u.id === itemId ? { ...u, ...patch } : u)))
 
     const controller = controllersRef.current.get(itemId)
-    if (!controller || controller.signal.aborted) return
+    if (!controller || controller.signal.aborted) return null
 
     const startTime = Date.now()
     startTimesRef.current.set(itemId, startTime)
@@ -1244,16 +1247,45 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       clearUploadResume(projectId, file.name, file.size, file.lastModified)
       update({ status: 'done', uploadedBytes: file.size })
       refreshFiles()
+      return fileId
     } catch (err) {
       if (controller.signal.aborted) {
         update({ status: 'cancelled' })
       } else {
         update({ status: 'error', error: err instanceof Error ? err.message : 'Upload failed' })
       }
+      return null
     } finally {
       controllersRef.current.delete(itemId)
       startTimesRef.current.delete(itemId)
     }
+  }
+
+  // Feeds ReelMvpModal's compose-stage "Upload from device" option — reuses
+  // the exact same real upload pipeline as any other photo (a real,
+  // permanent, storage-billed MediaFile row, same as the bulk-upload path;
+  // there's no lighter transient-upload concept in this codebase), just
+  // registers exactly one item instead of a whole FileList.
+  const uploadSinglePhotoForReel = async (file: File): Promise<string | null> => {
+    const itemId = crypto.randomUUID()
+    controllersRef.current.set(itemId, new AbortController())
+    const item: UploadItem = {
+      id: itemId, file, uploadedBytes: 0, totalBytes: file.size,
+      speedBytesPerSec: 0, secondsRemaining: Infinity, status: 'queued',
+      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+    }
+    // Force 'minimized' — `uploadViewMode` defaults to 'full' (the normal
+    // bulk-upload entry point's own behavior) and this function never
+    // touched it before, so the page's full-screen "Uploading your
+    // moments" takeover (z-[110]) would silently bury ReelMvpModal
+    // (z-[80]) the moment a photo was added from inside its own compose
+    // stage, which already has its own small inline spinner tile for
+    // exactly this. The small minimized pill (z-[105]) still shows in the
+    // corner, which is fine — only the automatic full-screen ambush needed
+    // to be prevented.
+    setUploadViewMode('minimized')
+    setUploads((prev) => [...prev, item])
+    return uploadFile(file, itemId)
   }
 
   const handleFiles = (selected: FileList | null) => {
@@ -1266,7 +1298,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     items.forEach((item) => controllersRef.current.set(item.id, new AbortController()))
     setUploadViewMode('full')
     setUploads((prev) => [...prev, ...items])
-    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, (item) => uploadFile(item.file, item.id))
+    runWithConcurrencyLimit(items, MAX_CONCURRENT_UPLOADS, async (item) => { await uploadFile(item.file, item.id) })
   }
 
   const cancelUpload = async (item: UploadItem) => {
@@ -1457,20 +1489,6 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     setFiles((prev) => prev.map((f) => f.fileId === fileId ? { ...f, commentCount: Math.max(0, (f.commentCount ?? 0) + delta) } : f))
   }
 
-  const toggleReelSelect = (fileId: string) => {
-    // Videos were selectable here before this fix — Kling's image-to-video
-    // endpoint (what the reel Lambda actually calls) has no video-input
-    // capability at all, so a selected video previously sailed through the
-    // UI only to be rejected (now) or wastefully sent to a paid API call
-    // (before the matching backend fix) once "Generate" was tapped.
-    if (files.find((f) => f.fileId === fileId)?.fileType !== 'IMAGE') return
-    setReelSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(fileId)) next.delete(fileId)
-      else if (next.size < MAX_REEL_PHOTOS) next.add(fileId)
-      return next
-    })
-  }
 
   const toggleSelected = (fileId: string) => {
     setSelectedIds((prev) => {
@@ -1751,18 +1769,6 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
               onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; setShowUploadModal(false) }}
             />
 
-            {files.length > 0 && canReel && reelSelectMode && (
-              <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-                <span className="text-xs font-semibold text-text-primary whitespace-nowrap">{reelSelectedIds.size}/{MAX_REEL_PHOTOS} picked</span>
-                <button
-                  onClick={() => { setReelSelectMode(false); setReelSelectedIds(new Set()) }}
-                  className="text-xs font-semibold text-bg bg-accent hover:bg-accent/90 transition-colors px-3 py-1.5 rounded-xl"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-
             {isAdmin && unindexedPhotos.length > 0 && (
               <div className="flex items-center justify-between gap-2 bg-accent/10 border border-accent/20 rounded-xl px-3.5 py-2.5">
                 <span className="text-xs text-accent font-semibold">
@@ -1802,8 +1808,8 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
                 {displayFiles.map((f) => {
                   const isReady = f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl
-                  const isPicked = reelSelectMode ? reelSelectedIds.has(f.fileId) : selectedIds.has(f.fileId)
-                  const anySelectMode = reelSelectMode || selectMode
+                  const isPicked = selectedIds.has(f.fileId)
+                  const anySelectMode = selectMode
                   // While still processing, show a blurred version of what
                   // was actually just uploaded (the local blob URL captured
                   // at queue-time, still alive until dismissed) instead of a
@@ -1818,10 +1824,9 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           if (longPressFiredRef.current) { longPressFiredRef.current = false; return }
                           if (!isReady) return
                           if (selectMode) { toggleSelected(f.fileId); return }
-                          if (reelSelectMode) toggleReelSelect(f.fileId)
-                          else setLightboxIndex(viewablePhotos.findIndex((p) => p.fileId === f.fileId))
+                          setLightboxIndex(viewablePhotos.findIndex((p) => p.fileId === f.fileId))
                         }}
-                        onPointerDown={(e) => { if (isReady && !reelSelectMode) startLongPress(f.fileId, e.clientX, e.clientY) }}
+                        onPointerDown={(e) => { if (isReady) startLongPress(f.fileId, e.clientX, e.clientY) }}
                         onPointerMove={(e) => handleLongPressMove(e.clientX, e.clientY)}
                         onPointerUp={cancelLongPress}
                         onPointerLeave={cancelLongPress}
@@ -1861,14 +1866,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           </div>
                         </div>
                       )}
-                      {reelSelectMode && isReady && f.fileType === 'VIDEO' ? (
-                        // Videos can't be used as AI Reel input (Kling's
-                        // image-to-video endpoint has no video-input
-                        // capability) — shown dimmed with no checkbox during
-                        // reel selection instead of looking pickable and
-                        // silently no-op'ing on tap.
-                        <div className="absolute inset-0 bg-black/50 pointer-events-none" />
-                      ) : anySelectMode && isReady && (
+                      {anySelectMode && isReady && (
                         <div className={`absolute inset-0 flex items-center justify-center transition-colors pointer-events-none ${isPicked ? 'bg-accent/25' : 'bg-black/10'}`}>
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isPicked ? 'bg-accent border-accent scale-100' : 'border-white/80 scale-90 bg-black/20'}`}>
                             {isPicked && (
@@ -2004,7 +2002,10 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
             onChat: () => setShowChat(true),
             onUpload: () => { setActiveTab('photos'); setShowUploadModal(true) },
             onManagePeople: () => setShowPeople(true),
-            onReelIt: () => { setActiveTab('photos'); setReelSelectMode(true); setReelSelectedIds(new Set()) },
+            // Opens ReelMvpModal directly on its own 'compose' stage now —
+            // photo selection lives inside the modal's own picker, no more
+            // grid pre-select dance.
+            onReelIt: () => { setRegenerateReel(null); setShowReelModal(true) },
           }}
         />
       )}
@@ -2095,24 +2096,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         />
       )}
 
-      {reelSelectMode && reelSelectedIds.size >= MIN_REEL_PHOTOS && (
-        <div className="fixed bottom-20 md:bottom-8 inset-x-4 md:inset-x-auto md:right-8 md:left-20 lg:left-56 z-30 flex justify-center">
-          <button
-            onClick={() => setShowReelModal(true)}
-            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold px-6 py-3.5 rounded-2xl shadow-2xl active:scale-[0.97] transition-all"
-          >
-            ✨ Create Reel ({reelSelectedIds.size})
-          </button>
-        </div>
-      )}
-
       {showReelModal && (
         <ReelMvpModal
           source="moments"
           projectId={projectId}
-          photoIds={regenerateReel?.photoIds ?? Array.from(reelSelectedIds)}
+          photoIds={regenerateReel?.photoIds ?? []}
           initial={regenerateReel?.initial}
-          onClose={() => { setShowReelModal(false); setReelSelectMode(false); setReelSelectedIds(new Set()); setRegenerateReel(null) }}
+          onUploadPhotoForReel={uploadSinglePhotoForReel}
+          momentsPhotos={files.filter((f) => f.fileType === 'IMAGE').map((f) => ({ fileId: f.fileId, r2PreviewUrl: f.r2PreviewUrl, originalFilename: f.originalFilename }))}
+          onClose={() => { setShowReelModal(false); setRegenerateReel(null) }}
         />
       )}
 

@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from 'react'
 import {
   computeReelCost, DEFAULT_AI_CLIP_DURATION_SEC, REEL_CLIP_DURATION_OPTIONS, MAX_REEL_TOTAL_DURATION_SEC,
   REEL_TEMPLATES, DEFAULT_REEL_TEMPLATE, type ReelTemplate,
-  REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH,
+  REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH, MOMENTS_COMPOSE_PROMPT_MAX,
   REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_DRONE_SHOT, type DroneShotStyle,
+  MIN_REEL_PHOTOS, MAX_REEL_PHOTOS,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
 import type { PricingConfig } from '@/types/pricingConfig'
+import AddReelPhotoSheet from '@/components/studio/moments/AddReelPhotoSheet'
+import ReelGalleryPickerModal, { type ReelPickerPhoto } from '@/components/studio/moments/ReelGalleryPickerModal'
 
 // "Fast minimal demo" scope (AI Reel Generator design doc, Phase 1) with a
 // real premium-feeling flow layered on top per explicit request: template
@@ -20,7 +23,7 @@ import type { PricingConfig } from '@/types/pricingConfig'
 // AIReelButton/ReelPhotoSelector/ReelGenerationScreen/ReelPreview split —
 // that's a later refactor once this UX is validated, not a correctness gap.
 
-type Stage = 'template' | 'style' | 'prompt' | 'confirm' | 'generating' | 'completed' | 'failed'
+type Stage = 'compose' | 'template' | 'style' | 'prompt' | 'confirm' | 'generating' | 'completed' | 'failed'
 const GENERATING_MESSAGES = ['Selecting your best moments…', 'Bringing your story to life…', 'Adding cinematic touches…', 'Almost there…']
 
 function aspectClass(ratio: string) {
@@ -178,7 +181,14 @@ export interface ReelRegeneratePrefill {
 type ReelMvpModalProps =
   | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
   | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
-  | { source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
+  | {
+      source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill
+      // Only ever populated by the Moments caller — used exclusively by the
+      // new 'compose' stage's own photo picker below. client/guest never
+      // pass these and never reach a code path that reads them.
+      onUploadPhotoForReel?: (file: File) => Promise<string | null>
+      momentsPhotos?: ReelPickerPhoto[]
+    }
 
 // VayuStudios Moments-only accent — the same brand gradient used everywhere
 // else in that surface (bottom nav, hero cards, upload CTA). Client Gallery
@@ -188,6 +198,15 @@ const MOMENTS_GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 export default function ReelMvpModal(props: ReelMvpModalProps) {
   const { photoIds, onClose } = props
   const isMoments = props.source === 'moments'
+  // Mutable, internal selection — `photoIds` itself stays whatever the
+  // caller passed in (client/guest always pass a real pre-selected list;
+  // Moments' "Regenerate" path passes the prior reel's photos; a fresh
+  // Moments "Reel it" open passes []). Only the new Moments compose stage's
+  // add/remove-photo actions ever call the setter below — every other path
+  // through this component never touches it, so composePhotoIds stays
+  // permanently equal to whatever it was seeded with, identical to today's
+  // behavior for client/guest and for Regenerate.
+  const [composePhotoIds, setComposePhotoIds] = useState<string[]>(photoIds)
   const primaryBtnClass = `flex-1 text-sm font-bold py-3 rounded-xl active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none ${
     isMoments ? 'text-white hover:opacity-90' : 'bg-accent text-bg hover:bg-accent/90'
   }`
@@ -203,7 +222,12 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
       ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/status`
       : `/studio/api/guest/${props.token}/reels/${reelId}/status`
   const { initial } = props
-  const [stage, setStage] = useState<Stage>(initial ? 'confirm' : 'template')
+  // Fresh Moments opens (no Regenerate `initial`) land on the new prompt-
+  // first 'compose' screen instead of the old template-first wizard's first
+  // step — client/guest are completely unaffected (still always 'template'
+  // when there's no `initial`), and Regenerate still always lands on
+  // 'confirm' regardless of source, unchanged.
+  const [stage, setStage] = useState<Stage>(initial ? 'confirm' : isMoments ? 'compose' : 'template')
   const [templateId, setTemplateId] = useState(initial?.templateId ?? DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(initial?.style ?? DEFAULT_REEL_STYLE)
   const [resolution, setResolution] = useState<ReelResolution>((initial?.resolution ?? DEFAULT_REEL_RESOLUTION) as ReelResolution)
@@ -214,6 +238,13 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [droneShot, setDroneShot] = useState<DroneShotStyle>((initial?.droneShot as DroneShotStyle) ?? DEFAULT_DRONE_SHOT)
   const [customPrompt, setCustomPrompt] = useState(initial?.customPrompt ?? '')
   const [consentChecked, setConsentChecked] = useState(false)
+  // 'compose'-stage-only state (Moments fresh-open path).
+  const [showAddPhotoSheet, setShowAddPhotoSheet] = useState(false)
+  const [showGalleryPicker, setShowGalleryPicker] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const composeFileInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [reelId, setReelId] = useState<string | null>(null)
   const [creditsCharged, setCreditsCharged] = useState<number | null>(null)
@@ -235,7 +266,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   }, [])
 
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
-  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(photoIds.length, durationSec, resolution, pricing ?? undefined)
+  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(composePhotoIds.length, durationSec, resolution, pricing ?? undefined)
   // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
   // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
   // component was originally built for — same real ₹ cost, wildly
@@ -262,6 +293,10 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   // the modal while it's still generating.
   const canCloseWhileGenerating = props.source !== 'guest'
   const reelsHomeLabel = isMoments ? 'the Reels tab' : 'My Reels'
+  // 'compose' stage's photo strip needs each selected fileId's preview —
+  // only ever populated for the moments source (see the props type above).
+  const momentsPhotos = props.source === 'moments' ? props.momentsPhotos ?? [] : []
+  const momentsPhotoById = new Map(momentsPhotos.map((p) => [p.fileId, p]))
 
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
@@ -288,14 +323,36 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     }, 3000)
   }
 
+  // 'compose'-stage-only handlers — only ever called from Moments' fresh-
+  // open photo picker, never reachable for client/guest or Regenerate.
+  const addPhotoId = (fileId: string) => {
+    setComposePhotoIds((prev) => (prev.includes(fileId) ? prev : [...prev, fileId]))
+  }
+  const removePhotoId = (fileId: string) => {
+    setComposePhotoIds((prev) => prev.filter((id) => id !== fileId))
+  }
+  const handleUploadFromDevice = () => {
+    setShowAddPhotoSheet(false)
+    composeFileInputRef.current?.click()
+  }
+  const handleComposeFileSelected = async (file: File) => {
+    if (props.source !== 'moments' || !props.onUploadPhotoForReel) return
+    setUploadingPhoto(true)
+    setUploadError(null)
+    const fileId = await props.onUploadPhotoForReel(file).catch(() => null)
+    setUploadingPhoto(false)
+    if (!fileId) { setUploadError('Upload failed — try again.'); return }
+    addPhotoId(fileId)
+  }
+
   const handleGenerate = async () => {
     setStage('generating')
     setError(null)
     const trimmedPrompt = customPrompt.trim() || undefined
     const droneShotField = droneMode ? droneShot : undefined
     const body = props.source === 'guest'
-      ? { photoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
+      ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+      : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -332,21 +389,205 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </svg>
           </button>
         )}
+        {stage === 'compose' && (
+          <div className="space-y-5">
+            <input
+              ref={composeFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) handleComposeFileSelected(file)
+              }}
+            />
+            <div className="text-center space-y-1">
+              <div className="text-3xl">✨</div>
+              <h2 className="text-lg font-bold text-text-primary">Create a reel</h2>
+              <p className="text-xs text-muted">Add up to {MAX_REEL_PHOTOS} photos and describe what you want</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Photos</p>
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
+                {composePhotoIds.map((fileId) => {
+                  const photo = momentsPhotoById.get(fileId)
+                  return (
+                    <div key={fileId} className="relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border border-border bg-bg">
+                      {photo?.r2PreviewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={photo.r2PreviewUrl} alt={photo.originalFilename} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-lg">🖼️</div>
+                      )}
+                      <button
+                        onClick={() => removePhotoId(fileId)}
+                        aria-label="Remove photo"
+                        className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )
+                })}
+                {uploadingPhoto && (
+                  <div className="flex-shrink-0 w-16 h-16 rounded-xl border border-border bg-bg flex items-center justify-center">
+                    <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
+                {composePhotoIds.length < MAX_REEL_PHOTOS && !uploadingPhoto && (
+                  <button
+                    onClick={() => setShowAddPhotoSheet(true)}
+                    aria-label="Add a photo"
+                    className="flex-shrink-0 w-16 h-16 rounded-xl border-2 border-dashed border-border hover:border-accent/50 flex items-center justify-center text-2xl text-muted hover:text-accent transition-colors"
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+              {uploadError && <p className="text-[11px] text-danger">{uploadError}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <textarea
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value.slice(0, MOMENTS_COMPOSE_PROMPT_MAX))}
+                placeholder="e.g. Slow-motion walk together at sunset, warm golden-hour light… (optional)"
+                rows={4}
+                className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
+              />
+              <p className="text-[10px] text-muted text-right">{customPrompt.length}/{MOMENTS_COMPOSE_PROMPT_MAX}</p>
+            </div>
+
+            <button
+              onClick={() => setStage('template')}
+              className="w-full text-xs font-semibold text-accent hover:underline text-center"
+            >
+              🎨 Use a template instead
+            </button>
+
+            <div className="border border-border rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setAdvancedOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-primary hover:bg-border/30 transition-colors"
+              >
+                <span>⚙️ Advanced (quality, clip length)</span>
+                <span className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>▾</span>
+              </button>
+              {advancedOpen && (
+                <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                    <div className="flex gap-1.5">
+                      {REEL_RESOLUTIONS.map((r) => (
+                        <button
+                          key={r}
+                          onClick={() => setResolution(r)}
+                          className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                            resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                          }`}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
+                    <div className="flex gap-1.5">
+                      {REEL_CLIP_DURATION_OPTIONS.map((d) => {
+                        const disabled = composePhotoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
+                        return (
+                          <button
+                            key={d}
+                            onClick={() => !disabled && setDurationSec(d)}
+                            disabled={disabled}
+                            className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                              disabled
+                                ? 'border-border text-muted/40 cursor-not-allowed'
+                                : durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                            }`}
+                          >
+                            {d}s
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-bg border border-border rounded-2xl px-4 py-3 flex items-center justify-between">
+              <span className="text-sm text-muted">Cost</span>
+              <span className="text-sm font-bold text-accent">{displayCreditsRequired} {creditsLabel}</span>
+            </div>
+
+            <label className="flex items-start gap-2.5 text-left cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={consentChecked}
+                onChange={(e) => setConsentChecked(e.target.checked)}
+                className="mt-0.5 w-4 h-4 flex-shrink-0 accent-accent rounded"
+              />
+              <span className="text-[11px] text-muted leading-relaxed">
+                I understand these photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.
+              </span>
+            </label>
+
+            <button
+              onClick={handleGenerate}
+              disabled={composePhotoIds.length < MIN_REEL_PHOTOS || !consentChecked}
+              className="w-full text-sm font-bold py-3 rounded-xl text-white active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none hover:opacity-90"
+              style={{ background: MOMENTS_GRADIENT }}
+            >
+              ✨ Generate
+            </button>
+          </div>
+        )}
+
+        {showAddPhotoSheet && (
+          <AddReelPhotoSheet
+            onUploadFromDevice={handleUploadFromDevice}
+            onChooseFromGallery={() => { setShowAddPhotoSheet(false); setShowGalleryPicker(true) }}
+            onClose={() => setShowAddPhotoSheet(false)}
+          />
+        )}
+
+        {showGalleryPicker && (
+          <ReelGalleryPickerModal
+            photos={momentsPhotos}
+            excludeIds={composePhotoIds}
+            onPick={(fileId) => { addPhotoId(fileId); setShowGalleryPicker(false) }}
+            onClose={() => setShowGalleryPicker(false)}
+          />
+        )}
+
         {stage === 'template' && (
           <div className="space-y-5">
             <div className="text-center space-y-1">
               <div className="text-3xl">✨</div>
               <h2 className="text-lg font-bold text-text-primary">Where's this reel going?</h2>
-              <p className="text-xs text-muted">{photoIds.length} photos selected</p>
+              <p className="text-xs text-muted">{composePhotoIds.length} photos selected</p>
             </div>
             <div className="flex gap-2.5">
               {REEL_TEMPLATES.map((t) => (
                 <TemplateCard key={t.id} template={t} selected={templateId === t.id} onClick={() => setTemplateId(t.id)} />
               ))}
             </div>
-            <button onClick={() => setStage('style')} className={`w-full ${primaryBtnClass}`} style={primaryBtnStyle}>
-              Next →
-            </button>
+            {isMoments ? (
+              <div className="flex gap-3">
+                <button onClick={() => setStage('compose')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
+                <button onClick={() => setStage('style')} className={primaryBtnClass} style={primaryBtnStyle}>Next →</button>
+              </div>
+            ) : (
+              <button onClick={() => setStage('style')} className={`w-full ${primaryBtnClass}`} style={primaryBtnStyle}>
+                Next →
+              </button>
+            )}
           </div>
         )}
 
@@ -475,7 +716,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                     // enforced here too, not just server-side — a combination
                     // that would exceed it should be unselectable, not
                     // rejected only after tapping Generate.
-                    const disabled = photoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
+                    const disabled = composePhotoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
                     return (
                       <button
                         key={d}
@@ -492,18 +733,18 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                     )
                   })}
                 </div>
-                {photoIds.length * durationSec >= MAX_REEL_TOTAL_DURATION_SEC - 2 && (
+                {composePhotoIds.length * durationSec >= MAX_REEL_TOTAL_DURATION_SEC - 2 && (
                   <p className="text-[10px] text-muted">Max total reel length is {MAX_REEL_TOTAL_DURATION_SEC}s — some lengths are greyed out at this photo count.</p>
                 )}
               </div>
             </div>
 
             <div className="bg-bg border border-border rounded-2xl px-4 py-3 space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-muted">Photos</span><span className="font-semibold text-text-primary">{photoIds.length}</span></div>
+              <div className="flex justify-between"><span className="text-muted">Photos</span><span className="font-semibold text-text-primary">{composePhotoIds.length}</span></div>
               <div className="flex justify-between"><span className="text-muted">Format</span><span className="font-semibold text-text-primary">{template.icon} {template.label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Style</span><span className="font-semibold text-text-primary">{REEL_STYLE_META[style].icon} {REEL_STYLE_META[style].label}</span></div>
               <div className="flex justify-between"><span className="text-muted">Quality · Length</span><span className="font-semibold text-text-primary">{resolution} · {durationSec}s/clip</span></div>
-              <div className="flex justify-between"><span className="text-muted">Total reel length</span><span className="font-semibold text-text-primary">{photoIds.length} × {durationSec}s = {photoIds.length * durationSec}s</span></div>
+              <div className="flex justify-between"><span className="text-muted">Total reel length</span><span className="font-semibold text-text-primary">{composePhotoIds.length} × {durationSec}s = {composePhotoIds.length * durationSec}s</span></div>
               {droneMode && (
                 <div className="flex justify-between"><span className="text-muted">Drone shot</span><span className="font-semibold text-text-primary">{DRONE_SHOT_META[droneShot].icon} {DRONE_SHOT_META[droneShot].label}</span></div>
               )}
@@ -521,7 +762,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 className="mt-0.5 w-4 h-4 flex-shrink-0 accent-accent rounded"
               />
               <span className="text-[11px] text-muted leading-relaxed">
-                I understand these {photoIds.length} photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.
+                I understand these {composePhotoIds.length} photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.
               </span>
             </label>
 
