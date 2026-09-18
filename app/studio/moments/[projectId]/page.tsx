@@ -23,6 +23,9 @@ import { MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, REEL_TEMPLATES, REEL_STYLE_META } fro
 
 const MAX_CONCURRENT_UPLOADS = 4
 const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
+// Mirrors MAX_SOURCE_IMAGES in app/studio/api/moments/events/[projectId]/ai-images/route.ts
+// (a server module, not importable here) and AiImageStudioModal.tsx's own copy.
+const MAX_AI_EDIT_SOURCE_IMAGES = 10
 
 interface EventDetail {
   projectId: string
@@ -1015,6 +1018,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const longPressFiredRef = useRef(false)
   const [showReelModal, setShowReelModal] = useState(false)
   const [showAiImageModal, setShowAiImageModal] = useState(false)
+  // Non-empty only when the modal should open in edit mode (bulk-select
+  // toolbar's "Edit with AI" or a single photo from the lightbox) — cleared
+  // whenever the plain "AI Studio" (generate) entry point opens the modal,
+  // so a stale edit-mode selection can never leak into a generate request.
+  const [aiEditSourceFiles, setAiEditSourceFiles] = useState<{ fileId: string; previewUrl: string }[]>([])
   const [showSelfie, setShowSelfie] = useState(false)
   const [selfieFileIds, setSelfieFileIds] = useState<Set<string> | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1496,6 +1504,23 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     if (meta.allowOriginalDownloads) setDownloadChoiceIds(ids)
     else downloadWebVersion(ids)
   }
+  // Silently narrows to eligible photos (IMAGE + ready + has a preview URL)
+  // and caps at MAX_AI_EDIT_SOURCE_IMAGES — same "just work with what's
+  // valid" approach bulkShare already takes by filtering to files with an
+  // r2PreviewUrl, rather than blocking the whole action over a mixed
+  // photo+video selection. No-ops if nothing in the selection qualifies
+  // (the toolbar button is disabled in that case, so this is a safety net,
+  // not the primary guard).
+  const bulkEditWithAi = () => {
+    const targets = files
+      .filter((f) => selectedIds.has(f.fileId) && f.fileType === 'IMAGE' && f.processingStatus === 'READY' && f.r2PreviewUrl)
+      .slice(0, MAX_AI_EDIT_SOURCE_IMAGES)
+      .map((f) => ({ fileId: f.fileId, previewUrl: f.r2PreviewUrl! }))
+    if (targets.length === 0) return
+    exitSelectMode()
+    setAiEditSourceFiles(targets)
+    setShowAiImageModal(true)
+  }
   const bulkShare = async () => {
     const targets = files.filter((f) => selectedIds.has(f.fileId) && f.r2PreviewUrl)
       .map((f) => ({ previewUrl: f.r2PreviewUrl!, filename: f.originalFilename }))
@@ -1654,7 +1679,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                 new one-off flag (per feedback_standardize_admin_controls). */}
             {canReel && (
               <button
-                onClick={() => { setActiveTab('photos'); setShowAiImageModal(true) }}
+                onClick={() => { setActiveTab('photos'); setAiEditSourceFiles([]); setShowAiImageModal(true) }}
                 className="flex items-center gap-1.5 text-xs font-bold text-white rounded-full pl-3 pr-3.5 py-2 shadow-md shadow-accent/20 hover:opacity-90 hover:-translate-y-0.5 active:scale-95 transition-all"
                 style={{ background: GRADIENT }}
               >
@@ -1907,6 +1932,18 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
               </svg>
             </button>
+            {canReel && (
+              <button
+                onClick={bulkEditWithAi}
+                disabled={!files.some((f) => selectedIds.has(f.fileId) && f.fileType === 'IMAGE')}
+                title="Edit with AI"
+                className="w-10 h-10 rounded-2xl flex items-center justify-center bg-bg hover:bg-border/60 text-muted hover:text-text-primary transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                </svg>
+              </button>
+            )}
             {isAdmin && (
               <button onClick={bulkDelete} title="Delete" className="w-10 h-10 rounded-2xl flex items-center justify-center bg-danger/10 hover:bg-danger/20 text-danger transition-colors">
                 <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1945,6 +1982,11 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           onInfo={(photo) => setInfoFor(photo.fileId)}
           onToggleLike={(photo) => toggleLike(photo.fileId)}
           onOpenComments={(photo) => setCommentsFor(photo.fileId)}
+          onEditWithAi={canReel ? (photo) => {
+            setAiEditSourceFiles([{ fileId: photo.fileId, previewUrl: photo.previewUrl }])
+            setLightboxIndex(null)
+            setShowAiImageModal(true)
+          } : undefined}
         />
       )}
 
@@ -2033,7 +2075,8 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       {showAiImageModal && (
         <AiImageStudioModal
           projectId={projectId}
-          onClose={() => setShowAiImageModal(false)}
+          sourceFiles={aiEditSourceFiles}
+          onClose={() => { setShowAiImageModal(false); setAiEditSourceFiles([]) }}
         />
       )}
 

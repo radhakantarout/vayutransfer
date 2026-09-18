@@ -7,16 +7,20 @@ import { MAX_CUSTOM_PROMPT_LENGTH } from '@/constants/videoProviders'
 import type { AiImageResolution, AiImageAspectRatio } from '@/types/studio'
 import type { PricingConfig } from '@/types/pricingConfig'
 
-// Phase 2 scope: text-to-image only (Kling's `n` field lets one request
-// generate a whole batch, so "batch count" here is a single generation
-// request, not N separate ones). Reference-image editing/fusion (Phase 3)
-// is a separate entry point later — same modal, an `edit` mode this
-// component doesn't expose yet.
+// Phase 2 (text-to-image) + Phase 3 (reference-image editing/fusion) share
+// this one modal — `sourceFiles` being non-empty is what puts it in 'edit'
+// mode (Kling's `n` field lets one request generate a whole batch, so
+// "batch count" here is a single generation request, not N separate ones).
 
 type Stage = 'compose' | 'generating' | 'results' | 'failed'
 
 const MIN_IMAGES = 1
 const MAX_IMAGES = 9
+// Mirrors MAX_SOURCE_IMAGES in the server route
+// (app/studio/api/moments/events/[projectId]/ai-images/route.ts) — kept as
+// a separate local constant since that route file is a server module and
+// isn't meant to be imported client-side.
+const MAX_SOURCE_IMAGES = 10
 // Same "no 4K" constraint as the route/Lambda — see
 // lambda/vayustudio-imagegen/providers/kling.js's header for why.
 const RESOLUTIONS: AiImageResolution[] = ['1K', '2K']
@@ -56,9 +60,16 @@ function useReducedMotion() {
 interface Props {
   projectId: string
   onClose: () => void
+  // Presence (non-empty) is what selects 'edit' mode — 1-10 gallery photos
+  // the user already picked (bulk-select toolbar or PhotoLightbox's single-
+  // photo shortcut), passed with their preview URLs so this modal can show
+  // the @Image1/@Image2-labeled reference strip without looking anything up
+  // itself.
+  sourceFiles?: { fileId: string; previewUrl: string }[]
 }
 
-export default function AiImageStudioModal({ projectId, onClose }: Props) {
+export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [] }: Props) {
+  const isEdit = sourceFiles.length > 0
   const [stage, setStage] = useState<Stage>('compose')
   const [prompt, setPrompt] = useState('')
   const [resolution, setResolution] = useState<AiImageResolution>('1K')
@@ -93,7 +104,7 @@ export default function AiImageStudioModal({ projectId, onClose }: Props) {
     return () => clearInterval(id)
   }, [stage, reducedMotion])
 
-  const { sellPricePaise } = computeImageEditCost(numImages, resolution, pricing ?? undefined, 0)
+  const { sellPricePaise } = computeImageEditCost(numImages, resolution, pricing ?? undefined, sourceFiles.length)
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(pricing?.aiExtraPaisePer1000)))
   const displayCreditsRequired = toMomentsCredits(creditsRequired, pricing?.momentsCreditDivisor)
 
@@ -122,7 +133,10 @@ export default function AiImageStudioModal({ projectId, onClose }: Props) {
     const res = await fetch(`/studio/api/moments/events/${projectId}/ai-images`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, resolution, aspectRatio, numImages }),
+      body: JSON.stringify({
+        prompt, resolution, aspectRatio, numImages,
+        sourceFileIds: isEdit ? sourceFiles.map((f) => f.fileId) : undefined,
+      }),
     }).then((r) => r.json()).catch(() => null)
 
     if (!res?.success) {
@@ -191,15 +205,39 @@ export default function AiImageStudioModal({ projectId, onClose }: Props) {
           <div className="space-y-5">
             <div className="text-center space-y-1">
               <div className="text-3xl">✨</div>
-              <h2 className="text-lg font-bold text-text-primary">AI Image Studio</h2>
-              <p className="text-xs text-muted">Describe what you want to see</p>
+              <h2 className="text-lg font-bold text-text-primary">{isEdit ? 'Edit with AI' : 'AI Image Studio'}</h2>
+              <p className="text-xs text-muted">
+                {isEdit ? `Describe how to edit or combine ${sourceFiles.length === 1 ? 'this photo' : `these ${sourceFiles.length} photos`}` : 'Describe what you want to see'}
+              </p>
             </div>
+
+            {isEdit && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Reference photos</p>
+                <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+                  {sourceFiles.map((f, i) => (
+                    <div key={f.fileId} className="relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border border-border">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={f.previewUrl} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
+                      <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[9px] font-bold text-center py-0.5">
+                        @Image{i + 1}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted">
+                  Reference them in your prompt by name, e.g. &quot;combine @Image1 and @Image2 into one scene&quot;.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
-                placeholder="e.g. A dreamy golden-hour portrait with soft bokeh, cinematic lighting…"
+                placeholder={isEdit
+                  ? 'e.g. Turn @Image1 into a watercolor painting, keep the composition…'
+                  : 'e.g. A dreamy golden-hour portrait with soft bokeh, cinematic lighting…'}
                 rows={4}
                 className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
                 autoFocus
@@ -207,20 +245,22 @@ export default function AiImageStudioModal({ projectId, onClose }: Props) {
               <p className="text-[10px] text-muted text-right">{prompt.length}/{MAX_CUSTOM_PROMPT_LENGTH}</p>
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">💡 Need inspiration?</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PROMPT_IDEAS.map((idea) => (
-                  <button
-                    key={idea}
-                    onClick={() => setPrompt(idea.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
-                    className="text-[11px] font-medium text-accent bg-accent/10 border border-accent/20 rounded-full px-2.5 py-1 hover:bg-accent/20 transition-colors"
-                  >
-                    {idea.length > 38 ? idea.slice(0, 38) + '…' : idea}
-                  </button>
-                ))}
+            {!isEdit && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">💡 Need inspiration?</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {PROMPT_IDEAS.map((idea) => (
+                    <button
+                      key={idea}
+                      onClick={() => setPrompt(idea.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
+                      className="text-[11px] font-medium text-accent bg-accent/10 border border-accent/20 rounded-full px-2.5 py-1 hover:bg-accent/20 transition-colors"
+                    >
+                      {idea.length > 38 ? idea.slice(0, 38) + '…' : idea}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-1.5">
               <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Shape</p>

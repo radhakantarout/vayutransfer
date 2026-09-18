@@ -104,7 +104,9 @@ export async function POST(
     if (!prompt) {
       return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: 'Describe what you want to generate.' }, { status: 400 })
     }
-    const sourceFileIds = Array.isArray(body.sourceFileIds) ? body.sourceFileIds.slice(0, MAX_SOURCE_IMAGES) : []
+    const sourceFileIds = Array.isArray(body.sourceFileIds)
+      ? Array.from(new Set(body.sourceFileIds)).slice(0, MAX_SOURCE_IMAGES)
+      : []
     const mode: AiImageMode = sourceFileIds.length > 0 ? 'edit' : 'generate'
     const resolution: AiImageResolution = AI_IMAGE_RESOLUTIONS.includes(body.resolution as AiImageResolution)
       ? (body.resolution as AiImageResolution) : '1K'
@@ -115,12 +117,19 @@ export async function POST(
 
     let sourceKeys: string[] = []
     if (mode === 'edit') {
-      // Never trust client-supplied fileIds beyond using them as a filter —
-      // re-derive the authoritative set from this project's own real files
-      // (same discipline as the reel route).
+      // Never trust client-supplied fileIds beyond using them to look up
+      // this project's own real files — but the CLIENT's order must be
+      // preserved (map over sourceFileIds, not allFiles' own DB-query
+      // order), since this array order becomes @Image1/@Image2/... in
+      // Kling's prompt syntax. The UI shows the user exactly this
+      // numbering against their selected photos — silently re-ordering it
+      // server-side would make the prompt reference the wrong photo with
+      // no error surfaced anywhere.
       const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
-      const requestedSet = new Set(sourceFileIds)
-      const selectedFiles = allFiles.filter((f) => requestedSet.has(f.fileId) && f.processingStatus === 'READY' && f.fileType === 'IMAGE')
+      const byId = new Map(allFiles.map((f) => [f.fileId, f]))
+      const selectedFiles = sourceFileIds
+        .map((id) => byId.get(id))
+        .filter((f): f is MediaFile => !!f && f.processingStatus === 'READY' && f.fileType === 'IMAGE')
       if (selectedFiles.length !== sourceFileIds.length) {
         return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'One or more selected photos are not eligible for AI editing.' }, { status: 400 })
       }

@@ -51,13 +51,19 @@ interface Props {
   onInfo?: (photo: LightboxPhoto) => void
   onToggleLike?: (photo: LightboxPhoto) => void
   onOpenComments?: (photo: LightboxPhoto) => void
+  // Moments role only — single-photo shortcut into AI Image Studio's edit
+  // mode (Kling image-editing, not video). Only ever rendered for IMAGE
+  // entries (see the render site) since Kling's image endpoint has no
+  // video-input capability, same constraint as Reel-It's photo-only
+  // selection.
+  onEditWithAi?: (photo: LightboxPhoto) => void
 }
 
 const THUMB_STEP = 64 // 56px (w-14) thumbnail + 8px (gap-2)
 
 export default function PhotoLightbox({
   photos, index, onIndexChange, onClose, role, onDownload, onShare, isSelected, onToggleSelect, onDelete,
-  onInfo, onToggleLike, onOpenComments,
+  onInfo, onToggleLike, onOpenComments, onEditWithAi,
 }: Props) {
   const touchStartX = useRef(0)
   const stripRef = useRef<HTMLDivElement>(null)
@@ -218,6 +224,14 @@ export default function PhotoLightbox({
                 className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
                 <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+              </button>
+            )}
+            {onEditWithAi && current.fileType !== 'VIDEO' && (
+              <button onClick={() => onEditWithAi(current)} title="Edit with AI"
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
                 </svg>
               </button>
             )}
