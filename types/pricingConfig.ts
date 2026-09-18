@@ -23,19 +23,23 @@ export interface PricingConfig {
   momentsRetentionDays: number
   // AI Image Studio (Kling image generation/editing) — spends from the same
   // unified aiSearchCredits pool as everything else, no new credit type.
-  // Units-per-image varies by output resolution (PROVISIONAL: 1K/2K assumed
-  // equal cost, 4K assumed 2x, per third-party Kling resellers' published
-  // rates — not yet confirmed against a real Kling invoice, same
-  // "provisional until calibrated" honesty as the original video rate).
+  // Units-per-image confirmed against a real Kling API call (2026-09-18):
+  // 8 units/image at both 1k and 2k (no 4K tier exists on this account —
+  // see types/studio.ts's AiImageResolution comment). Kept as separate
+  // 1k/2k fields (not one shared constant) so a future pricing change on
+  // just one tier doesn't require a code change.
   klingImageEditPaisePer100kUnits: number
   klingImageEditUnitsPerImage1k: number
   klingImageEditUnitsPerImage2k: number
-  klingImageEditUnitsPerImage4k: number
   // Edit/fusion mode sends 1-10 reference images to Kling alongside the
-  // prompt — PROVISIONAL until confirmed, but deliberately present from day
-  // one rather than assumed free: a validated, bounded cost driver (source
-  // image count, already capped at 10) being silently absent from the price
-  // formula is exactly the class of bug the reel-duration cost leak was.
+  // prompt. A real test call with 1 reference image showed NO extra unit
+  // cost over pure text-to-image (still 8 units) — this field's nonzero
+  // default is therefore a deliberate margin buffer, not a measured Kling
+  // cost, kept configurable in case a surcharge appears at a higher
+  // reference count than tested. Present from day one rather than assumed
+  // free either way: a validated, bounded cost driver (source image count,
+  // already capped at 10) being silently absent from the price formula is
+  // exactly the class of bug the reel-duration cost leak was.
   klingImageEditUnitsPerReferenceImage: number
   // Config-driven provider swap — mirrors lib/studio/videoProviders/router.ts's
   // enabled/priority pattern but simpler (one active provider at a time,

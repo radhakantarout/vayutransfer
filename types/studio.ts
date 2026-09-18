@@ -555,7 +555,11 @@ export interface StudioReel {
 // has zero sourceFileIds (pure text-to-image); 'edit' mode has 1-10, referenced
 // in the prompt via Kling's own "@Image1"/"@Image2" syntax.
 export type AiImageMode = 'generate' | 'edit'
-export type AiImageResolution = '1K' | '2K' | '4K'
+// No '4K' — confirmed against a real Kling API call (2026-09-18) that this
+// account/tier only accepts lowercase '1k'/'2k'; '4k' returns "resolution
+// value '4k' is not supported". See lambda/vayustudio-imagegen/providers/kling.js's
+// header comment for the full probe results.
+export type AiImageResolution = '1K' | '2K'
 export type AiImageAspectRatio = 'auto' | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3' | '21:9'
 export type AiImageStatus = 'generating' | 'completed' | 'failed'
 

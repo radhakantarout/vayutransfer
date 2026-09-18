@@ -22,10 +22,9 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   creditValuePaise: 8000,           // ₹80 / reel credit (Client Gallery/Guest pool)
   momentsRetentionDays: 17,
   klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1
-  klingImageEditUnitsPerImage1k: 8,
-  klingImageEditUnitsPerImage2k: 8,         // PROVISIONAL: assumed same cost as 1K until confirmed
-  klingImageEditUnitsPerImage4k: 16,        // PROVISIONAL: assumed 2x 1K/2K until confirmed
-  klingImageEditUnitsPerReferenceImage: 2,  // PROVISIONAL: assumed cheaper than a full generation (context, not output)
+  klingImageEditUnitsPerImage1k: 8,         // CONFIRMED via real Kling API call, 2026-09-18
+  klingImageEditUnitsPerImage2k: 8,         // CONFIRMED via real Kling API call, 2026-09-18 (same as 1k)
+  klingImageEditUnitsPerReferenceImage: 2,  // Margin buffer, not a measured Kling cost — see types/pricingConfig.ts comment
   imageProvider: 'kling',
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
@@ -59,7 +58,7 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
   'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
-  'klingImageEditUnitsPerImage4k', 'klingImageEditUnitsPerReferenceImage', 'momentsCreditDivisor',
+  'klingImageEditUnitsPerReferenceImage', 'momentsCreditDivisor',
   'momentsWelcomeBonusCredits',
 ]
 

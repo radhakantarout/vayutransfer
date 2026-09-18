@@ -47,10 +47,9 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: 'AI Image Studio (Kling) — backend only, UI not live yet',
     fields: [
       { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-generation units.', suffix: 'paise/100k units' },
-      { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'PROVISIONAL until confirmed against a real Kling invoice.', suffix: 'units/image' },
-      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K', hint: 'PROVISIONAL — assumed same as 1K until confirmed.', suffix: 'units/image' },
-      { key: 'klingImageEditUnitsPerImage4k', label: 'Units per image — 4K', hint: 'PROVISIONAL — assumed 2x 1K/2K until confirmed.', suffix: 'units/image' },
-      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'PROVISIONAL — cost per source photo fed into edit/fusion mode (0-10 per request).', suffix: 'units/reference' },
+      { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'Confirmed against a real Kling API call.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K', hint: 'Confirmed against a real Kling API call — same as 1K.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'Margin buffer, not a measured Kling cost — a real test showed no extra charge for 1 reference image. Cost per source photo fed into edit/fusion mode (0-10 per request).', suffix: 'units/reference' },
     ],
   },
 ]

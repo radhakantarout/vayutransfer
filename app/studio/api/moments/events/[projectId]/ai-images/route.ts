@@ -18,7 +18,10 @@ const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1'
 const MIN_AI_IMAGES = 1
 const MAX_AI_IMAGES = 9
 const MAX_SOURCE_IMAGES = 10
-const AI_IMAGE_RESOLUTIONS: readonly AiImageResolution[] = ['1K', '2K', '4K']
+// No '4K' — confirmed against a real Kling API call (2026-09-18) that this
+// account/tier rejects it outright ("resolution value '4k' is not
+// supported"). See lambda/vayustudio-imagegen/providers/kling.js's header.
+const AI_IMAGE_RESOLUTIONS: readonly AiImageResolution[] = ['1K', '2K']
 const AI_IMAGE_ASPECT_RATIOS: readonly AiImageAspectRatio[] = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9']
 
 // AI Image Studio (Moments) — same MVP shape as the reel route (moments/

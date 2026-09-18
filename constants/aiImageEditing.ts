@@ -1,9 +1,10 @@
 // AI Image Studio (Kling image generation/editing, Moments). Spends from
 // the same unified aiSearchCredits pool as reels and face-indexing — no new
 // credit type. Resolution-aware the same way computeReelCost is
-// resolution-aware (constants/videoProviders.ts) — units-per-image varies
-// by output resolution, PROVISIONAL until confirmed against a real Kling
-// invoice (see lib/pricingConfig.ts's DEFAULT_PRICING_CONFIG comment).
+// resolution-aware (constants/videoProviders.ts) — units-per-image confirmed
+// against a real Kling API call (2026-09-18): 8 units/image at both 1k and
+// 2k. No 4K tier exists on this account (see types/studio.ts's
+// AiImageResolution comment) — deliberately not a selectable resolution.
 import { aiSearchCreditPricePaise } from './studioPricing'
 import type { AiImageResolution } from '@/types/studio'
 
@@ -20,7 +21,6 @@ export function computeImageEditCost(
     klingImageEditPaisePer100kUnits?: number
     klingImageEditUnitsPerImage1k?: number
     klingImageEditUnitsPerImage2k?: number
-    klingImageEditUnitsPerImage4k?: number
     klingImageEditUnitsPerReferenceImage?: number
     targetMargin?: number
     aiExtraPaisePer1000?: number
@@ -35,7 +35,6 @@ export function computeImageEditCost(
   const unitsByResolution: Record<AiImageResolution, number> = {
     '1K': rates?.klingImageEditUnitsPerImage1k ?? 8,
     '2K': rates?.klingImageEditUnitsPerImage2k ?? 8,
-    '4K': rates?.klingImageEditUnitsPerImage4k ?? 16,
   }
   const unitsPerImage = unitsByResolution[resolution]
   const unitsPerReference = rates?.klingImageEditUnitsPerReferenceImage ?? 2
