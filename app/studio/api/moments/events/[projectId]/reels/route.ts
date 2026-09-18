@@ -54,22 +54,48 @@ export async function GET(
     )
     reels.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 
-    const data = await Promise.all(reels.map(async (r) => ({
-      reelId: r.reelId,
-      status: r.status,
-      photoCount: r.photoIds?.length ?? 0,
-      durationSec: r.durationSec,
-      style: r.style,
-      templateId: r.templateId ?? null,
-      creditsCharged: r.creditsCharged ?? 0,
-      createdAt: r.createdAt,
-      completedAt: r.completedAt ?? null,
-      errorMessage: r.errorMessage ?? null,
-      outputUrl: r.status === 'completed' && r.outputR2Key
-        ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
-        : null,
-      progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
-    })))
+    const data = await Promise.all(reels.map(async (r) => {
+      // durationSec on the record is the reel's TOTAL length (per-clip ×
+      // photo count, see the POST route) — back out the per-clip value for
+      // "Regenerate" pre-fill by finding the closest real
+      // REEL_CLIP_DURATION_OPTIONS value, since floating-point division
+      // could land between two valid options.
+      const photoCount = r.photoIds?.length ?? 0
+      const impliedClipDuration = photoCount > 0 ? r.durationSec / photoCount : REEL_CLIP_DURATION_OPTIONS[0]
+      const clipDurationSec = REEL_CLIP_DURATION_OPTIONS.reduce((closest, opt) =>
+        Math.abs(opt - impliedClipDuration) < Math.abs(closest - impliedClipDuration) ? opt : closest
+      , REEL_CLIP_DURATION_OPTIONS[0])
+
+      return {
+        reelId: r.reelId,
+        status: r.status,
+        photoCount,
+        durationSec: r.durationSec,
+        style: r.style,
+        templateId: r.templateId ?? null,
+        creditsCharged: r.creditsCharged ?? 0,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt ?? null,
+        errorMessage: r.errorMessage ?? null,
+        outputUrl: r.status === 'completed' && r.outputR2Key
+          ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
+          : null,
+        progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
+        // Everything AiImageStudioModal's sibling, ReelMvpModal, needs to
+        // open pre-filled for "Regenerate" — only (status === 'completed' ||
+        // 'failed') items ever show that action, but sent for every status
+        // since it's cheap and keeps this shape uniform.
+        regenerate: {
+          photoIds: r.photoIds ?? [],
+          templateId: r.templateId ?? undefined,
+          style: r.style,
+          resolution: r.resolution,
+          clipDurationSec,
+          customPrompt: r.customPrompt ?? '',
+          droneShot: r.droneShot ?? undefined,
+        },
+      }
+    }))
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
@@ -240,6 +266,8 @@ export async function POST(
       aspectRatio: template.aspectRatio,
       resolution,
       durationSec: durationSec * photos.length,
+      customPrompt: sanitizedPrompt || undefined,
+      droneShot: droneFragment ? requestedDroneShot : undefined,
       status: 'generating',
       provider: 'kling',
       creditsCharged: creditsRequired,

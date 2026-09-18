@@ -522,6 +522,12 @@ export interface StudioReel {
   aspectRatio: ReelAspectRatio
   resolution: ReelResolution
   durationSec: number
+  // Persisted purely for "Regenerate" pre-fill (My Reels history) — neither
+  // field is read anywhere in the generation pipeline itself, which only
+  // ever needs the derived stylePromptFragment computed once at creation
+  // time and handed straight to the Lambda.
+  customPrompt?: string
+  droneShot?: string
   status: ReelStatus
   provider?: 'kling'          // internal only — never sent to the frontend
   providerJobIds?: string[]   // one per hero clip, for cancel/retry

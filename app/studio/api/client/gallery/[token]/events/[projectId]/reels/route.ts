@@ -211,6 +211,8 @@ export async function POST(
       aspectRatio: template.aspectRatio,
       resolution,
       durationSec: durationSec * photos.length,
+      customPrompt: sanitizedPrompt || undefined,
+      droneShot: droneFragment ? requestedDroneShot : undefined,
       status: 'generating',
       provider: 'kling',
       creditsCharged: creditsRequired,

@@ -158,10 +158,27 @@ function DroneCard({ shot, selected, onClick, reducedMotion }: { shot: DroneShot
 // Moments has no share-token at all — the caller is already authenticated
 // via the studio_token cookie (role CLIENT, owner of their own personal
 // Studio), same as every other /studio/api/moments/* route.
+//
+// `initial`, when present, is a "Regenerate" request from My Reels history
+// (a completed reel the user wants a fresh take on, or a failed one) — the
+// same photos and settings that reel was created with, pre-filled here so
+// the modal opens straight on the confirm screen ready to tap Generate, or
+// the user can tap Back through any earlier step to change something first
+// before regenerating. Omitted entirely for a brand-new reel (the normal
+// "Reel it" flow), which still starts from the template-picker.
+export interface ReelRegeneratePrefill {
+  templateId?: string
+  style?: ReelStyle
+  resolution?: ReelResolution
+  clipDurationSec?: number
+  customPrompt?: string
+  droneShot?: string
+}
+
 type ReelMvpModalProps =
-  | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void }
-  | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void }
-  | { source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void }
+  | { source: 'client'; token: string; projectId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
+  | { source: 'guest'; token: string; searchSessionId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
+  | { source: 'moments'; projectId: string; photoIds: string[]; onClose: () => void; initial?: ReelRegeneratePrefill }
 
 // VayuStudios Moments-only accent — the same brand gradient used everywhere
 // else in that surface (bottom nav, hero cards, upload CTA). Client Gallery
@@ -185,15 +202,17 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     : props.source === 'moments'
       ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/status`
       : `/studio/api/guest/${props.token}/reels/${reelId}/status`
-  const [stage, setStage] = useState<Stage>('template')
-  const [templateId, setTemplateId] = useState(DEFAULT_REEL_TEMPLATE)
-  const [style, setStyle] = useState<ReelStyle>(DEFAULT_REEL_STYLE)
-  const [resolution, setResolution] = useState<ReelResolution>(DEFAULT_REEL_RESOLUTION as ReelResolution)
-  const [durationSec, setDurationSec] = useState<number>(DEFAULT_AI_CLIP_DURATION_SEC)
-  // Drone Mode — off by default (opt-in, recommended for outdoor photos).
-  const [droneMode, setDroneMode] = useState(false)
-  const [droneShot, setDroneShot] = useState<DroneShotStyle>(DEFAULT_DRONE_SHOT)
-  const [customPrompt, setCustomPrompt] = useState('')
+  const { initial } = props
+  const [stage, setStage] = useState<Stage>(initial ? 'confirm' : 'template')
+  const [templateId, setTemplateId] = useState(initial?.templateId ?? DEFAULT_REEL_TEMPLATE)
+  const [style, setStyle] = useState<ReelStyle>(initial?.style ?? DEFAULT_REEL_STYLE)
+  const [resolution, setResolution] = useState<ReelResolution>((initial?.resolution ?? DEFAULT_REEL_RESOLUTION) as ReelResolution)
+  const [durationSec, setDurationSec] = useState<number>(initial?.clipDurationSec ?? DEFAULT_AI_CLIP_DURATION_SEC)
+  // Drone Mode — off by default (opt-in, recommended for outdoor photos),
+  // unless regenerating a reel that had it on.
+  const [droneMode, setDroneMode] = useState(!!initial?.droneShot)
+  const [droneShot, setDroneShot] = useState<DroneShotStyle>((initial?.droneShot as DroneShotStyle) ?? DEFAULT_DRONE_SHOT)
+  const [customPrompt, setCustomPrompt] = useState(initial?.customPrompt ?? '')
   const [consentChecked, setConsentChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reelId, setReelId] = useState<string | null>(null)
@@ -423,7 +442,12 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
           <div className="space-y-5">
             <div className="text-center space-y-2">
               <div className="text-4xl">🎬</div>
-              <h2 className="text-lg font-bold text-text-primary">Ready to create your reel</h2>
+              <h2 className="text-lg font-bold text-text-primary">{initial ? 'Regenerate your reel' : 'Ready to create your reel'}</h2>
+              {initial && (
+                <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1">
+                  🔄 Same photos &amp; settings — tap Generate, or Back to change anything
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">

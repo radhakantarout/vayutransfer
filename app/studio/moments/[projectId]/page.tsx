@@ -13,7 +13,7 @@ import {
   formatBytes, formatSpeed, formatEta, type PartRecord,
 } from '@/lib/studio/clientUpload'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/studio/PhotoLightbox'
-import ReelMvpModal from '@/components/studio/ReelMvpModal'
+import ReelMvpModal, { type ReelRegeneratePrefill } from '@/components/studio/ReelMvpModal'
 import AiImageStudioModal from '@/components/studio/AiImageStudioModal'
 import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
@@ -835,6 +835,7 @@ interface ReelHistoryItem {
   errorMessage: string | null
   outputUrl: string | null
   progress: { stage: string; processed: number; total: number; percent: number } | null
+  regenerate: { photoIds: string[] } & ReelRegeneratePrefill
 }
 
 const REEL_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', completed: 'Ready', failed: 'Failed' }
@@ -845,7 +846,11 @@ function fmtReelDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: boolean }) {
+function ReelsTabContent({ projectId, canReel, onRegenerate }: {
+  projectId: string
+  canReel: boolean
+  onRegenerate: (photoIds: string[], initial: ReelRegeneratePrefill) => void
+}) {
   const [reels, setReels] = useState<ReelHistoryItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -941,14 +946,40 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
               </div>
             )}
 
-            {r.status === 'failed' && r.errorMessage && (
-              <p className="text-[11px] text-danger px-3.5 pb-3">{r.errorMessage}</p>
+            {/* Deliberately generic — the real (often technical/provider-
+                specific) failure reason lives in errorMessage server-side
+                for debugging, never shown here. Regenerate reuses the exact
+                photos/settings this reel was created with. */}
+            {r.status === 'failed' && (
+              <div className="px-3.5 pb-3 space-y-2">
+                <p className="text-[11px] text-muted">Something went wrong. Any credits used were refunded.</p>
+                {canReel && (
+                  <button
+                    onClick={() => onRegenerate(r.regenerate.photoIds, r.regenerate)}
+                    className="text-xs font-bold text-white rounded-full px-3.5 py-1.5 hover:opacity-90 transition-opacity"
+                    style={{ background: GRADIENT }}
+                  >
+                    ✨ Regenerate
+                  </button>
+                )}
+              </div>
             )}
 
             {playingId === r.reelId && r.outputUrl && (
               <div className="p-3 pt-0 space-y-2">
                 <video src={r.outputUrl} controls autoPlay muted playsInline className="w-full rounded-xl bg-black" />
-                <a href={r.outputUrl} download className="block text-center text-xs font-semibold text-accent hover:underline py-1">Download</a>
+                <div className="flex gap-2">
+                  <a href={r.outputUrl} download className="flex-1 text-center text-xs font-semibold text-text-primary border border-border rounded-xl py-2 hover:bg-border/40 transition-colors">Download</a>
+                  {canReel && (
+                    <button
+                      onClick={() => onRegenerate(r.regenerate.photoIds, r.regenerate)}
+                      className="flex-1 text-xs font-bold text-white rounded-xl py-2 hover:opacity-90 transition-opacity"
+                      style={{ background: GRADIENT }}
+                    >
+                      ✨ Regenerate
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1017,6 +1048,12 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressFiredRef = useRef(false)
   const [showReelModal, setShowReelModal] = useState(false)
+  // Set only when opening ReelMvpModal from My Reels history's "Regenerate"
+  // action (completed or failed reel) — takes over photoIds/initial values
+  // for that one open instead of the normal reelSelectedIds multi-select
+  // flow. Cleared on close so a later fresh "Reel it" tap doesn't
+  // accidentally inherit a stale regenerate target.
+  const [regenerateReel, setRegenerateReel] = useState<{ photoIds: string[]; initial: ReelRegeneratePrefill } | null>(null)
   const [showAiImageModal, setShowAiImageModal] = useState(false)
   // Non-empty only when the modal should open in edit mode (bulk-select
   // toolbar's "Edit with AI" or a single photo from the lightbox) — cleared
@@ -1907,7 +1944,13 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           </>
         )}
 
-        {activeTab === 'reels' && <ReelsTabContent projectId={projectId} canReel={canReel} />}
+        {activeTab === 'reels' && (
+          <ReelsTabContent
+            projectId={projectId}
+            canReel={canReel}
+            onRegenerate={(photoIds, initial) => { setRegenerateReel({ photoIds, initial }); setShowReelModal(true) }}
+          />
+        )}
       </main>
 
       {selectMode ? (
@@ -2067,8 +2110,9 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         <ReelMvpModal
           source="moments"
           projectId={projectId}
-          photoIds={Array.from(reelSelectedIds)}
-          onClose={() => { setShowReelModal(false); setReelSelectMode(false); setReelSelectedIds(new Set()) }}
+          photoIds={regenerateReel?.photoIds ?? Array.from(reelSelectedIds)}
+          initial={regenerateReel?.initial}
+          onClose={() => { setShowReelModal(false); setReelSelectMode(false); setReelSelectedIds(new Set()); setRegenerateReel(null) }}
         />
       )}
 
