@@ -434,13 +434,18 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
             <div className="text-4xl">😕</div>
             <div>
               <h2 className="text-base font-bold text-text-primary">Couldn't generate your images</h2>
-              <p className="text-xs text-muted mt-1">{error}</p>
-              {imageId && <p className="text-[10px] text-muted mt-2">Any credits used have been refunded if generation failed to start.</p>}
+              {/* Deliberately generic — the real (often technical/provider-
+                  specific) failure reason is logged server-side, not shown
+                  here. We already have everything needed to retry (same
+                  prompt/settings/reference photos still in this modal's
+                  state), so Retry re-attempts directly rather than sending
+                  the user back through the whole flow. */}
+              <p className="text-xs text-muted mt-1">Something went wrong on our end. Any credits used have been refunded.</p>
             </div>
             <div className="flex gap-3">
               <button onClick={onClose} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Close</button>
-              <button onClick={() => setStage('compose')} className="flex-1 text-sm font-bold py-3 rounded-xl text-white hover:opacity-90 active:scale-[0.98] transition-all" style={{ background: GRADIENT }}>
-                Try Again
+              <button onClick={handleGenerate} className="flex-1 text-sm font-bold py-3 rounded-xl text-white hover:opacity-90 active:scale-[0.98] transition-all" style={{ background: GRADIENT }}>
+                Retry
               </button>
             </div>
           </div>
