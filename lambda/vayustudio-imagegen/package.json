@@ -1,0 +1,13 @@
+{
+  "name": "vayustudio-imagegen",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Image Studio pipeline (Moments) — Kling 3.0 Omni image generation/editing, upload results to R2 staging. Config-driven provider swap via providers/.",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.658.0",
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/lib-dynamodb": "^3.658.0",
+    "@aws-sdk/lib-storage": "^3.658.0",
+    "@aws-sdk/s3-request-presigner": "^3.658.0"
+  }
+}

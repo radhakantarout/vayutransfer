@@ -21,12 +21,31 @@ export interface PricingConfig {
   minMarginFloor: number
   creditValuePaise: number
   momentsRetentionDays: number
-  // AI image editing (Kling) — pricing scaffolding for a feature that
-  // doesn't exist yet (no route/UI built). Spends from the same unified
-  // aiSearchCredits pool as everything else, no new credit type, so this is
-  // ready to wire up the moment the actual editing feature ships.
+  // AI Image Studio (Kling image generation/editing) — spends from the same
+  // unified aiSearchCredits pool as everything else, no new credit type.
+  // Units-per-image varies by output resolution (PROVISIONAL: 1K/2K assumed
+  // equal cost, 4K assumed 2x, per third-party Kling resellers' published
+  // rates — not yet confirmed against a real Kling invoice, same
+  // "provisional until calibrated" honesty as the original video rate).
   klingImageEditPaisePer100kUnits: number
-  klingImageEditUnitsPerImage: number
+  klingImageEditUnitsPerImage1k: number
+  klingImageEditUnitsPerImage2k: number
+  klingImageEditUnitsPerImage4k: number
+  // Edit/fusion mode sends 1-10 reference images to Kling alongside the
+  // prompt — PROVISIONAL until confirmed, but deliberately present from day
+  // one rather than assumed free: a validated, bounded cost driver (source
+  // image count, already capped at 10) being silently absent from the price
+  // formula is exactly the class of bug the reel-duration cost leak was.
+  klingImageEditUnitsPerReferenceImage: number
+  // Config-driven provider swap — mirrors lib/studio/videoProviders/router.ts's
+  // enabled/priority pattern but simpler (one active provider at a time,
+  // not a priority-ordered fallback list). Plain string (not a union type)
+  // deliberately: routes/UI only ever pass it through verbatim into the
+  // imagegen Lambda's invoke payload, never branch on it — validated at
+  // runtime against IMAGE_PROVIDERS (lib/pricingConfig.ts) instead, so
+  // adding a real second provider is a Lambda module + one array entry, not
+  // a type change. Only 'kling' is actually implemented today.
+  imageProvider: string
   // Friendly display-only unit for Moments ("Moments Credits") — raw
   // aiSearchCredits ÷ this divisor. Never used for accounting/enforcement,
   // only presentation.

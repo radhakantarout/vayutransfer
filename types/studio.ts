@@ -400,6 +400,17 @@ export interface MediaFile {
   // same convention as every other optional counter in this file.
   likeCount?: number
   commentCount?: number
+  // AI Image Studio (Moments) — a photo generated/edited via
+  // vayustudio-imagegen is a completely NORMAL MediaFile row (billed,
+  // downloaded, deleted exactly like any upload); these fields only drive
+  // the ✨ provenance badge + "why does this exist" transparency in the UI.
+  // Deliberately NOT reusing editedR2Key — that field is the studio-admin
+  // photographer-retouch pipeline and is read by the unrelated
+  // editingRequired selections workflow; overloading it here would silently
+  // mark AI output as "editing complete" in that other workflow.
+  aiGenerated?: boolean
+  aiPrompt?: string
+  aiSourceFileIds?: string[]
 }
 
 export interface StudioFace {
@@ -417,7 +428,7 @@ export interface StudioFace {
   updatedAt: string
 }
 
-export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL'
+export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL' | 'AI_IMAGE'
 // CANCELLED is only ever set by an explicit cancel request (never by a
 // Lambda on its own) — see lib/studio/jobs.ts and the two cancel routes.
 export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED'
@@ -533,6 +544,56 @@ export interface StudioReel {
   completedAt?: string
   expiresAt?: string
   errorCode?: string
+  errorMessage?: string
+}
+
+// ── AI Image Studio (Moments) ──────────────────────────────────────────────
+// Table: TABLES.aiImages ('vayustudio-ai-images'), PK imageId, GSI
+// projectId-createdAt-index (mirrors vayustudio-reels' shape exactly — same
+// "My Reels"-style history query pattern). Driven by lambda/vayustudio-imagegen,
+// a batch-of-1..9 sibling to StudioReel rather than a video: 'generate' mode
+// has zero sourceFileIds (pure text-to-image); 'edit' mode has 1-10, referenced
+// in the prompt via Kling's own "@Image1"/"@Image2" syntax.
+export type AiImageMode = 'generate' | 'edit'
+export type AiImageResolution = '1K' | '2K' | '4K'
+export type AiImageAspectRatio = 'auto' | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3' | '21:9'
+export type AiImageStatus = 'generating' | 'completed' | 'failed'
+
+export interface StudioAiImage {
+  imageId: string
+  jobId: string              // FK back to the StudioJob (jobType: 'AI_IMAGE')
+  studioId: string
+  projectId: string
+  mode: AiImageMode
+  sourceFileIds: string[]    // empty for 'generate', 1-10 for 'edit'
+  prompt: string
+  resolution: AiImageResolution
+  aspectRatio: AiImageAspectRatio
+  numImages: number          // batch size requested, 1-9
+  // Config-driven provider swap (see lib/pricingConfig.ts#imageProvider) —
+  // stamped per-image so history/audit shows what actually generated it even
+  // after the live config default later changes.
+  provider: 'kling'
+  status: AiImageStatus
+  // Lambda writes results here as plain R2 keys (a staging area, NOT
+  // MediaFile rows) — generation is billed regardless of what the user
+  // keeps (the credit deduction already happened at request time), but
+  // storage should only count for images actually kept. The results screen
+  // shows these via a short-lived presigned URL per key; "Save" promotes a
+  // chosen subset into real MediaFile rows (see the /save route) and
+  // records the result in savedFileIds, "Discard" just never promotes them
+  // — unpromoted staging objects are swept by the existing storage-check
+  // cron the same way orphaned multipart uploads already are.
+  outputR2Keys?: string[]
+  // Parallel to outputR2Keys — byte size of each generated image, recorded
+  // by the Lambda straight from the in-memory buffer it already downloaded,
+  // so the /save route can bill accurate storage without a live R2
+  // HeadObject round-trip.
+  outputSizes?: number[]
+  savedFileIds?: string[]
+  creditsCharged?: number
+  createdAt: string
+  completedAt?: string
   errorMessage?: string
 }
 

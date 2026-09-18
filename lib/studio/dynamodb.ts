@@ -6,6 +6,7 @@ import {
   QueryCommand,
   DeleteItemCommand,
   ScanCommand,
+  TransactWriteItemsCommand,
   AttributeValue,
 } from '@aws-sdk/client-dynamodb'
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb'
@@ -60,6 +61,11 @@ const TABLES = {
   // this code ahead of the table is safe (zero behavior change until the
   // table exists AND has a saved row).
   pricingConfig: process.env.DYNAMO_STUDIO_PRICING_CONFIG_TABLE ?? 'vayustudio-pricing-config',
+  // AI Image Studio (Moments) — PK imageId, GSI projectId-createdAt-index,
+  // same shape as TABLES.reels. NOT YET PROVISIONED in AWS as of
+  // 2026-09-18 (code written ahead of infra, same pattern as every other
+  // new table this session — needs explicit go-ahead before creation).
+  aiImages: process.env.DYNAMO_STUDIO_AI_IMAGES_TABLE ?? 'vayustudio-ai-images',
 } as const
 
 export { TABLES }
@@ -108,6 +114,55 @@ export async function studioUpdateItem(
     ExpressionAttributeValues: marshall(expressionValues, { removeUndefinedValues: true }),
     ...(expressionNames ? { ExpressionAttributeNames: expressionNames } : {}),
     ...(conditionExpression ? { ConditionExpression: conditionExpression } : {}),
+  }))
+}
+
+export type StudioTransactOp =
+  | { type: 'Put'; table: string; item: Record<string, unknown>; conditionExpression?: string }
+  | {
+      type: 'Update'
+      table: string
+      key: Record<string, unknown>
+      updateExpression: string
+      expressionValues: Record<string, unknown>
+      expressionNames?: Record<string, string>
+      conditionExpression?: string
+    }
+
+// True cross-item atomicity — every op commits or none do. Use this (not
+// separate studioPutItem/studioUpdateItem calls) whenever a create and its
+// billing/counter updates must never be observed half-done: e.g. a
+// MediaFile PUT succeeding while the storage-bytes ADD that should
+// accompany it fails partway through, permanently under-billing that file
+// with no way for a retry to recover it (the PUT's own condition would then
+// make the retry treat it as "already exists" and skip billing forever).
+// On a conditional failure, DynamoDB throws TransactionCanceledException
+// (not ConditionalCheckFailedException directly) with a CancellationReasons
+// array — callers should check err.name === 'TransactionCanceledException'
+// and inspect reasons[i].Code === 'ConditionalCheckFailed' to tell "someone
+// already did this" apart from a real error.
+export async function studioTransactWrite(ops: StudioTransactOp[]): Promise<void> {
+  await client.send(new TransactWriteItemsCommand({
+    TransactItems: ops.map((op) =>
+      op.type === 'Put'
+        ? {
+            Put: {
+              TableName: op.table,
+              Item: marshall(op.item, { removeUndefinedValues: true }),
+              ...(op.conditionExpression ? { ConditionExpression: op.conditionExpression } : {}),
+            },
+          }
+        : {
+            Update: {
+              TableName: op.table,
+              Key: marshall(op.key),
+              UpdateExpression: op.updateExpression,
+              ExpressionAttributeValues: marshall(op.expressionValues, { removeUndefinedValues: true }),
+              ...(op.expressionNames ? { ExpressionAttributeNames: op.expressionNames } : {}),
+              ...(op.conditionExpression ? { ConditionExpression: op.conditionExpression } : {}),
+            },
+          }
+    ),
   }))
 }
 

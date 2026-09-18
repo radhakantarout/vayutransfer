@@ -44,10 +44,13 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
-    title: 'AI image editing (Kling) — feature not live yet',
+    title: 'AI Image Studio (Kling) — backend only, UI not live yet',
     fields: [
-      { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-edit units.', suffix: 'paise/100k units' },
-      { key: 'klingImageEditUnitsPerImage', label: 'Units per image', hint: 'How many Kling units one edited image consumes.', suffix: 'units/image' },
+      { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-generation units.', suffix: 'paise/100k units' },
+      { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'PROVISIONAL until confirmed against a real Kling invoice.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K', hint: 'PROVISIONAL — assumed same as 1K until confirmed.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerImage4k', label: 'Units per image — 4K', hint: 'PROVISIONAL — assumed 2x 1K/2K until confirmed.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'PROVISIONAL — cost per source photo fed into edit/fusion mode (0-10 per request).', suffix: 'units/reference' },
     ],
   },
 ]

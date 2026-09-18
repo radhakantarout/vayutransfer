@@ -21,12 +21,20 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   minMarginFloor: 0.35,
   creditValuePaise: 8000,           // ₹80 / reel credit (Client Gallery/Guest pool)
   momentsRetentionDays: 17,
-  klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1 — feature not live yet
-  klingImageEditUnitsPerImage: 8,
+  klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1
+  klingImageEditUnitsPerImage1k: 8,
+  klingImageEditUnitsPerImage2k: 8,         // PROVISIONAL: assumed same cost as 1K until confirmed
+  klingImageEditUnitsPerImage4k: 16,        // PROVISIONAL: assumed 2x 1K/2K until confirmed
+  klingImageEditUnitsPerReferenceImage: 2,  // PROVISIONAL: assumed cheaper than a full generation (context, not output)
+  imageProvider: 'kling',
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
   momentsWelcomeBonusCredits: 120,
 }
+
+// Providers with an actual implementation in lambda/vayustudio-imagegen —
+// extend this the same commit that adds a new provider module there.
+export const IMAGE_PROVIDERS = ['kling'] as const
 
 const CONFIG_KEY = 'live'
 const CACHE_TTL_MS = 60_000
@@ -50,7 +58,8 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'freeStorageGB', 'storageExtraPaisePer100GB', 'aiExtraPaisePer1000',
   'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
   'creditValuePaise', 'momentsRetentionDays',
-  'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage', 'momentsCreditDivisor',
+  'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
+  'klingImageEditUnitsPerImage4k', 'klingImageEditUnitsPerReferenceImage', 'momentsCreditDivisor',
   'momentsWelcomeBonusCredits',
 ]
 
@@ -78,6 +87,9 @@ export function validatePricingConfigPatch(patch: Partial<PricingConfig>): strin
   }
   if (patch.momentsRetentionEnforcementEnabled !== undefined && typeof patch.momentsRetentionEnforcementEnabled !== 'boolean') {
     return 'momentsRetentionEnforcementEnabled must be true or false'
+  }
+  if (patch.imageProvider !== undefined && !(IMAGE_PROVIDERS as readonly string[]).includes(patch.imageProvider)) {
+    return `imageProvider must be one of: ${IMAGE_PROVIDERS.join(', ')}`
   }
   return null
 }
