@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import QRCode from 'qrcode'
 import type { MediaFile, GalleryMember, ReelStyle } from '@/types/studio'
-import { MOMENTS_RETENTION_DAYS } from '@/constants/studioPricing'
+import { MOMENTS_RETENTION_DAYS, toMomentsCredits } from '@/constants/studioPricing'
 import { loadUploadResume, saveUploadResume, clearUploadResume } from '@/lib/studio/uploadResume'
 import {
   CHUNK_SIZE, uploadFileInChunks, fetchWithTimeout, runWithConcurrencyLimit,
@@ -845,6 +845,16 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
   const [reels, setReels] = useState<ReelHistoryItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
+  // creditsCharged is stored/returned in raw AI-search credits, but every
+  // other Moments surface (Profile, UsageBillingPanel) shows the friendly
+  // "Moments Credits" unit — this list was still showing the raw number
+  // directly, which read as a wrong, much-bigger figure than the same spend
+  // shown anywhere else (same unit-mismatch class as the reel modal's quote
+  // and the insufficient-credits message, fixed earlier).
+  const [creditDivisor, setCreditDivisor] = useState(50)
+  useEffect(() => {
+    fetch('/studio/api/pricing-config').then((r) => r.json()).then((d) => { if (d.success) setCreditDivisor(d.data.momentsCreditDivisor) }).catch(() => {})
+  }, [])
 
   const load = useCallback(() => {
     fetch(`/studio/api/moments/events/${projectId}/reels`)
@@ -906,7 +916,7 @@ function ReelsTabContent({ projectId, canReel }: { projectId: string; canReel: b
                     </span>
                   )}
                 </span>
-                <span className="block text-[11px] text-muted">{fmtReelDate(r.createdAt)} · {r.creditsCharged} credits</span>
+                <span className="block text-[11px] text-muted">{fmtReelDate(r.createdAt)} · {toMomentsCredits(r.creditsCharged, creditDivisor)} credits</span>
               </span>
               <span className="text-[11px] font-semibold text-muted flex-shrink-0">
                 {r.status === 'generating' && r.progress ? `${r.progress.percent}%` : REEL_STATUS_LABEL[r.status] ?? r.status}
