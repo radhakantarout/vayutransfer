@@ -11,10 +11,10 @@ import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  computeReelCost, computeTextToVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
-  DRONE_SHOT_STYLES, DRONE_SHOT_META,
+  DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
@@ -69,6 +69,14 @@ export async function GET(
       return {
         reelId: r.reelId,
         status: r.status,
+        // undefined on every reel created before this field existed — those
+        // are all real photo-mode reels, so 'photo' is the correct fallback,
+        // not just a safe placeholder. The frontend needs this to know
+        // style/resolution/templateId below are real user choices (photo
+        // mode) vs placeholder constants the route fills in because
+        // StudioReel's shape requires them (text mode — see the POST
+        // handler's mode:'text' branch for why).
+        mode: r.mode ?? 'photo',
         photoCount,
         durationSec: r.durationSec,
         style: r.style,
@@ -125,8 +133,128 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN', message: 'The gallery owner hasn\'t turned on Reels for members yet.' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+    const {
+      mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
+      textPrompt,
+    } = await req.json().catch(() => ({})) as {
+      mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+      textPrompt?: string
+    }
+    const mode: 'photo' | 'text' = requestedMode === 'text' ? 'text' : 'photo'
+
+    // ─── Text-to-video: a completely separate, much shorter validation +
+    // billing + Lambda-payload path — no photo selection, no template/style/
+    // duration concepts apply (Kling's text-to-video endpoint doesn't take
+    // any of them, confirmed via a real API call; see
+    // lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask header).
+    if (mode === 'text') {
+      const sanitizedTextPrompt = typeof textPrompt === 'string' ? textPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
+      if (!sanitizedTextPrompt) {
+        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: 'Describe the video you want to generate.' }, { status: 400 })
+      }
+
+      const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+      const runningJobsText = await studioQueryByIndex<StudioJob>(
+        TABLES.jobs, 'projectId-status-index', 'projectId = :pid AND #s = :processing',
+        { ':pid': projectId, ':processing': 'PROCESSING' }, { '#s': 'status' }, 25
+      )
+      if (runningJobsText.find((j) => j.jobType === 'AI_REEL')) {
+        return NextResponse.json({ success: false, error: 'JOB_RUNNING' }, { status: 409 })
+      }
+
+      const pricing = await getPricingConfig()
+      const { sellPricePaise } = computeTextToVideoCost(pricing)
+      const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
+      const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
+      const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
+      if (!creditCheck.ok) {
+        const divisor = pricing.momentsCreditDivisor
+        const neededDisplay = toMomentsCredits(aiCreditsRequired, divisor)
+        const leftDisplay = toMomentsCredits(Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits), divisor)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: `This video needs ${neededDisplay} Moments Credits — you have ${leftDisplay} left.`,
+          data: creditCheck,
+        }, { status: 402 })
+      }
+
+      if (!process.env.REEL_LAMBDA_ARN) {
+        console.error('[moments reels POST] REEL_LAMBDA_ARN not set')
+        return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
+      }
+
+      try {
+        await deductAiSearchCredits(studioId, aiCreditsRequired, creditCheck.quotaCredits)
+      } catch (err) {
+        console.error('[moments reels POST] credit deduction lost a concurrency race (text-to-video)', err)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: 'Someone just used the last of these credits — please check your balance and try again.',
+        }, { status: 402 })
+      }
+
+      const reelId = randomUUID()
+      const jobId = randomUUID()
+      const now = new Date().toISOString()
+      const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+
+      // style/aspectRatio/resolution/durationSec don't have a real meaning
+      // for text-to-video (no template picked, no per-clip duration control
+      // — Kling's own endpoint ignores duration entirely, confirmed fixed
+      // ~5s output) — populated with sensible constants purely so this
+      // still satisfies StudioReel's shared shape; History's UI (Phase 3)
+      // is responsible for not showing style/template info for mode:'text'
+      // rows rather than this route inventing a misleading style choice.
+      const reel: StudioReel = {
+        reelId, jobId, studioId, projectId,
+        source: 'MOMENTS',
+        mode: 'text',
+        photoIds: [],
+        style: 'CINEMATIC',
+        aspectRatio: DEFAULT_REEL_ASPECT_RATIO,
+        resolution: DEFAULT_REEL_RESOLUTION,
+        durationSec: 5,
+        customPrompt: sanitizedTextPrompt,
+        status: 'generating',
+        provider: 'kling',
+        creditsCharged: aiCreditsRequired,
+        createdAt: now,
+      }
+      await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+
+      const job: StudioJob = {
+        jobId, jobType: 'AI_REEL', status: 'PENDING',
+        projectId, studioId,
+        inputPayload: { reelId, mode: 'text' },
+        createdAt: now, ttl,
+      }
+      await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+
+      lambda.send(new InvokeCommand({
+        FunctionName: process.env.REEL_LAMBDA_ARN,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({
+          jobId, reelId, studioId, projectId,
+          mode: 'text',
+          textPrompt: sanitizedTextPrompt,
+          r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
+          r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
+          r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
+          r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
+          klingApiKey: process.env.KLING_API_KEY,
+          klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
+          klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
+          creditsCharged: aiCreditsRequired,
+          refundPool: 'aiSearchCredits',
+        })),
+      })).catch(async (err: unknown) => {
+        console.error('[moments reels POST] Lambda invoke failed (text-to-video)', err)
+        await refundAiCreditsAndFail(studioId, aiCreditsRequired, jobId, reelId)
+      })
+
+      return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: aiCreditsRequired } })
     }
     // Never trust a client-supplied resolution/duration blindly — fall back
     // to the defaults on anything outside the allowed sets rather than

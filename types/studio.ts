@@ -509,6 +509,13 @@ export interface StudioReel {
   // here for audit — never trust a client-supplied projectId for guest reels
   // (see design doc §5's trust-boundary discussion).
   guestJwtProjectId?: string
+  // undefined = 'photo' (every reel before this field existed, and every
+  // Client Gallery/Guest reel today — text-to-video is Moments-only).
+  // 'text' reels have photoIds: [] — Kling's text-to-video endpoint has no
+  // source-photo concept at all, confirmed via a real API call (2026-09-18):
+  // it's a genuinely different endpoint (POST /text-to-video/{model}, flat
+  // body) from image-to-video, not a variant of it.
+  mode?: 'photo' | 'text'
   photoIds: string[]
   analysis?: ReelPhotoAnalysis[]
   storyPlan?: ReelStoryPlan

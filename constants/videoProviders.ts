@@ -286,6 +286,28 @@ export function computeReelCost(
   return { rawCostPaise, sellPricePaise, creditsRequired }
 }
 
+// Text-to-video (Moments only) has a fundamentally different cost shape from
+// computeReelCost above: Kling's own /text-to-video/{model} endpoint bills a
+// FLAT rate per video, confirmed via a real API call (2026-09-18) to ignore
+// both resolution and duration overrides entirely (every real test produced
+// the same ~5s clip regardless of requested duration, at the same 4-unit
+// cost regardless of requested resolution) — so there's no per-second ×
+// resolution multiplication like the photo-to-video path, just one fixed
+// per-clip unit count.
+export function computeTextToVideoCost(
+  rates?: { klingCostPaisePerUnit?: number; klingTextToVideoUnitsPerVideo?: number; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
+): ReelCostEstimate {
+  const costPerUnit = rates?.klingCostPaisePerUnit ?? KLING_COST_PAISE_PER_UNIT
+  const unitsPerVideo = rates?.klingTextToVideoUnitsPerVideo ?? 4
+  const overhead = rates?.fixedOverheadPaisePerReel ?? FIXED_OVERHEAD_PAISE_PER_REEL
+  const margin = rates?.targetMargin ?? TARGET_MARGIN
+  const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
+  const rawCostPaise = Math.round(unitsPerVideo * costPerUnit + overhead)
+  const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
+  const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
+  return { rawCostPaise, sellPricePaise, creditsRequired }
+}
+
 // ── Credit packs (payment-UX bulk discount, not a separate pricing model —
 // see design doc §7's "Credit packs" + "Annual Pro/Custom loyalty discount")
 export interface ReelCreditPack {

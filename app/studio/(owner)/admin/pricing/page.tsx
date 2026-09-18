@@ -52,6 +52,12 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
       { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'Margin buffer, not a measured Kling cost — a real test showed no extra charge for 1 reference image. Cost per source photo fed into edit/fusion mode (0-10 per request).', suffix: 'units/reference' },
     ],
   },
+  {
+    title: 'Text-to-Video (Kling) — Moments only, backend only, UI not live yet',
+    fields: [
+      { key: 'klingTextToVideoUnitsPerVideo', label: 'Units per video', hint: 'Confirmed against a real Kling API call — flat rate per ~5s clip, not resolution-aware (Kling silently ignores both resolution and duration overrides on this endpoint).', suffix: 'units/video' },
+    ],
+  },
 ]
 
 export default function OwnerPricingPage() {

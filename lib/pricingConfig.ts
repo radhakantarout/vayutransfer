@@ -26,6 +26,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   klingImageEditUnitsPerImage2k: 8,         // CONFIRMED via real Kling API call, 2026-09-18 (same as 1k)
   klingImageEditUnitsPerReferenceImage: 2,  // Margin buffer, not a measured Kling cost — see types/pricingConfig.ts comment
   imageProvider: 'kling',
+  klingTextToVideoUnitsPerVideo: 4,  // CONFIRMED via real Kling API call, 2026-09-18 — flat, not resolution-aware
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
   momentsWelcomeBonusCredits: 120,
@@ -59,7 +60,7 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
   'klingImageEditUnitsPerReferenceImage', 'momentsCreditDivisor',
-  'momentsWelcomeBonusCredits',
+  'momentsWelcomeBonusCredits', 'klingTextToVideoUnitsPerVideo',
 ]
 
 export function validatePricingConfigPatch(patch: Partial<PricingConfig>): string | null {

@@ -41,6 +41,17 @@ export interface PricingConfig {
   // already capped at 10) being silently absent from the price formula is
   // exactly the class of bug the reel-duration cost leak was.
   klingImageEditUnitsPerReferenceImage: number
+  // Text-to-video (Moments only — Kling's own /text-to-video/{model}
+  // endpoint, a genuinely different endpoint from image-to-video, not a
+  // parameter on it, confirmed via a real API call 2026-09-18). FLAT rate,
+  // not resolution-aware like image-to-video: a real call with
+  // resolution:'1080p' billed identically to the default (4 units), and
+  // `duration` is silently ignored server-side (every real test produced
+  // the same ~5.04s clip regardless of the requested value 5 or 10) — so
+  // there is no per-second or per-resolution axis to multiply here, unlike
+  // klingUnitsPerSec720/1080 above. CONFIRMED, not provisional: 4 units for
+  // one ~5s clip.
+  klingTextToVideoUnitsPerVideo: number
   // Config-driven provider swap — mirrors lib/studio/videoProviders/router.ts's
   // enabled/priority pattern but simpler (one active provider at a time,
   // not a priority-ordered fallback list). Plain string (not a union type)
