@@ -12,12 +12,15 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ "$FUNCTION_NAME" == *-test ]]; then
   DEFAULT_JOBS_TABLE="vayustudio-jobs-test"
   DEFAULT_AI_IMAGES_TABLE="vayustudio-ai-images-test"
+  DEFAULT_STUDIOS_TABLE="vayustudio-studios-test"
 else
   DEFAULT_JOBS_TABLE="vayustudio-jobs"
   DEFAULT_AI_IMAGES_TABLE="vayustudio-ai-images"
+  DEFAULT_STUDIOS_TABLE="vayustudio-studios"
 fi
 JOBS_TABLE_VAL="${DYNAMO_STUDIO_JOBS_TABLE:-$DEFAULT_JOBS_TABLE}"
 AI_IMAGES_TABLE_VAL="${DYNAMO_STUDIO_AI_IMAGES_TABLE:-$DEFAULT_AI_IMAGES_TABLE}"
+STUDIOS_TABLE_VAL="${DYNAMO_STUDIO_STUDIOS_TABLE:-$DEFAULT_STUDIOS_TABLE}"
 
 echo "==> Installing dependencies for Linux x64 (Lambda runtime)..."
 cd "$DIR"
@@ -52,6 +55,7 @@ import json
 env = {
   'DYNAMO_STUDIO_JOBS_TABLE':      '${JOBS_TABLE_VAL}',
   'DYNAMO_STUDIO_AI_IMAGES_TABLE': '${AI_IMAGES_TABLE_VAL}',
+  'DYNAMO_STUDIO_STUDIOS_TABLE':   '${STUDIOS_TABLE_VAL}',
 }
 print(json.dumps({'Variables': env}))
 ")
@@ -78,6 +82,7 @@ echo ""
 echo "✓ Deploy complete: $FUNCTION_NAME"
 echo "  DYNAMO_STUDIO_JOBS_TABLE:      $JOBS_TABLE_VAL"
 echo "  DYNAMO_STUDIO_AI_IMAGES_TABLE: $AI_IMAGES_TABLE_VAL"
+echo "  DYNAMO_STUDIO_STUDIOS_TABLE:   $STUDIOS_TABLE_VAL"
 echo ""
 echo "Reuses the shared vayustudio-lambda-role — its DynamoDB grant already"
 echo "covers any vayustudio-* table, no new IAM policy needed."

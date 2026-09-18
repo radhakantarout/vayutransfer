@@ -4,11 +4,12 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3')
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
 const { Upload } = require('@aws-sdk/lib-storage')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
-const { DynamoDBDocumentClient, UpdateCommand } = require('@aws-sdk/lib-dynamodb')
+const { DynamoDBDocumentClient, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb')
 
 const REGION = process.env.AWS_REGION || 'ap-south-1'
 const JOBS_TABLE = process.env.DYNAMO_STUDIO_JOBS_TABLE || 'vayustudio-jobs'
 const AI_IMAGES_TABLE = process.env.DYNAMO_STUDIO_AI_IMAGES_TABLE || 'vayustudio-ai-images'
+const STUDIOS_TABLE = process.env.DYNAMO_STUDIO_STUDIOS_TABLE || 'vayustudio-studios'
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 
@@ -46,6 +47,33 @@ async function downloadToBuffer(url) {
   return Buffer.from(await res.arrayBuffer())
 }
 
+// Refunds real ₹ credits directly from the Lambda's own catch block — a
+// job that fails cleanly (not stuck/timed-out) was never refunded by
+// anything before this: the daily cron sweep only catches jobs stuck in
+// PENDING/PROCESSING past a timeout, never ones that already reached
+// FAILED. Only 'aiSearchCredits' exists today (Moments is this Lambda's
+// only caller), kept as an explicit pool name (not hardcoded) so a future
+// non-Moments caller (mirroring reelgen's Client Gallery/Guest split)
+// doesn't need this function's shape to change.
+async function refundCredits(studioId, credits, pool) {
+  if (!studioId || !credits || !pool) return
+  const now = new Date().toISOString()
+  if (pool === 'aiSearchCredits') {
+    await ddb.send(new UpdateCommand({
+      TableName: STUDIOS_TABLE, Key: { studioId },
+      UpdateExpression: 'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+      ConditionExpression: 'attribute_exists(aiSearchCreditsUsed) AND aiSearchCreditsUsed >= :credits',
+      ExpressionAttributeValues: { ':n': -credits, ':now': now, ':credits': credits },
+    }))
+  } else if (pool === 'reelCredits') {
+    await ddb.send(new UpdateCommand({
+      TableName: STUDIOS_TABLE, Key: { studioId },
+      UpdateExpression: 'ADD reelCreditsBalance :credits SET updatedAt = :now',
+      ExpressionAttributeValues: { ':credits': credits, ':now': now },
+    }))
+  }
+}
+
 // ─── Lambda handler ──────────────────────────────────────────────────────────
 // Sibling to vayustudio-reelgen's shape (fire-and-forget invoke, R2/API
 // creds arrive per-invoke, raw UpdateCommand job/record updates) but
@@ -63,7 +91,23 @@ exports.handler = async (event) => {
     provider,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     klingApiKey, klingApiBaseUrl, klingModelName,
+    creditsCharged, refundPool,
   } = event
+
+  // Idempotency guard — AWS automatically retries a failed async ("Event")
+  // Lambda invocation up to twice, with the EXACT SAME payload. Kling's own
+  // external_task_id is permanently one-time-use per imageId — once a task
+  // got created under it, a retry can only fail immediately with "already
+  // exists", never actually retry the generation. Without this guard that
+  // retry overwrites the real failure reason and would refund credits a
+  // SECOND time once the catch block below does it correctly. See
+  // lambda/vayustudio-reelgen/index.js's identical guard for the full story
+  // (found via a real production incident, 2026-09-18).
+  const existingJob = await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: { jobId } }))
+  if (existingJob.Item && (existingJob.Item.status === 'READY' || existingJob.Item.status === 'FAILED')) {
+    console.log(`[imagegen] SKIP jobId=${jobId} already terminal (status=${existingJob.Item.status}) — not retrying`)
+    return
+  }
 
   console.log(`[imagegen] START jobId=${jobId} imageId=${imageId} mode=${mode} provider=${provider} refs=${(sourceR2Keys || []).length} numImages=${numImages}`)
 
@@ -122,6 +166,11 @@ exports.handler = async (event) => {
     const now = new Date().toISOString()
     await updateJob(jobId, { status: 'FAILED', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
     await updateAiImage(imageId, { status: 'failed', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
+    // Refund whatever this generation actually charged — Kling itself never
+    // bills for a failed generation, so the studio shouldn't be charged
+    // either. The idempotency guard above is what makes this safe to run
+    // exactly once even across AWS's automatic async-invoke retries.
+    await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[imagegen] refund failed', e))
     throw err
   }
 }

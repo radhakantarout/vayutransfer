@@ -4,16 +4,17 @@ const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/clien
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
 const { Upload } = require('@aws-sdk/lib-storage')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
-const { DynamoDBDocumentClient, UpdateCommand } = require('@aws-sdk/lib-dynamodb')
+const { DynamoDBDocumentClient, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb')
 const { execFile } = require('child_process')
 const fs = require('fs/promises')
 const path = require('path')
 const os = require('os')
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
 
-const REGION      = process.env.AWS_REGION || 'ap-south-1'
-const JOBS_TABLE  = process.env.DYNAMO_STUDIO_JOBS_TABLE || 'vayustudio-jobs'
-const REELS_TABLE = process.env.DYNAMO_STUDIO_REELS_TABLE || 'vayustudio-reels'
+const REGION       = process.env.AWS_REGION || 'ap-south-1'
+const JOBS_TABLE   = process.env.DYNAMO_STUDIO_JOBS_TABLE || 'vayustudio-jobs'
+const REELS_TABLE  = process.env.DYNAMO_STUDIO_REELS_TABLE || 'vayustudio-reels'
+const STUDIOS_TABLE = process.env.DYNAMO_STUDIO_STUDIOS_TABLE || 'vayustudio-studios'
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 
@@ -34,6 +35,32 @@ async function updateReel(reelId, patch) {
   const sets  = entries.map((_, i) => `#k${i} = :v${i}`).join(', ')
   const vals  = Object.fromEntries(entries.map(([, v], i) => [`:v${i}`, v]))
   await ddb.send(new UpdateCommand({ TableName: REELS_TABLE, Key: { reelId }, UpdateExpression: `SET ${sets}`, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }))
+}
+
+// Refunds real ₹ credits directly from the Lambda's own catch block —
+// before this, a job that failed cleanly (not stuck/timed-out) was NEVER
+// refunded by anything: the Lambda itself didn't refund, and the daily cron
+// sweep only catches jobs stuck in PENDING/PROCESSING past a timeout, never
+// ones that already reached FAILED. `pool` mirrors lib/studio/billing.ts's
+// two credit pools exactly (aiSearchCredits for Moments, reelCredits for
+// Client Gallery/Guest) since this plain-JS Lambda can't import that TS file.
+async function refundCredits(studioId, credits, pool) {
+  if (!studioId || !credits || !pool) return
+  const now = new Date().toISOString()
+  if (pool === 'aiSearchCredits') {
+    await ddb.send(new UpdateCommand({
+      TableName: STUDIOS_TABLE, Key: { studioId },
+      UpdateExpression: 'ADD aiSearchCreditsUsed :n SET updatedAt = :now',
+      ConditionExpression: 'attribute_exists(aiSearchCreditsUsed) AND aiSearchCreditsUsed >= :credits',
+      ExpressionAttributeValues: { ':n': -credits, ':now': now, ':credits': credits },
+    }))
+  } else if (pool === 'reelCredits') {
+    await ddb.send(new UpdateCommand({
+      TableName: STUDIOS_TABLE, Key: { studioId },
+      UpdateExpression: 'ADD reelCreditsBalance :credits SET updatedAt = :now',
+      ExpressionAttributeValues: { ':credits': credits, ':now': now },
+    }))
+  }
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -115,7 +142,23 @@ exports.handler = async (event) => {
     stylePromptFragment, targetDimensions,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     klingApiKey, klingApiBaseUrl, klingModelName,
+    creditsCharged, refundPool,
   } = event
+
+  // Idempotency guard — AWS automatically retries a failed async ("Event")
+  // Lambda invocation up to twice, with the EXACT SAME payload. Kling's own
+  // external_task_id is permanently one-time-use per (reelId, fileId) — once
+  // ANY task got created under it, a retry can only ever fail immediately
+  // with "already exists", never actually retry the generation. Without
+  // this guard that retry (a) overwrites the real failure reason with a
+  // useless "already exists" error, and (b) would refund credits a SECOND
+  // time once the catch block below does it correctly. If this job already
+  // reached a terminal state, the retry is a pure no-op.
+  const existingJob = await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: { jobId } }))
+  if (existingJob.Item && (existingJob.Item.status === 'READY' || existingJob.Item.status === 'FAILED')) {
+    console.log(`[reelgen] SKIP jobId=${jobId} already terminal (status=${existingJob.Item.status}) — not retrying`)
+    return
+  }
 
   // Fallback matches constants/videoProviders.ts's own defaults, in case an
   // older client (or a manual test invoke) doesn't send these.
@@ -169,19 +212,30 @@ exports.handler = async (event) => {
     //    partial-failure UI, we just do our best with what succeeded.
     await updateJob(jobId, { outputPayload: { stage: 'assembling', processed: 0, total: tasks.length } })
     const clipPaths = []
+    // Kling's own per-clip failure reason (result.message, e.g. "Failure to
+    // pass the risk control system") used to be discarded entirely — only
+    // logged via console.warn, never surfaced anywhere a user could see it.
+    // If nothing succeeds, this is what actually gets shown instead of a
+    // generic "nothing to assemble" message.
+    const failureReasons = []
     for (let i = 0; i < tasks.length; i++) {
       const result = results.get(tasks[i].externalTaskId)
       if (!result || result.status !== 'succeeded') {
-        console.warn(`[reelgen] task ${tasks[i].externalTaskId} did not succeed (status=${result?.status ?? 'timeout'}), skipping`)
+        const reason = result?.message || (result ? 'unknown reason' : 'timed out waiting for a response')
+        console.warn(`[reelgen] task ${tasks[i].externalTaskId} did not succeed (status=${result?.status ?? 'timeout'}): ${reason}`)
+        failureReasons.push(reason)
         continue
       }
       const video = (result.outputs || []).find((o) => o.type === 'video')
-      if (!video?.url) { console.warn(`[reelgen] task ${tasks[i].externalTaskId} succeeded but had no video output`); continue }
+      if (!video?.url) { console.warn(`[reelgen] task ${tasks[i].externalTaskId} succeeded but had no video output`); failureReasons.push('no video output'); continue }
       const clipPath = path.join(workDir, `clip-${i}.mp4`)
       await downloadToFile(video.url, clipPath)
       clipPaths.push(clipPath)
     }
-    if (clipPaths.length === 0) throw new Error('No Kling clips generated successfully — nothing to assemble')
+    if (clipPaths.length === 0) {
+      const uniqueReasons = [...new Set(failureReasons)]
+      throw new Error(`Our AI video provider couldn't process ${tasks.length === 1 ? 'this photo' : 'these photos'}: ${uniqueReasons.join('; ')}`)
+    }
 
     // 4. Concat via ffmpeg's concat demuxer, re-encoding (not `-c copy`) since
     //    Kling clip codec params aren't guaranteed identical across calls —
@@ -222,6 +276,11 @@ exports.handler = async (event) => {
     const now = new Date().toISOString()
     await updateJob(jobId, { status: 'FAILED', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
     await updateReel(reelId, { status: 'failed', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
+    // Refund whatever this reel actually charged — Kling itself never bills
+    // for a failed generation, so the studio shouldn't be charged either.
+    // The idempotency guard above is what makes this safe to run exactly
+    // once even across AWS's automatic async-invoke retries.
+    await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[reelgen] refund failed', e))
     throw err
   } finally {
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => {})

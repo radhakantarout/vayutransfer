@@ -272,6 +272,12 @@ export async function POST(
         klingApiKey: process.env.KLING_API_KEY,
         klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
         klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
+        // Lets the Lambda's own catch block refund directly if generation
+        // fails cleanly (Kling never bills for a failed task) — Moments
+        // spends from the shared aiSearchCredits pool, not the reel-credit
+        // pool Client Gallery/Guest use.
+        creditsCharged: creditsRequired,
+        refundPool: 'aiSearchCredits',
       })),
     })).catch(async (err: unknown) => {
       console.error('[moments reels POST] Lambda invoke failed', err)

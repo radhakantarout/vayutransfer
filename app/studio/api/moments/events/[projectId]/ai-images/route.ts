@@ -215,6 +215,10 @@ export async function POST(
         klingApiKey: process.env.KLING_API_KEY,
         klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
         klingModelName: process.env.KLING_IMAGE_MODEL_NAME || 'kling-3.0-omni',
+        // Lets the Lambda's own catch block refund directly if generation
+        // fails cleanly (Kling never bills for a failed task).
+        creditsCharged: aiCreditsRequired,
+        refundPool: 'aiSearchCredits',
       })),
     })).catch(async (err: unknown) => {
       console.error('[moments ai-images POST] Lambda invoke failed', err)
