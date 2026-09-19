@@ -336,6 +336,32 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
 
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
+  // Reclamps customPrompt when the compose screen's mode ACTUALLY SWITCHES —
+  // text mode's cap (1900) is HIGHER than photo mode's (1750, reserves room
+  // for the style fragment text mode doesn't use). Typing up to 1900 chars
+  // in text mode, then adding a photo (flipping to photo mode), used to
+  // leave the already-typed text over photo mode's cap with nothing to
+  // truncate it — the textarea's own onChange only enforces the CURRENT
+  // mode's cap as you type, not retroactively on a mode change it didn't
+  // witness.
+  //
+  // Compares against a REF of the previous isComposeTextMode value, not
+  // just "are we on the compose stage" — deliberately so this only fires on
+  // a real true<->false flip, not merely on ARRIVING at 'compose' (e.g. a
+  // Moments Regenerate of an old-wizard-created reel, which can legitimately
+  // carry a customPrompt up to MAX_CUSTOM_PROMPT_LENGTH=2000, lands on
+  // 'confirm', and can reach 'compose' again via Back without ever touching
+  // photos — that legacy prompt must survive the trip, only genuine
+  // photo-add/remove transitions should ever truncate anything here).
+  const prevIsComposeTextModeRef = useRef(isComposeTextMode)
+  useEffect(() => {
+    if (stage !== 'compose') return
+    if (prevIsComposeTextModeRef.current === isComposeTextMode) return
+    prevIsComposeTextModeRef.current = isComposeTextMode
+    const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
+    setCustomPrompt((prev) => (prev.length > max ? prev.slice(0, max) : prev))
+  }, [isComposeTextMode, stage])
+
   useEffect(() => {
     if (stage !== 'generating' || reducedMotion) return
     const id = setInterval(() => setMsgIdx((i) => (i + 1) % GENERATING_MESSAGES.length), 4000)
