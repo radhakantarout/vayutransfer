@@ -15,6 +15,7 @@ import {
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
+  MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
@@ -148,9 +149,20 @@ export async function POST(
     // any of them, confirmed via a real API call; see
     // lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask header).
     if (mode === 'text') {
-      const sanitizedTextPrompt = typeof textPrompt === 'string' ? textPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
-      if (!sanitizedTextPrompt) {
-        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: 'Describe the video you want to generate.' }, { status: 400 })
+      // Sliced to MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX (1900), NOT the generic
+      // MAX_CUSTOM_PROMPT_LENGTH (2000) — that budget already reserves room
+      // for the Lambda's fixed TEXT_TO_VIDEO_SUFFIX + separator (see
+      // constants/videoProviders.ts's comment above that constant); slicing
+      // to 2000 here would let the assembled prompt sent to Kling exceed
+      // 2000 chars for anything the UI's own cap doesn't also block (e.g. a
+      // direct API call bypassing the client-side textarea limit).
+      const sanitizedTextPrompt = typeof textPrompt === 'string' ? textPrompt.trim().slice(0, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX) : ''
+      // Mirrors the modal's own MIN_TEXT_PROMPT_LENGTH guard — enforced here
+      // too since a near-empty prompt has no photo/style fallback to fall
+      // back on and would still waste a real, billed Kling call if this
+      // route were called directly, bypassing the UI's disabled button.
+      if (sanitizedTextPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
+        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
       }
 
       const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })

@@ -8,6 +8,7 @@ import {
   REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_DRONE_SHOT, type DroneShotStyle,
   MIN_REEL_PHOTOS, MAX_REEL_PHOTOS,
+  computeTextToVideoCost, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
@@ -225,9 +226,18 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   // Fresh Moments opens (no Regenerate `initial`) land on the new prompt-
   // first 'compose' screen instead of the old template-first wizard's first
   // step — client/guest are completely unaffected (still always 'template'
-  // when there's no `initial`), and Regenerate still always lands on
-  // 'confirm' regardless of source, unchanged.
-  const [stage, setStage] = useState<Stage>(initial ? 'confirm' : isMoments ? 'compose' : 'template')
+  // when there's no `initial`). Regenerate normally lands on 'confirm'
+  // unchanged, EXCEPT a Moments Regenerate of a text-to-video reel (mode:
+  // 'text' reels are stored with photoIds: []) — 'confirm' assumes a
+  // photo-based reel throughout (photo count, resolution/clip-length,
+  // per-photo consent copy), so that case instead lands back on 'compose',
+  // which already auto-detects text mode from an empty photo list and
+  // pre-fills the prompt via `customPrompt` below. client/guest never reach
+  // this branch (text mode is Moments-only; their reels always have >=1
+  // photo), so their Regenerate path is provably unchanged.
+  const [stage, setStage] = useState<Stage>(
+    initial ? (isMoments && photoIds.length === 0 ? 'compose' : 'confirm') : isMoments ? 'compose' : 'template'
+  )
   const [templateId, setTemplateId] = useState(initial?.templateId ?? DEFAULT_REEL_TEMPLATE)
   const [style, setStyle] = useState<ReelStyle>(initial?.style ?? DEFAULT_REEL_STYLE)
   const [resolution, setResolution] = useState<ReelResolution>((initial?.resolution ?? DEFAULT_REEL_RESOLUTION) as ReelResolution)
@@ -266,7 +276,16 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   }, [])
 
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
-  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = computeReelCost(composePhotoIds.length, durationSec, resolution, pricing ?? undefined)
+  // Auto-detected, not an explicit toggle: zero photos on the compose screen
+  // means text-to-video, one or more means image-to-video — matches how
+  // every other "generate from a prompt, optionally attach a reference"
+  // tool works, and one fewer decision for the user to make up front. Only
+  // ever true for Moments (the only source with a 'compose' stage/text-mode
+  // route at all) — client/guest always keep composePhotoIds >= 1.
+  const isComposeTextMode = isMoments && composePhotoIds.length === 0
+  const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = isComposeTextMode
+    ? computeTextToVideoCost(pricing ?? undefined)
+    : computeReelCost(composePhotoIds.length, durationSec, resolution, pricing ?? undefined)
   // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
   // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
   // component was originally built for — same real ₹ cost, wildly
@@ -350,9 +369,15 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     setError(null)
     const trimmedPrompt = customPrompt.trim() || undefined
     const droneShotField = droneMode ? droneShot : undefined
-    const body = props.source === 'guest'
-      ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-      : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
+    // Text-to-video is a completely separate request shape (no photos,
+    // template, style, resolution, or duration — Kling's own endpoint takes
+    // none of those, see the Moments reels route's mode:'text' branch) —
+    // only ever reachable via Moments' compose screen with zero photos.
+    const body = isComposeTextMode
+      ? { mode: 'text', textPrompt: trimmedPrompt ?? '' }
+      : props.source === 'guest'
+        ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+        : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -405,11 +430,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             <div className="text-center space-y-1">
               <div className="text-3xl">✨</div>
               <h2 className="text-lg font-bold text-text-primary">Create a reel</h2>
-              <p className="text-xs text-muted">Add up to {MAX_REEL_PHOTOS} photos and describe what you want</p>
+              <p className="text-xs text-muted">Add photos to animate them, or describe a scene to generate video from scratch</p>
             </div>
 
             <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Photos</p>
+              <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Photos (optional)</p>
               <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
                 {composePhotoIds.map((fileId) => {
                   const photo = momentsPhotoById.get(fileId)
@@ -452,74 +477,91 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </div>
 
             <div className="space-y-2">
+              <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                {isComposeTextMode ? 'Describe your video' : 'Add a note (optional)'}
+              </p>
               <textarea
                 value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value.slice(0, MOMENTS_COMPOSE_PROMPT_MAX))}
-                placeholder="e.g. Slow-motion walk together at sunset, warm golden-hour light… (optional)"
+                onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
+                placeholder={isComposeTextMode
+                  ? 'e.g. A golden retriever running joyfully through a sunlit meadow, cinematic slow motion, warm afternoon light'
+                  : 'e.g. Slow-motion walk together at sunset, warm golden-hour light…'}
                 rows={4}
                 className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
               />
-              <p className="text-[10px] text-muted text-right">{customPrompt.length}/{MOMENTS_COMPOSE_PROMPT_MAX}</p>
+              <p className="text-[10px] text-muted text-right">
+                {customPrompt.length}/{isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX}
+              </p>
             </div>
 
-            <button
-              onClick={() => setStage('template')}
-              className="w-full text-xs font-semibold text-accent hover:underline text-center"
-            >
-              🎨 Use a template instead
-            </button>
-
-            <div className="border border-border rounded-2xl overflow-hidden">
+            {!isComposeTextMode && (
               <button
-                onClick={() => setAdvancedOpen((v) => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-primary hover:bg-border/30 transition-colors"
+                onClick={() => setStage('template')}
+                className="w-full text-xs font-semibold text-accent hover:underline text-center"
               >
-                <span>⚙️ Advanced (quality, clip length)</span>
-                <span className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>▾</span>
+                🎨 Use a template instead
               </button>
-              {advancedOpen && (
-                <div className="px-4 pb-4 grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Quality</p>
-                    <div className="flex gap-1.5">
-                      {REEL_RESOLUTIONS.map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => setResolution(r)}
-                          className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
-                            resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
-                    <div className="flex gap-1.5">
-                      {REEL_CLIP_DURATION_OPTIONS.map((d) => {
-                        const disabled = composePhotoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
-                        return (
+            )}
+
+            {/* Resolution/clip-length are photo-mode-only controls — Kling's
+                text-to-video endpoint silently ignores both, always
+                producing a fixed ~5s clip (confirmed via a real API call,
+                see lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask
+                header), so exposing them here would be a control that does
+                nothing. */}
+            {!isComposeTextMode && (
+              <div className="border border-border rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setAdvancedOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-primary hover:bg-border/30 transition-colors"
+                >
+                  <span>⚙️ Advanced (quality, clip length)</span>
+                  <span className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {advancedOpen && (
+                  <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                      <div className="flex gap-1.5">
+                        {REEL_RESOLUTIONS.map((r) => (
                           <button
-                            key={d}
-                            onClick={() => !disabled && setDurationSec(d)}
-                            disabled={disabled}
+                            key={r}
+                            onClick={() => setResolution(r)}
                             className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
-                              disabled
-                                ? 'border-border text-muted/40 cursor-not-allowed'
-                                : durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                              resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
                             }`}
                           >
-                            {d}s
+                            {r}
                           </button>
-                        )
-                      })}
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
+                      <div className="flex gap-1.5">
+                        {REEL_CLIP_DURATION_OPTIONS.map((d) => {
+                          const disabled = composePhotoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
+                          return (
+                            <button
+                              key={d}
+                              onClick={() => !disabled && setDurationSec(d)}
+                              disabled={disabled}
+                              className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                                disabled
+                                  ? 'border-border text-muted/40 cursor-not-allowed'
+                                  : durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                              }`}
+                            >
+                              {d}s
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             <div className="bg-bg border border-border rounded-2xl px-4 py-3 flex items-center justify-between">
               <span className="text-sm text-muted">Cost</span>
@@ -534,13 +576,18 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 className="mt-0.5 w-4 h-4 flex-shrink-0 accent-accent rounded"
               />
               <span className="text-[11px] text-muted leading-relaxed">
-                I understand these photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.
+                {isComposeTextMode
+                  ? 'I understand this prompt will be sent to a third-party AI video provider to create this video.'
+                  : 'I understand these photos will be sent to a third-party AI video provider to create this reel. Your photos are processed only for this request and are not shared with other customers.'}
               </span>
             </label>
 
             <button
               onClick={handleGenerate}
-              disabled={composePhotoIds.length < MIN_REEL_PHOTOS || !consentChecked}
+              disabled={
+                (isComposeTextMode ? customPrompt.trim().length < MIN_TEXT_PROMPT_LENGTH : composePhotoIds.length < MIN_REEL_PHOTOS)
+                || !consentChecked
+              }
               className="w-full text-sm font-bold py-3 rounded-xl text-white active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none hover:opacity-90"
               style={{ background: MOMENTS_GRADIENT }}
             >

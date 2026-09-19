@@ -181,6 +181,12 @@ export const MOMENTS_COMPOSE_PROMPT_MAX = 1750
 // 2 (one ", " separator) = 1929, rounded down.
 export const MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX = 1900
 
+// Text-only mode's own minimum — unlike photo mode (an empty prompt still
+// falls back to the default CINEMATIC style fragment server-side), text mode
+// has no photo/style fallback at all, so a near-blank prompt would waste a
+// real, billed Kling call producing an essentially undirected video.
+export const MIN_TEXT_PROMPT_LENGTH = 10
+
 export const REEL_ASPECT_RATIOS = ['9:16', '4:5', '16:9'] as const
 export const DEFAULT_REEL_ASPECT_RATIO = '9:16'
 
