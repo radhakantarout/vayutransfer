@@ -187,6 +187,30 @@ export const MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX = 1900
 // real, billed Kling call producing an essentially undirected video.
 export const MIN_TEXT_PROMPT_LENGTH = 10
 
+// ── Text-to-video extra creative options (Phase 4) ──────────────────────
+// Gated on Kling's real /text-to-video/{model} endpoint CONFIRMED to accept
+// each field without erroring (see createKlingTextToVideoTask's header
+// comment in lambda/vayustudio-reelgen/index.js, confirmed 2026-09-18) —
+// unlike duration/resolution (confirmed present but SILENTLY IGNORED, never
+// exposed in any UI), these were accepted and passed through. What was NOT
+// separately re-verified is the exact accepted VALUE SET for aspect_ratio or
+// the object schema for camera_control — camera_control is deliberately not
+// exposed yet for that reason (a wrong guessed schema risks a real, if
+// cleanly-refunded, failed generation for the user). aspect_ratio's three
+// values below are the industry-standard set nearly every video model
+// (including Kling's own public docs elsewhere) supports, and cfg_scale's
+// 0-1 range matches Kling's own documented convention — both lower-risk
+// guesses than camera_control's schema, but still not independently
+// confirmed against a real call the way the endpoint/body shape was.
+export const TEXT_TO_VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
+export const DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO: (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number] = '9:16'
+
+export const CFG_SCALE_PRESETS = { LOW: 0.25, MEDIUM: 0.5, HIGH: 0.75 } as const
+export type CfgScalePreset = keyof typeof CFG_SCALE_PRESETS
+export const DEFAULT_CFG_SCALE_PRESET: CfgScalePreset = 'MEDIUM'
+
+export const MAX_NEGATIVE_PROMPT_LENGTH = 200
+
 export const REEL_ASPECT_RATIOS = ['9:16', '4:5', '16:9'] as const
 export const DEFAULT_REEL_ASPECT_RATIO = '9:16'
 

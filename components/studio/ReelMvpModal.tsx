@@ -9,6 +9,8 @@ import {
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_DRONE_SHOT, type DroneShotStyle,
   MIN_REEL_PHOTOS, MAX_REEL_PHOTOS,
   computeTextToVideoCost, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
+  CFG_SCALE_PRESETS, DEFAULT_CFG_SCALE_PRESET, type CfgScalePreset, MAX_NEGATIVE_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
@@ -177,6 +179,11 @@ export interface ReelRegeneratePrefill {
   clipDurationSec?: number
   customPrompt?: string
   droneShot?: string
+  // Only meaningful for a mode: 'text' reel's own aspect-ratio choice
+  // ('9:16'/'16:9'/'1:1', see TEXT_TO_VIDEO_ASPECT_RATIOS) — loosely typed
+  // as `string` here rather than either mode's own narrower union since
+  // this single field is shared across both, validated at the point of use.
+  aspectRatio?: string
 }
 
 type ReelMvpModalProps =
@@ -254,6 +261,16 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // Text-mode-only Advanced fields (Phase 4) — inert/unused whenever
+  // isComposeTextMode is false, never read by handleGenerate's photo-mode
+  // body branch.
+  const [textAspectRatio, setTextAspectRatio] = useState<(typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number]>(
+    (initial?.aspectRatio && (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(initial.aspectRatio))
+      ? (initial.aspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
+      : DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO
+  )
+  const [cfgScalePreset, setCfgScalePreset] = useState<CfgScalePreset>(DEFAULT_CFG_SCALE_PRESET)
+  const [negativePrompt, setNegativePrompt] = useState('')
   const composeFileInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [reelId, setReelId] = useState<string | null>(null)
@@ -374,7 +391,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     // none of those, see the Moments reels route's mode:'text' branch) —
     // only ever reachable via Moments' compose screen with zero photos.
     const body = isComposeTextMode
-      ? { mode: 'text', textPrompt: trimmedPrompt ?? '' }
+      ? {
+          mode: 'text', textPrompt: trimmedPrompt ?? '',
+          aspectRatio: textAspectRatio, cfgScale: CFG_SCALE_PRESETS[cfgScalePreset],
+          negativePrompt: negativePrompt.trim() || undefined,
+        }
       : props.source === 'guest'
         ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
         : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
@@ -508,8 +529,71 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 producing a fixed ~5s clip (confirmed via a real API call,
                 see lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask
                 header), so exposing them here would be a control that does
-                nothing. */}
-            {!isComposeTextMode && (
+                nothing. Text mode gets its own different Advanced panel
+                below instead (aspect ratio / prompt adherence / negative
+                prompt — all confirmed accepted by the same real call,
+                Phase 4). Camera movement is deliberately NOT exposed here —
+                Kling accepts a `camera_control` field on this endpoint, but
+                its exact schema wasn't independently confirmed the way the
+                endpoint/body shape was, and a wrong guessed shape risks a
+                real (if cleanly-refunded) failed generation. */}
+            {isComposeTextMode ? (
+              <div className="border border-border rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setAdvancedOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-primary hover:bg-border/30 transition-colors"
+                >
+                  <span>⚙️ Advanced (aspect ratio, style)</span>
+                  <span className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {advancedOpen && (
+                  <div className="px-4 pb-4 space-y-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Aspect ratio</p>
+                      <div className="flex gap-1.5">
+                        {TEXT_TO_VIDEO_ASPECT_RATIOS.map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => setTextAspectRatio(r)}
+                            className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                              textAspectRatio === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Prompt adherence</p>
+                      <div className="flex gap-1.5">
+                        {(Object.keys(CFG_SCALE_PRESETS) as CfgScalePreset[]).map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setCfgScalePreset(p)}
+                            className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                              cfgScalePreset === p ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                            }`}
+                          >
+                            {p.charAt(0) + p.slice(1).toLowerCase()}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">What to avoid (optional)</p>
+                      <input
+                        type="text"
+                        value={negativePrompt}
+                        onChange={(e) => setNegativePrompt(e.target.value.slice(0, MAX_NEGATIVE_PROMPT_LENGTH))}
+                        placeholder="e.g. blurry, text, watermark, extra limbs"
+                        className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 transition-colors"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
               <div className="border border-border rounded-2xl overflow-hidden">
                 <button
                   onClick={() => setAdvancedOpen((v) => !v)}

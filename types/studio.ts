@@ -457,7 +457,14 @@ export interface StudioJob {
 
 export type ReelSource = 'CLIENT_GALLERY' | 'GUEST_SELFIE_SEARCH' | 'MOMENTS'
 export type ReelStyle = 'CINEMATIC' | 'ROMANTIC' | 'BOLLYWOOD' | 'LUXURY' | 'MEMORIES' | 'PHOTOGRAPHERS_CHOICE'
-export type ReelAspectRatio = '9:16' | '4:5' | '16:9'
+// '1:1' only ever appears on mode: 'text' reels (Kling's real text-to-video
+// endpoint's own accepted aspect-ratio set, TEXT_TO_VIDEO_ASPECT_RATIOS in
+// constants/videoProviders.ts, genuinely differs from photo-mode's '9:16'|
+// '4:5'|'16:9' — those three are tied to REEL_ASPECT_RATIO_DIMENSIONS' own
+// post-crop pixel sizes, which text mode never uses). Included in this one
+// shared type rather than a cast at the write site, so the field's real
+// possible values are honest wherever it's read.
+export type ReelAspectRatio = '9:16' | '4:5' | '16:9' | '1:1'
 export type ReelResolution = '720p' | '1080p'
 // Finer-grained than JobStatus (which only tracks the envelope) — this is
 // the user-facing generation stage shown in ReelGenerationScreen.

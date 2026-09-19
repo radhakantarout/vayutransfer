@@ -16,6 +16,7 @@ import {
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
   MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
@@ -102,6 +103,12 @@ export async function GET(
           clipDurationSec,
           customPrompt: r.customPrompt ?? '',
           droneShot: r.droneShot ?? undefined,
+          // Only meaningful for mode: 'text' reels (photo mode has no real
+          // per-reel aspect choice, see the comment above `mode` at the top
+          // of this map) — was persisted on StudioReel since Phase 4 but not
+          // previously threaded through to Regenerate, silently discarding
+          // the user's actual choice.
+          aspectRatio: r.aspectRatio ?? undefined,
         },
       }
     }))
@@ -136,10 +143,10 @@ export async function POST(
 
     const {
       mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
-      textPrompt,
+      textPrompt, aspectRatio: requestedAspectRatio, negativePrompt, cfgScale: requestedCfgScale,
     } = await req.json().catch(() => ({})) as {
       mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
-      textPrompt?: string
+      textPrompt?: string; aspectRatio?: string; negativePrompt?: string; cfgScale?: number
     }
     const mode: 'photo' | 'text' = requestedMode === 'text' ? 'text' : 'photo'
 
@@ -164,6 +171,18 @@ export async function POST(
       if (sanitizedTextPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
         return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
       }
+      // Phase 4 extras — never trust the client value blindly (same posture
+      // as resolution/durationSec below): fall back to undefined (field
+      // simply omitted from the Kling request, same as today) rather than
+      // rejecting the whole request over an invalid aspect ratio or
+      // out-of-preset cfg_scale.
+      const sanitizedNegativePrompt = typeof negativePrompt === 'string' ? negativePrompt.trim().slice(0, MAX_NEGATIVE_PROMPT_LENGTH) : ''
+      const validAspectRatio = (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(requestedAspectRatio ?? '')
+        ? (requestedAspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
+        : undefined
+      const validCfgScale = typeof requestedCfgScale === 'number' && (Object.values(CFG_SCALE_PRESETS) as number[]).includes(requestedCfgScale)
+        ? requestedCfgScale
+        : undefined
 
       const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
       if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -212,20 +231,25 @@ export async function POST(
       const now = new Date().toISOString()
       const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
 
-      // style/aspectRatio/resolution/durationSec don't have a real meaning
-      // for text-to-video (no template picked, no per-clip duration control
-      // — Kling's own endpoint ignores duration entirely, confirmed fixed
+      // style/resolution/durationSec don't have a real meaning for
+      // text-to-video (no template picked, no per-clip duration control —
+      // Kling's own endpoint ignores duration entirely, confirmed fixed
       // ~5s output) — populated with sensible constants purely so this
       // still satisfies StudioReel's shared shape; History's UI (Phase 3)
       // is responsible for not showing style/template info for mode:'text'
       // rows rather than this route inventing a misleading style choice.
+      // aspectRatio DOES have real meaning here (Phase 4) — stores the
+      // actual value sent to Kling, not a placeholder, so history/Regenerate
+      // reflect the real choice. ReelAspectRatio's type includes '1:1'
+      // specifically for this (see types/studio.ts) since text mode's own
+      // accepted set genuinely differs from photo-mode's.
       const reel: StudioReel = {
         reelId, jobId, studioId, projectId,
         source: 'MOMENTS',
         mode: 'text',
         photoIds: [],
         style: 'CINEMATIC',
-        aspectRatio: DEFAULT_REEL_ASPECT_RATIO,
+        aspectRatio: validAspectRatio ?? DEFAULT_REEL_ASPECT_RATIO,
         resolution: DEFAULT_REEL_RESOLUTION,
         durationSec: 5,
         customPrompt: sanitizedTextPrompt,
@@ -251,6 +275,9 @@ export async function POST(
           jobId, reelId, studioId, projectId,
           mode: 'text',
           textPrompt: sanitizedTextPrompt,
+          aspectRatio: validAspectRatio,
+          negativePrompt: sanitizedNegativePrompt || undefined,
+          cfgScale: validCfgScale,
           r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
           r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
           r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
