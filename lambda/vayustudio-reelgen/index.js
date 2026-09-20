@@ -87,7 +87,7 @@ const TEXT_TO_VIDEO_SUFFIX = 'high quality, smooth natural motion, no text, no w
 // packages, never sharing code with the Next.js TS app).
 async function createKlingTask({ apiKey, baseUrl, modelName, imageUrl, externalTaskId, durationSec, resolution, stylePromptFragment }) {
   const prompt = `${stylePromptFragment}, ${BASE_PROMPT_SUFFIX}`
-  const res = await fetch(`${baseUrl}/image-to-video/${modelName}`, {
+  const res = await fetchWithTimeout(`${baseUrl}/image-to-video/${modelName}`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -105,17 +105,22 @@ async function createKlingTask({ apiKey, baseUrl, modelName, imageUrl, externalT
   return data.data.id
 }
 
-// Text-to-video's own functions use this (not the pre-existing photo-mode
-// fetches above, which don't need it) — image-to-video's real Kling-side
-// duplicate-task rejection means a hung fetch there can only ever waste
-// time, never double-charge. Text-to-video has NO such backstop (see
-// createKlingTextToVideoTask's header below), so a request that hangs long
-// enough to hit AWS's own 900s hard SIGKILL — which runs no JS at all, so
-// the catch-and-refund block never executes — followed by AWS's automatic
-// retry, could genuinely create a second real, separately-billed Kling
-// video. A client-side timeout well under 900s turns that into an ordinary
-// thrown error, which the surrounding try/catch already handles correctly
-// (mark FAILED + refund) long before AWS's own timeout could ever fire.
+// Used by every Kling/network call in this file. Originally added only for
+// text-to-video's own functions (image-to-video's real Kling-side
+// duplicate-task rejection means a hung fetch there could only ever waste
+// time, never double-charge — text-to-video has no such backstop). Real
+// production incident (2026-09-20/21) found the gap in that reasoning: a
+// hung fetch ANYWHERE in this file — including the original photo-mode
+// calls, which never got this wrapper — rides out to AWS's own 900s hard
+// SIGKILL (runs no JS at all, so the catch-and-refund block never executes,
+// and there's no automatic retry recovery either since the retry itself can
+// then hang the same way), leaving the job stuck in PROCESSING forever with
+// credits never refunded until a human notices. A real photo-mode reel got
+// stuck exactly this way for over 24 hours. A client-side timeout well
+// under 900s turns any hang into an ordinary thrown error, which the
+// surrounding try/catch already handles correctly (mark FAILED + refund)
+// long before AWS's own timeout could ever fire — now applied uniformly,
+// not just to the newer text-to-video path.
 async function fetchWithTimeout(url, options, timeoutMs = 30000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -127,7 +132,7 @@ async function fetchWithTimeout(url, options, timeoutMs = 30000) {
 }
 
 async function queryKlingTasks({ apiKey, baseUrl, externalTaskIds }) {
-  const res = await fetch(`${baseUrl}/tasks?external_task_ids=${encodeURIComponent(externalTaskIds.join(','))}`, {
+  const res = await fetchWithTimeout(`${baseUrl}/tasks?external_task_ids=${encodeURIComponent(externalTaskIds.join(','))}`, {
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
   })
   if (!res.ok) throw new Error(`Kling query failed: ${res.status} ${await res.text().catch(() => '')}`)
@@ -200,7 +205,7 @@ async function queryKlingTasksByTaskId({ apiKey, baseUrl, taskIds }) {
 }
 
 async function downloadToFile(url, filePath) {
-  const res = await fetch(url)
+  const res = await fetchWithTimeout(url, undefined, 60000)
   if (!res.ok) throw new Error(`Failed downloading clip: ${res.status}`)
   const buf = Buffer.from(await res.arrayBuffer())
   await fs.writeFile(filePath, buf)
