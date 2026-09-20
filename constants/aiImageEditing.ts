@@ -25,10 +25,12 @@ export function computeImageEditCost(
     targetMargin?: number
     aiExtraPaisePer1000?: number
   },
-  // Number of reference/source images fed to edit/fusion mode (0 for pure
-  // text-to-image) — a bounded (max 10, enforced server-side), validated
-  // cost driver that must factor into price the same way heroClipCount does
-  // for reels, not be silently free.
+  // Number of reference/source images fed to edit mode (0 for pure
+  // text-to-image) — bounded to max 1 (enforced server-side, see
+  // MAX_SOURCE_IMAGES in the ai-images route) since real multi-image fusion
+  // needs a different, unverified Kling endpoint. Kept as a count rather
+  // than a boolean since unitsPerReference is a real, if currently zero,
+  // per-image rate — not just a flat edit-mode surcharge.
   referenceImageCount = 0
 ): ImageEditCostEstimate {
   const paisePer100k = rates?.klingImageEditPaisePer100kUnits ?? 3395000 // $350 @ ~₹97/$1
@@ -37,7 +39,15 @@ export function computeImageEditCost(
     '2K': rates?.klingImageEditUnitsPerImage2k ?? 8,
   }
   const unitsPerImage = unitsByResolution[resolution]
-  const unitsPerReference = rates?.klingImageEditUnitsPerReferenceImage ?? 2
+  // 0, not a provisional surcharge — TWO independent real Kling calls
+  // (2026-09-18 and 2026-09-20, the second against the CORRECT edit
+  // endpoint schema found after the first was confirmed wrong, see
+  // lambda/vayustudio-imagegen/providers/kling.js's header) both billed
+  // exactly 8 units for a single-reference-image edit, identical to plain
+  // 1-image generation — no reference-image surcharge exists on this
+  // account. Kept as a rates-overridable field (not deleted) in case a
+  // surcharge appears once multi-reference editing is verified separately.
+  const unitsPerReference = rates?.klingImageEditUnitsPerReferenceImage ?? 0
   const margin = rates?.targetMargin ?? 0.55
 
   const rawCostPaise = Math.round(

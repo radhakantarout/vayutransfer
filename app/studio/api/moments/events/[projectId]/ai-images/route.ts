@@ -17,10 +17,22 @@ const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1'
 
 const MIN_AI_IMAGES = 1
 const MAX_AI_IMAGES = 9
-const MAX_SOURCE_IMAGES = 10
+// Reduced 10 -> 1 (2026-09-20) — real multi-reference editing needs a
+// completely different Kling endpoint (/v1/images/omni-image, model_name
+// 'kling-image-o1', an image_list of {image} objects, <<<object_N>>> prompt
+// placeholders) that has never been tested against this account. The
+// previous 10-image cap assumed the same /v1/images/generations endpoint
+// supported multi-reference fusion via image_urls + @Image1/@Image2 prompt
+// syntax — a real product bug found this was never true (see
+// lambda/vayustudio-imagegen/providers/kling.js's header for the full real
+// API facts) — capped to 1 rather than continuing to accept requests this
+// endpoint was never actually able to serve correctly.
+const MAX_SOURCE_IMAGES = 1
 // No '4K' — confirmed against a real Kling API call (2026-09-18) that this
 // account/tier rejects it outright ("resolution value '4k' is not
 // supported"). See lambda/vayustudio-imagegen/providers/kling.js's header.
+// '2K' is further restricted to GENERATE mode only below — edit mode's real
+// model_name ('kling-v2-1') rejects '2k' outright (confirmed 2026-09-20).
 const AI_IMAGE_RESOLUTIONS: readonly AiImageResolution[] = ['1K', '2K']
 const AI_IMAGE_ASPECT_RATIOS: readonly AiImageAspectRatio[] = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9']
 
@@ -108,8 +120,13 @@ export async function POST(
       ? Array.from(new Set(body.sourceFileIds)).slice(0, MAX_SOURCE_IMAGES)
       : []
     const mode: AiImageMode = sourceFileIds.length > 0 ? 'edit' : 'generate'
-    const resolution: AiImageResolution = AI_IMAGE_RESOLUTIONS.includes(body.resolution as AiImageResolution)
-      ? (body.resolution as AiImageResolution) : '1K'
+    // Edit mode's real model ('kling-v2-1', see the Lambda provider's
+    // header) rejects '2k' outright — confirmed via a real call 2026-09-20.
+    // Generate mode (no reference photo, no model_name sent) is unaffected
+    // and keeps both 1K/2K.
+    const resolution: AiImageResolution = mode === 'edit'
+      ? '1K'
+      : AI_IMAGE_RESOLUTIONS.includes(body.resolution as AiImageResolution) ? (body.resolution as AiImageResolution) : '1K'
     const aspectRatio: AiImageAspectRatio = AI_IMAGE_ASPECT_RATIOS.includes(body.aspectRatio as AiImageAspectRatio)
       ? (body.aspectRatio as AiImageAspectRatio) : 'auto'
     const numImages = Number.isInteger(body.numImages) && (body.numImages as number) >= MIN_AI_IMAGES && (body.numImages as number) <= MAX_AI_IMAGES
@@ -118,13 +135,7 @@ export async function POST(
     let sourceKeys: string[] = []
     if (mode === 'edit') {
       // Never trust client-supplied fileIds beyond using them to look up
-      // this project's own real files — but the CLIENT's order must be
-      // preserved (map over sourceFileIds, not allFiles' own DB-query
-      // order), since this array order becomes @Image1/@Image2/... in
-      // Kling's prompt syntax. The UI shows the user exactly this
-      // numbering against their selected photos — silently re-ordering it
-      // server-side would make the prompt reference the wrong photo with
-      // no error surfaced anywhere.
+      // this project's own real files.
       const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
       const byId = new Map(allFiles.map((f) => [f.fileId, f]))
       const selectedFiles = sourceFileIds
@@ -138,31 +149,6 @@ export async function POST(
         return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible for AI editing yet.' }, { status: 400 })
       }
     }
-
-    // Real product bug found 2026-09-20: passing `image_urls` alone does NOT
-    // guarantee Kling actually treats the photo(s) as an edit target — its
-    // @Image1/@Image2 prompt syntax (see lambda/vayustudio-imagegen/providers/
-    // kling.js's header) is how it decides WHICH reference to anchor to.
-    // Without it, "editing" silently degraded into an unrelated new
-    // generation that just happened to share the same prompt. If the user's
-    // own prompt already references at least one VALID @ImageN (an index
-    // actually within the selected photo count — a typo'd/out-of-range
-    // mention like "@Image5" with only 2 photos selected must NOT count as
-    // "handled", since Kling would have nothing real to anchor that to,
-    // reproducing the exact same bug through a different path), respect
-    // their explicit choice untouched (they may be doing deliberate
-    // multi-image fusion, e.g. "combine @Image1 and @Image2"). Otherwise
-    // auto-anchor every selected photo so editing always actually applies —
-    // this is what makes a single selected photo "just work" as the
-    // reference with zero extra step, and gives multi-photo edits a safe
-    // default instead of silently ignoring all of them. Only the prompt SENT
-    // to Kling is augmented — the stored `prompt` stays exactly what the
-    // user typed, so history/regenerate reflect their real input.
-    const validMentionPattern = new RegExp(`@image(${sourceFileIds.map((_, i) => i + 1).join('|')})\\b`, 'i')
-    const hasValidMention = mode === 'edit' && sourceFileIds.length > 0 && validMentionPattern.test(prompt)
-    const finalPrompt = mode === 'edit' && !hasValidMention
-      ? `${sourceFileIds.map((_, i) => `@Image${i + 1}`).join(' ')} ${prompt}`.slice(0, MAX_CUSTOM_PROMPT_LENGTH)
-      : prompt
 
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
@@ -231,7 +217,7 @@ export async function POST(
       InvocationType: 'Event',
       Payload: Buffer.from(JSON.stringify({
         jobId, imageId, studioId, projectId,
-        mode, prompt: finalPrompt, sourceR2Keys: sourceKeys, resolution, aspectRatio, numImages,
+        mode, prompt, sourceR2Keys: sourceKeys, resolution, aspectRatio, numImages,
         provider: pricing.imageProvider,
         r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
         r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
@@ -239,7 +225,10 @@ export async function POST(
         r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
         klingApiKey: process.env.KLING_API_KEY,
         klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
-        klingModelName: process.env.KLING_IMAGE_MODEL_NAME || 'kling-3.0-omni',
+        // No klingModelName sent — the real correct model_name per mode is
+        // now hardcoded in lambda/vayustudio-imagegen/providers/kling.js
+        // itself, since KLING_IMAGE_MODEL_NAME's old default
+        // ('kling-3.0-omni') was never a valid value for this endpoint.
         // Lets the Lambda's own catch block refund directly if generation
         // fails cleanly (Kling never bills for a failed task).
         creditsCharged: aiCreditsRequired,

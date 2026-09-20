@@ -44,12 +44,12 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
-    title: 'AI Image Studio (Kling) — backend only, UI not live yet',
+    title: 'AI Image Studio (Kling)',
     fields: [
       { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-generation units.', suffix: 'paise/100k units' },
       { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'Confirmed against a real Kling API call.', suffix: 'units/image' },
-      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K', hint: 'Confirmed against a real Kling API call — same as 1K.', suffix: 'units/image' },
-      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'Margin buffer, not a measured Kling cost — a real test showed no extra charge for 1 reference image. Cost per source photo fed into edit/fusion mode (0-10 per request).', suffix: 'units/reference' },
+      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K (generate mode only — edit mode is 1K-only)', hint: 'Confirmed against a real Kling API call — same as 1K.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'Should stay 0 — TWO independent real Kling tests (2026-09-18, 2026-09-20) confirmed no extra charge for editing with a reference photo. Edit mode is currently capped to exactly 1 reference photo; raising this above 0 would overcharge every edit with no matching real cost.', suffix: 'units/reference' },
     ],
   },
   {

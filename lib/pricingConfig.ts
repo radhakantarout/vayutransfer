@@ -24,7 +24,13 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1
   klingImageEditUnitsPerImage1k: 8,         // CONFIRMED via real Kling API call, 2026-09-18
   klingImageEditUnitsPerImage2k: 8,         // CONFIRMED via real Kling API call, 2026-09-18 (same as 1k)
-  klingImageEditUnitsPerReferenceImage: 2,  // Margin buffer, not a measured Kling cost — see types/pricingConfig.ts comment
+  // 0, not a margin-buffer guess — TWO independent real Kling calls
+  // (2026-09-18 and 2026-09-20) both billed identically whether or not a
+  // reference image was included, confirming no per-reference surcharge
+  // exists on this account. See constants/aiImageEditing.ts's comment on
+  // this same field and lambda/vayustudio-imagegen/providers/kling.js's
+  // header for the full real API facts.
+  klingImageEditUnitsPerReferenceImage: 0,
   imageProvider: 'kling',
   klingTextToVideoUnitsPerVideo: 4,  // CONFIRMED via real Kling API call, 2026-09-18 — flat, not resolution-aware
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
@@ -59,7 +65,7 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
   'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
-  'klingImageEditUnitsPerReferenceImage', 'momentsCreditDivisor',
+  'momentsCreditDivisor',
   'momentsWelcomeBonusCredits', 'klingTextToVideoUnitsPerVideo',
 ]
 
@@ -69,6 +75,13 @@ export function validatePricingConfigPatch(patch: Partial<PricingConfig>): strin
     if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v <= 0)) {
       return `${key} must be a positive number`
     }
+  }
+  // Not in POSITIVE_FIELDS deliberately — 0 is the real, confirmed-correct
+  // value (no per-reference-image surcharge exists on this account, see
+  // DEFAULT_PRICING_CONFIG's comment above), so an admin must be able to
+  // explicitly set/keep it at 0 rather than that being rejected as invalid.
+  if (patch.klingImageEditUnitsPerReferenceImage !== undefined && (typeof patch.klingImageEditUnitsPerReferenceImage !== 'number' || !Number.isFinite(patch.klingImageEditUnitsPerReferenceImage) || patch.klingImageEditUnitsPerReferenceImage < 0)) {
+    return 'klingImageEditUnitsPerReferenceImage cannot be negative'
   }
   if (patch.freeAiSearchCredits !== undefined && (typeof patch.freeAiSearchCredits !== 'number' || patch.freeAiSearchCredits < 0)) {
     return 'freeAiSearchCredits cannot be negative'

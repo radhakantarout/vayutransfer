@@ -24,8 +24,10 @@ import { REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 const MAX_CONCURRENT_UPLOADS = 4
 const GRADIENT = 'linear-gradient(135deg,#f97316,#ec4899,#8b5cf6)'
 // Mirrors MAX_SOURCE_IMAGES in app/studio/api/moments/events/[projectId]/ai-images/route.ts
-// (a server module, not importable here) and AiImageStudioModal.tsx's own copy.
-const MAX_AI_EDIT_SOURCE_IMAGES = 10
+// (a server module, not importable here) — reduced 10 -> 1 (2026-09-20), see
+// that route's own comment on MAX_SOURCE_IMAGES for why (real multi-image
+// editing needs a different, unverified Kling endpoint).
+const MAX_AI_EDIT_SOURCE_IMAGES = 1
 
 interface EventDetail {
   projectId: string
@@ -1983,8 +1985,14 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
             {canReel && (
               <button
                 onClick={bulkEditWithAi}
-                disabled={!files.some((f) => selectedIds.has(f.fileId) && f.fileType === 'IMAGE')}
-                title="Edit with AI"
+                // Exactly 1, not just ">= 1" — real multi-image editing needs
+                // a different, unverified Kling endpoint (see
+                // MAX_AI_EDIT_SOURCE_IMAGES's comment above), so selecting 3
+                // photos and tapping this used to silently edit only the
+                // first with no explanation. Disabling outright for >1 is
+                // more honest than a silent partial action.
+                disabled={files.filter((f) => selectedIds.has(f.fileId) && f.fileType === 'IMAGE').length !== 1}
+                title={files.filter((f) => selectedIds.has(f.fileId) && f.fileType === 'IMAGE').length > 1 ? 'Select exactly 1 photo to edit with AI' : 'Edit with AI'}
                 className="w-10 h-10 rounded-2xl flex items-center justify-center bg-bg hover:bg-border/60 text-muted hover:text-text-primary transition-colors disabled:opacity-30 disabled:pointer-events-none"
               >
                 <svg className="w-4.5 h-4.5" style={{ width: 18, height: 18 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

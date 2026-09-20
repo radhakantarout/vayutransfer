@@ -90,7 +90,7 @@ exports.handler = async (event) => {
     mode, prompt, sourceR2Keys, resolution, aspectRatio, numImages,
     provider,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
-    klingApiKey, klingApiBaseUrl, klingModelName,
+    klingApiKey, klingApiBaseUrl,
     creditsCharged, refundPool,
   } = event
 
@@ -134,9 +134,15 @@ exports.handler = async (event) => {
     )
 
     const impl = providers[provider] || providers.kling
+    // No modelName passed through — the real correct model_name for each
+    // mode is now hardcoded inside providers/kling.js itself ('kling-v2-1'
+    // for single-image edits, omitted entirely for pure generation), since
+    // real API testing found the previously-configurable value
+    // ('kling-3.0-omni' via KLING_IMAGE_MODEL_NAME) was never a valid model
+    // for this endpoint in the first place — see that file's header.
     const resultUrls = await impl.generate({
       prompt, sourceImageUrls, resolution, aspectRatio, numImages,
-      apiKey: klingApiKey, baseUrl: klingApiBaseUrl, modelName: klingModelName,
+      apiKey: klingApiKey, baseUrl: klingApiBaseUrl,
       externalTaskId: `${imageId}`.slice(0, 64),
     })
 

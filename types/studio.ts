@@ -572,8 +572,11 @@ export interface StudioReel {
 // projectId-createdAt-index (mirrors vayustudio-reels' shape exactly — same
 // "My Reels"-style history query pattern). Driven by lambda/vayustudio-imagegen,
 // a batch-of-1..9 sibling to StudioReel rather than a video: 'generate' mode
-// has zero sourceFileIds (pure text-to-image); 'edit' mode has 1-10, referenced
-// in the prompt via Kling's own "@Image1"/"@Image2" syntax.
+// has zero sourceFileIds (pure text-to-image); 'edit' mode has exactly 1 —
+// capped there 2026-09-20 after a real bug found the previous 1-10 range +
+// "@Image1"/"@Image2" prompt syntax was never a real Kling capability (see
+// lambda/vayustudio-imagegen/providers/kling.js's header for the full real
+// API facts). True multi-image fusion needs a different, unverified endpoint.
 export type AiImageMode = 'generate' | 'edit'
 // No '4K' — confirmed against a real Kling API call (2026-09-18) that this
 // account/tier only accepts lowercase '1k'/'2k'; '4k' returns "resolution
@@ -589,7 +592,7 @@ export interface StudioAiImage {
   studioId: string
   projectId: string
   mode: AiImageMode
-  sourceFileIds: string[]    // empty for 'generate', 1-10 for 'edit'
+  sourceFileIds: string[]    // empty for 'generate', exactly 1 for 'edit'
   prompt: string
   resolution: AiImageResolution
   aspectRatio: AiImageAspectRatio
