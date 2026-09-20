@@ -139,6 +139,31 @@ export async function POST(
       }
     }
 
+    // Real product bug found 2026-09-20: passing `image_urls` alone does NOT
+    // guarantee Kling actually treats the photo(s) as an edit target — its
+    // @Image1/@Image2 prompt syntax (see lambda/vayustudio-imagegen/providers/
+    // kling.js's header) is how it decides WHICH reference to anchor to.
+    // Without it, "editing" silently degraded into an unrelated new
+    // generation that just happened to share the same prompt. If the user's
+    // own prompt already references at least one VALID @ImageN (an index
+    // actually within the selected photo count — a typo'd/out-of-range
+    // mention like "@Image5" with only 2 photos selected must NOT count as
+    // "handled", since Kling would have nothing real to anchor that to,
+    // reproducing the exact same bug through a different path), respect
+    // their explicit choice untouched (they may be doing deliberate
+    // multi-image fusion, e.g. "combine @Image1 and @Image2"). Otherwise
+    // auto-anchor every selected photo so editing always actually applies —
+    // this is what makes a single selected photo "just work" as the
+    // reference with zero extra step, and gives multi-photo edits a safe
+    // default instead of silently ignoring all of them. Only the prompt SENT
+    // to Kling is augmented — the stored `prompt` stays exactly what the
+    // user typed, so history/regenerate reflect their real input.
+    const validMentionPattern = new RegExp(`@image(${sourceFileIds.map((_, i) => i + 1).join('|')})\\b`, 'i')
+    const hasValidMention = mode === 'edit' && sourceFileIds.length > 0 && validMentionPattern.test(prompt)
+    const finalPrompt = mode === 'edit' && !hasValidMention
+      ? `${sourceFileIds.map((_, i) => `@Image${i + 1}`).join(' ')} ${prompt}`.slice(0, MAX_CUSTOM_PROMPT_LENGTH)
+      : prompt
+
     const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
     if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
@@ -206,7 +231,7 @@ export async function POST(
       InvocationType: 'Event',
       Payload: Buffer.from(JSON.stringify({
         jobId, imageId, studioId, projectId,
-        mode, prompt, sourceR2Keys: sourceKeys, resolution, aspectRatio, numImages,
+        mode, prompt: finalPrompt, sourceR2Keys: sourceKeys, resolution, aspectRatio, numImages,
         provider: pricing.imageProvider,
         r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
         r2Endpoint: process.env.STUDIO_R2_ENDPOINT,

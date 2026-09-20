@@ -87,6 +87,16 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
   const [savedCount, setSavedCount] = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reducedMotion = useReducedMotion()
+  // "@" mention autocomplete for multiple reference photos — only relevant
+  // once there's more than one to disambiguate between (a single photo is
+  // auto-used as the reference with no mention needed at all, see the
+  // server route's auto-anchor fallback). mentionQuery === null means the
+  // dropdown is closed; '' means "@" was just typed with nothing after it
+  // yet (still show every option). mentionStart is the index of the '@'
+  // itself, so the matched text can be sliced out and replaced on select.
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionStart, setMentionStart] = useState(-1)
 
   // Live, owner-editable rates — same fetch-once pattern as ReelMvpModal so
   // this quote stays in sync with the server's actual charge without a
@@ -174,6 +184,48 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
     setSavedCount(res.data.fileIds.length)
   }
 
+  // Detects an in-progress "@" mention as the user types (only meaningful
+  // with 2+ reference photos — with exactly one, it's auto-used with no
+  // mention needed, see the server route's auto-anchor fallback). Finds the
+  // nearest unclosed '@' before the cursor; a space/newline after it means
+  // the mention was already completed or abandoned, so the dropdown closes.
+  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH)
+    setPrompt(value)
+    if (!isEdit || sourceFiles.length < 2) { setMentionQuery(null); return }
+    const cursor = e.target.selectionStart
+    const uptoCursor = value.slice(0, cursor)
+    const atIndex = uptoCursor.lastIndexOf('@')
+    if (atIndex === -1) { setMentionQuery(null); return }
+    const textAfterAt = uptoCursor.slice(atIndex + 1)
+    if (/\s/.test(textAfterAt)) { setMentionQuery(null); return }
+    setMentionStart(atIndex)
+    setMentionQuery(textAfterAt)
+  }
+
+  // Guards sourceFiles.length >= 2 independently of mentionQuery ever being
+  // non-null — a single photo needs no disambiguation at all (auto-used as
+  // the reference by the server route), so this can never show for it even
+  // if some future code path set mentionQuery directly.
+  const mentionOptions = isEdit && sourceFiles.length >= 2
+    ? sourceFiles.map((_, i) => `Image${i + 1}`).filter((name) => !mentionQuery || name.toLowerCase().includes(mentionQuery.toLowerCase()))
+    : []
+
+  const insertMention = (name: string) => {
+    if (mentionStart < 0) return
+    const cursor = promptRef.current?.selectionStart ?? prompt.length
+    const before = prompt.slice(0, mentionStart)
+    const after = prompt.slice(cursor)
+    const next = `${before}@${name} ${after}`.slice(0, MAX_CUSTOM_PROMPT_LENGTH)
+    setPrompt(next)
+    setMentionQuery(null)
+    const caretPos = before.length + name.length + 2 // '@' + name + trailing space
+    requestAnimationFrame(() => {
+      promptRef.current?.focus()
+      promptRef.current?.setSelectionRange(caretPos, caretPos)
+    })
+  }
+
   const canGenerate = prompt.trim().length > 0
 
   return (
@@ -226,22 +278,55 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
                   ))}
                 </div>
                 <p className="text-[10px] text-muted">
-                  Reference them in your prompt by name, e.g. &quot;combine @Image1 and @Image2 into one scene&quot;.
+                  {sourceFiles.length === 1
+                    ? 'This photo is automatically used as the reference — no need to mention it.'
+                    : 'All are used by default. Type "@" to call out a specific one, e.g. "combine @Image1 and @Image2".'}
                 </p>
               </div>
             )}
 
-            <div className="space-y-2">
+            <div className="space-y-2 relative">
               <textarea
+                ref={promptRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH))}
+                onChange={handlePromptChange}
+                onBlur={() => {
+                  // Delay so a click on a dropdown option (which also blurs
+                  // the textarea) still registers before the dropdown unmounts.
+                  setTimeout(() => setMentionQuery(null), 150)
+                }}
                 placeholder={isEdit
-                  ? 'e.g. Turn @Image1 into a watercolor painting, keep the composition…'
+                  ? sourceFiles.length === 1
+                    ? 'e.g. Turn this into a watercolor painting, keep the composition…'
+                    : 'e.g. Combine @Image1 and @Image2 into one scene…'
                   : 'e.g. A dreamy golden-hour portrait with soft bokeh, cinematic lighting…'}
                 rows={4}
                 className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
                 autoFocus
               />
+              {mentionQuery !== null && mentionOptions.length > 0 && (
+                <div className="absolute z-10 left-0 right-0 top-full mt-1 border border-border rounded-xl bg-card shadow-lg overflow-hidden">
+                  {mentionOptions.map((name) => {
+                    const file = sourceFiles[Number(name.replace('Image', '')) - 1]
+                    return (
+                      <button
+                        key={name}
+                        // onMouseDown (not onClick) fires before the textarea's
+                        // onBlur, so the click registers before mentionQuery
+                        // gets cleared by the blur timeout above.
+                        onMouseDown={(e) => { e.preventDefault(); insertMention(name) }}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-border/40 text-left transition-colors"
+                      >
+                        {file && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={file.previewUrl} alt={name} className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                        )}
+                        <span className="text-xs font-semibold text-text-primary">@{name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <p className="text-[10px] text-muted text-right">{prompt.length}/{MAX_CUSTOM_PROMPT_LENGTH}</p>
             </div>
 
