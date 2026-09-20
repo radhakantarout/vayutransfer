@@ -41,6 +41,24 @@ export interface PricingConfig {
   // already capped at 10) being silently absent from the price formula is
   // exactly the class of bug the reel-duration cost leak was.
   klingImageEditUnitsPerReferenceImage: number
+  // OpenAI gpt-image-2.5-sunburst — the PRIMARY image gen/edit provider as
+  // of 2026-09-20 (Kling's edit path never faithfully preserved input photo
+  // identity even after its own schema fix, confirmed via real visual
+  // comparison — see lambda/vayustudio-imagegen/providers/openai.js's
+  // header). Real billing is TOKEN-based (text/image input, image output,
+  // each at a different $/1M-token rate), not unit-based like Kling, so
+  // this is a flat total-paise-per-generation estimate per (mode, quality
+  // tier) rather than a per-unit rate — calibrated from real `usage` data
+  // in actual API responses, rounded up for a safe pre-charge margin (the
+  // wallet is deducted BEFORE generation starts, so this must not
+  // undercharge relative to what OpenAI actually bills). All four values
+  // (generate/edit × medium/high) are directly measured from real calls,
+  // not extrapolated — see constants/aiImageEditing.ts's
+  // computeOpenAiImageCost for the exact math and real token counts.
+  openaiGenerateCostPaiseMedium: number
+  openaiGenerateCostPaiseHigh: number
+  openaiEditCostPaiseMedium: number
+  openaiEditCostPaiseHigh: number
   // Text-to-video (Moments only — Kling's own /text-to-video/{model}
   // endpoint, a genuinely different endpoint from image-to-video, not a
   // parameter on it, confirmed via a real API call 2026-09-18). FLAT rate,
@@ -55,11 +73,13 @@ export interface PricingConfig {
   // Config-driven provider swap — mirrors lib/studio/videoProviders/router.ts's
   // enabled/priority pattern but simpler (one active provider at a time,
   // not a priority-ordered fallback list). Plain string (not a union type)
-  // deliberately: routes/UI only ever pass it through verbatim into the
-  // imagegen Lambda's invoke payload, never branch on it — validated at
-  // runtime against IMAGE_PROVIDERS (lib/pricingConfig.ts) instead, so
-  // adding a real second provider is a Lambda module + one array entry, not
-  // a type change. Only 'kling' is actually implemented today.
+  // deliberately: the Lambda invoke payload just passes it through verbatim
+  // (the Lambda itself picks the provider module), validated at runtime
+  // against IMAGE_PROVIDERS (lib/pricingConfig.ts) instead of a type change.
+  // Cost calculation DOES branch on this (constants/aiImageEditing.ts) since
+  // Kling (unit-based) and OpenAI (token-based) have genuinely different
+  // pricing shapes, not just different rate numbers. 'kling' and 'openai'
+  // both implemented; 'openai' is the default as of 2026-09-20.
   imageProvider: string
   // Friendly display-only unit for Moments ("Moments Credits") — raw
   // aiSearchCredits ÷ this divisor. Never used for accounting/enforcement,

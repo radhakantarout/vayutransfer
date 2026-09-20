@@ -31,7 +31,24 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   // this same field and lambda/vayustudio-imagegen/providers/kling.js's
   // header for the full real API facts.
   klingImageEditUnitsPerReferenceImage: 0,
-  imageProvider: 'kling',
+  // Real usage-based costs — ALL FOUR now directly measured via real API
+  // `usage` responses (2026-09-20), rounded up for margin:
+  // generate/medium (1024x1024): 439 output image tokens -> ~$0.0133/~₹1.29
+  //   -> 150 paise.
+  // generate/high (1536x1024): 1372 output tokens -> ~$0.0413/~₹4.00
+  //   -> 450 paise.
+  // edit/medium (1024x1536, 1 reference): 1482 image-input + 343 output
+  //   tokens -> ~$0.0223/~₹2.16 -> 250 paise.
+  // edit/high (864x1536, 1 reference): 1482 image-input + 1078 output
+  //   tokens -> ~$0.0444/~₹4.30 -> 480 paise.
+  openaiGenerateCostPaiseMedium: 150,
+  openaiGenerateCostPaiseHigh: 450,
+  openaiEditCostPaiseMedium: 250,
+  openaiEditCostPaiseHigh: 480,
+  // Primary image gen/edit provider as of 2026-09-20 — see the field's own
+  // comment in types/pricingConfig.ts for why (Kling's edit path never
+  // faithfully preserved input photo identity).
+  imageProvider: 'openai',
   klingTextToVideoUnitsPerVideo: 4,  // CONFIRMED via real Kling API call, 2026-09-18 — flat, not resolution-aware
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
@@ -40,7 +57,7 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
 
 // Providers with an actual implementation in lambda/vayustudio-imagegen —
 // extend this the same commit that adds a new provider module there.
-export const IMAGE_PROVIDERS = ['kling'] as const
+export const IMAGE_PROVIDERS = ['kling', 'openai'] as const
 
 const CONFIG_KEY = 'live'
 const CACHE_TTL_MS = 60_000
@@ -65,6 +82,7 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
   'creditValuePaise', 'momentsRetentionDays',
   'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
+  'openaiGenerateCostPaiseMedium', 'openaiGenerateCostPaiseHigh', 'openaiEditCostPaiseMedium', 'openaiEditCostPaiseHigh',
   'momentsCreditDivisor',
   'momentsWelcomeBonusCredits', 'klingTextToVideoUnitsPerVideo',
 ]

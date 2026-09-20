@@ -599,8 +599,11 @@ export interface StudioAiImage {
   numImages: number          // batch size requested, 1-9
   // Config-driven provider swap (see lib/pricingConfig.ts#imageProvider) —
   // stamped per-image so history/audit shows what actually generated it even
-  // after the live config default later changes.
-  provider: 'kling'
+  // after the live config default later changes. Plain string (matches
+  // PricingConfig.imageProvider), not a literal union — 'openai' became a
+  // real second value 2026-09-20, and this must never need a type change
+  // again the next time the active provider changes.
+  provider: string
   status: AiImageStatus
   // Lambda writes results here as plain R2 keys (a staging area, NOT
   // MediaFile rows) — generation is billed regardless of what the user

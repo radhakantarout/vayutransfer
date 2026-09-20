@@ -57,3 +57,40 @@ export function computeImageEditCost(
   const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(rates?.aiExtraPaisePer1000)))
   return { rawCostPaise, sellPricePaise, aiCreditsRequired }
 }
+
+// OpenAI gpt-image-2.5-sunburst — the PRIMARY provider as of 2026-09-20 (see
+// lambda/vayustudio-imagegen/providers/openai.js's header for the real API
+// facts and why Kling was replaced for images). Real billing is TOKEN-based
+// (a different $/1M-token rate for text input, image input, and image
+// output), which doesn't fit computeImageEditCost's per-unit shape above —
+// this is a flat, real-usage-calibrated paise-per-generation lookup instead,
+// same "one formula per genuinely different pricing shape" pattern as
+// videoProviders.ts's computeReelCost vs computeTextToVideoCost split.
+// numImages multiplies linearly (each image is an independent API call,
+// unlike Kling's single multi-image-batch request via `n`).
+export function computeOpenAiImageCost(
+  mode: 'generate' | 'edit',
+  resolution: AiImageResolution = '1K',
+  numImages: number,
+  rates?: {
+    openaiGenerateCostPaiseMedium?: number
+    openaiGenerateCostPaiseHigh?: number
+    openaiEditCostPaiseMedium?: number
+    openaiEditCostPaiseHigh?: number
+    targetMargin?: number
+    aiExtraPaisePer1000?: number
+  }
+): ImageEditCostEstimate {
+  // '1K' -> 'medium' quality, '2K' -> 'high' quality — matches
+  // providers/openai.js's own QUALITY_BY_RESOLUTION mapping exactly.
+  const isHigh = resolution === '2K'
+  const costPerImagePaise = mode === 'edit'
+    ? (isHigh ? rates?.openaiEditCostPaiseHigh ?? 480 : rates?.openaiEditCostPaiseMedium ?? 250)
+    : (isHigh ? rates?.openaiGenerateCostPaiseHigh ?? 450 : rates?.openaiGenerateCostPaiseMedium ?? 150)
+  const margin = rates?.targetMargin ?? 0.55
+
+  const rawCostPaise = Math.round(numImages * costPerImagePaise)
+  const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
+  const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(rates?.aiExtraPaisePer1000)))
+  return { rawCostPaise, sellPricePaise, aiCreditsRequired }
+}

@@ -135,9 +135,20 @@ async function queryTask({ apiKey, baseUrl, taskId }) {
   return data.data
 }
 
+async function downloadToBuffer(url) {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Failed downloading generated image: ${res.status}`)
+  return Buffer.from(await res.arrayBuffer())
+}
+
 // ~3.5 min ceiling at 5s/poll — image generation should be much faster than
 // video, this just gives real headroom without holding the Lambda open
 // indefinitely on a stuck task.
+//
+// Returns Buffers, not URLs — matches providers/openai.js's shared
+// interface (that provider's response has no result URL at all, only
+// inline base64), so index.js can treat every provider identically rather
+// than branching on "does this provider need a download step."
 async function generate({ prompt, sourceImageUrls, resolution, aspectRatio, numImages, apiKey, baseUrl, externalTaskId }) {
   const taskId = await createTask({ apiKey, baseUrl, prompt, sourceImageUrls, resolution, aspectRatio, numImages, externalTaskId })
 
@@ -148,7 +159,7 @@ async function generate({ prompt, sourceImageUrls, resolution, aspectRatio, numI
       const outputs = (task.task_result && task.task_result.images) || []
       const urls = outputs.map((o) => o.url).filter(Boolean)
       if (urls.length === 0) throw new Error('Kling image task succeeded but returned no output URLs')
-      return urls
+      return Promise.all(urls.map((url) => downloadToBuffer(url)))
     }
     if (task.task_status === 'failed') {
       throw new Error(`Kling image generation failed: ${task.task_status_msg || 'unknown error'}`)

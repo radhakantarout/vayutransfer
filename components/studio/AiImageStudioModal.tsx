@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { computeImageEditCost } from '@/constants/aiImageEditing'
+import { computeImageEditCost, computeOpenAiImageCost } from '@/constants/aiImageEditing'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import { MAX_CUSTOM_PROMPT_LENGTH } from '@/constants/videoProviders'
 import type { AiImageResolution, AiImageAspectRatio } from '@/types/studio'
@@ -100,7 +100,15 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
     return () => clearInterval(id)
   }, [stage, reducedMotion])
 
-  const { sellPricePaise } = computeImageEditCost(numImages, resolution, pricing ?? undefined, sourceFiles.length)
+  // Kling (unit-based) and OpenAI (token-based) have genuinely different
+  // pricing shapes — mirrors the same branch in the server route. Defaults
+  // to OpenAI (the real default, DEFAULT_PRICING_CONFIG.imageProvider)
+  // rather than requiring pricing to have loaded first — `pricing` is null
+  // for a brief window before its own fetch resolves, and defaulting to
+  // Kling's cost formula in that window would flash the wrong number.
+  const { sellPricePaise } = pricing?.imageProvider === 'kling'
+    ? computeImageEditCost(numImages, resolution, pricing, sourceFiles.length)
+    : computeOpenAiImageCost(isEdit ? 'edit' : 'generate', resolution, numImages, pricing ?? undefined)
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / aiSearchCreditPricePaise(pricing?.aiExtraPaisePer1000)))
   const displayCreditsRequired = toMomentsCredits(creditsRequired, pricing?.momentsCreditDivisor)
 
@@ -282,11 +290,14 @@ export default function AiImageStudioModal({ projectId, onClose, sourceFiles = [
               <div className="space-y-1.5">
                 <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Quality</p>
                 <div className="flex gap-1.5">
-                  {/* '2K' hidden entirely in edit mode — Kling's real edit
-                      model (kling-v2-1) rejects it outright, confirmed via a
-                      real call 2026-09-20; showing a control that would
-                      always fail server-side would be dishonest. */}
-                  {(isEdit ? (['1K'] as AiImageResolution[]) : RESOLUTIONS).map((r) => (
+                  {/* '2K' hidden only when Kling is the active provider AND
+                      we're editing — Kling's edit model (kling-v2-1) rejects
+                      '2k' outright (confirmed via a real call 2026-09-20).
+                      OpenAI (the default provider) has no such restriction —
+                      high-quality editing confirmed working via a real call
+                      the same day, see constants/aiImageEditing.ts's cost
+                      comment for the real token counts. */}
+                  {(isEdit && pricing?.imageProvider === 'kling' ? (['1K'] as AiImageResolution[]) : RESOLUTIONS).map((r) => (
                     <button
                       key={r}
                       onClick={() => setResolution(r)}

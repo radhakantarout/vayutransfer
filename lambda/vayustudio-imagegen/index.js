@@ -13,13 +13,15 @@ const STUDIOS_TABLE = process.env.DYNAMO_STUDIO_STUDIOS_TABLE || 'vayustudio-stu
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 
-// Config-driven provider swap (lib/pricingConfig.ts's imageProvider field) —
-// adding a real second provider is: write providers/openai.js exporting the
-// same `generate(...)` shape, add one line here, add 'openai' to
-// IMAGE_PROVIDERS in lib/pricingConfig.ts. Nothing else in this file, the
-// calling routes, or the UI needs to change.
+// Config-driven provider swap (lib/pricingConfig.ts's imageProvider field).
+// 'openai' (gpt-image-2.5-sunburst) is the PRIMARY provider as of
+// 2026-09-20 — Kling's edit path never faithfully preserved input photo
+// identity even after its own request-schema fix, confirmed via real
+// visual comparison (see providers/kling.js's header). Kling stays
+// available/selectable for generate-mode or a future rollback.
 const providers = {
   kling: require('./providers/kling'),
+  openai: require('./providers/openai'),
 }
 
 process.on('unhandledRejection', (reason) => console.error('[imagegen] UNHANDLED REJECTION:', reason && reason.stack ? reason.stack : reason))
@@ -39,12 +41,6 @@ async function updateAiImage(imageId, patch) {
   const sets  = entries.map((_, i) => `#k${i} = :v${i}`).join(', ')
   const vals  = Object.fromEntries(entries.map(([, v], i) => [`:v${i}`, v]))
   await ddb.send(new UpdateCommand({ TableName: AI_IMAGES_TABLE, Key: { imageId }, UpdateExpression: `SET ${sets}`, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }))
-}
-
-async function downloadToBuffer(url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed downloading generated image: ${res.status}`)
-  return Buffer.from(await res.arrayBuffer())
 }
 
 // Refunds real ₹ credits directly from the Lambda's own catch block — a
@@ -90,7 +86,7 @@ exports.handler = async (event) => {
     mode, prompt, sourceR2Keys, resolution, aspectRatio, numImages,
     provider,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
-    klingApiKey, klingApiBaseUrl,
+    klingApiKey, klingApiBaseUrl, openaiApiKey,
     creditsCharged, refundPool,
   } = event
 
@@ -133,24 +129,27 @@ exports.handler = async (event) => {
       (sourceR2Keys || []).map((key) => getSignedUrl(r2, new GetObjectCommand({ Bucket: r2Bucket, Key: key }), { expiresIn: 3600 }))
     )
 
-    const impl = providers[provider] || providers.kling
-    // No modelName passed through — the real correct model_name for each
-    // mode is now hardcoded inside providers/kling.js itself ('kling-v2-1'
-    // for single-image edits, omitted entirely for pure generation), since
-    // real API testing found the previously-configurable value
-    // ('kling-3.0-omni' via KLING_IMAGE_MODEL_NAME) was never a valid model
-    // for this endpoint in the first place — see that file's header.
-    const resultUrls = await impl.generate({
+    const impl = providers[provider] || providers.openai
+    // No modelName passed through — each provider hardcodes its own real
+    // confirmed model internally (kling.js: 'kling-v2-1' for edits; openai.js:
+    // 'gpt-image-2.5-sunburst') since real API testing found previously
+    // env-configurable values were never actually valid — see each
+    // provider's own header for the full story.
+    // apiKey is provider-specific: kling.js needs {apiKey, baseUrl},
+    // openai.js only needs {apiKey} (baseUrl is hardcoded, no per-account
+    // base URL concept for OpenAI the way Kling has regional endpoints).
+    const resultBuffers = await impl.generate({
       prompt, sourceImageUrls, resolution, aspectRatio, numImages,
-      apiKey: klingApiKey, baseUrl: klingApiBaseUrl,
+      apiKey: provider === 'kling' ? klingApiKey : openaiApiKey,
+      baseUrl: klingApiBaseUrl,
       externalTaskId: `${imageId}`.slice(0, 64),
     })
 
-    await updateJob(jobId, { outputPayload: { stage: 'uploading', processed: 0, total: resultUrls.length } })
+    await updateJob(jobId, { outputPayload: { stage: 'uploading', processed: 0, total: resultBuffers.length } })
     const r2Keys = []
     const sizes = []
-    for (let i = 0; i < resultUrls.length; i++) {
-      const buffer = await downloadToBuffer(resultUrls[i])
+    for (let i = 0; i < resultBuffers.length; i++) {
+      const buffer = resultBuffers[i]
       const key = `studios/${studioId}/ai-images/${imageId}/output-${i}.jpg`
       await new Upload({
         client: r2,
@@ -158,7 +157,7 @@ exports.handler = async (event) => {
       }).done()
       r2Keys.push(key)
       sizes.push(buffer.length)
-      await updateJob(jobId, { outputPayload: { stage: 'uploading', processed: i + 1, total: resultUrls.length } })
+      await updateJob(jobId, { outputPayload: { stage: 'uploading', processed: i + 1, total: resultBuffers.length } })
     }
     if (r2Keys.length === 0) throw new Error('No images generated successfully — nothing to save')
 

@@ -44,7 +44,16 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
-    title: 'AI Image Studio (Kling)',
+    title: 'AI Image Studio (OpenAI gpt-image-2.5-sunburst) — primary provider as of 2026-09-20',
+    fields: [
+      { key: 'openaiGenerateCostPaiseMedium', label: 'Generate — medium quality', hint: 'Real usage data: 439 output image tokens for a 1024x1024 generation (~₹1.29), rounded up for margin.', suffix: 'paise/image' },
+      { key: 'openaiGenerateCostPaiseHigh', label: 'Generate — high quality', hint: 'Real usage data: 1372 output image tokens for a 1536x1024 generation (~₹4.00), rounded up for margin.', suffix: 'paise/image' },
+      { key: 'openaiEditCostPaiseMedium', label: 'Edit — medium quality', hint: 'Real usage data: 1482 image-input + 343 output tokens for a 1-reference-photo edit (~₹2.16), rounded up for margin.', suffix: 'paise/edit' },
+      { key: 'openaiEditCostPaiseHigh', label: 'Edit — high quality', hint: 'Real usage data: 1482 image-input + 1078 output tokens for a 1-reference-photo edit (~₹4.30), rounded up for margin.', suffix: 'paise/edit' },
+    ],
+  },
+  {
+    title: 'AI Image Studio (Kling) — kept for rollback, not the active provider',
     fields: [
       { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-generation units.', suffix: 'paise/100k units' },
       { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'Confirmed against a real Kling API call.', suffix: 'units/image' },

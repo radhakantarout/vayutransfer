@@ -7,7 +7,7 @@ import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits, refundAiSearchCredits } from '@/lib/studio/billing'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
-import { computeImageEditCost } from '@/constants/aiImageEditing'
+import { computeImageEditCost, computeOpenAiImageCost } from '@/constants/aiImageEditing'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { MAX_CUSTOM_PROMPT_LENGTH } from '@/constants/videoProviders'
@@ -120,11 +120,15 @@ export async function POST(
       ? Array.from(new Set(body.sourceFileIds)).slice(0, MAX_SOURCE_IMAGES)
       : []
     const mode: AiImageMode = sourceFileIds.length > 0 ? 'edit' : 'generate'
-    // Edit mode's real model ('kling-v2-1', see the Lambda provider's
-    // header) rejects '2k' outright — confirmed via a real call 2026-09-20.
-    // Generate mode (no reference photo, no model_name sent) is unaffected
-    // and keeps both 1K/2K.
-    const resolution: AiImageResolution = mode === 'edit'
+    // Fetched early specifically to decide the resolution rule below —
+    // Kling's real edit model ('kling-v2-1') rejects '2k' outright
+    // (confirmed via a real call 2026-09-20), but OpenAI (the default
+    // provider as of the same day) has no such restriction — high-quality
+    // editing confirmed working via a separate real call. Forcing '1K' for
+    // every edit regardless of provider would have been a real, silent
+    // quality regression for OpenAI once it became the default.
+    const pricing = await getPricingConfig()
+    const resolution: AiImageResolution = mode === 'edit' && pricing.imageProvider === 'kling'
       ? '1K'
       : AI_IMAGE_RESOLUTIONS.includes(body.resolution as AiImageResolution) ? (body.resolution as AiImageResolution) : '1K'
     const aspectRatio: AiImageAspectRatio = AI_IMAGE_ASPECT_RATIOS.includes(body.aspectRatio as AiImageAspectRatio)
@@ -163,8 +167,13 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'JOB_RUNNING' }, { status: 409 })
     }
 
-    const pricing = await getPricingConfig()
-    const { sellPricePaise } = computeImageEditCost(numImages, resolution, pricing, sourceKeys.length)
+    // Kling (unit-based) and OpenAI (token-based) have genuinely different
+    // pricing shapes, not just different rates — see computeOpenAiImageCost's
+    // own comment in constants/aiImageEditing.ts. `pricing` was already
+    // fetched above (needed early for the resolution rule).
+    const { sellPricePaise } = pricing.imageProvider === 'openai'
+      ? computeOpenAiImageCost(mode, resolution, numImages, pricing)
+      : computeImageEditCost(numImages, resolution, pricing, sourceKeys.length)
     const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
     const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
     const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
@@ -202,7 +211,7 @@ export async function POST(
     const aiImage: StudioAiImage = {
       imageId, jobId, studioId, projectId, mode,
       sourceFileIds, prompt, resolution, aspectRatio, numImages,
-      provider: 'kling', status: 'generating', creditsCharged: aiCreditsRequired, createdAt: now,
+      provider: pricing.imageProvider, status: 'generating', creditsCharged: aiCreditsRequired, createdAt: now,
     }
     await studioPutItem(TABLES.aiImages, aiImage as unknown as Record<string, unknown>)
 
@@ -225,10 +234,11 @@ export async function POST(
         r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
         klingApiKey: process.env.KLING_API_KEY,
         klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
+        openaiApiKey: process.env.OPENAI_API_KEY,
         // No klingModelName sent — the real correct model_name per mode is
-        // now hardcoded in lambda/vayustudio-imagegen/providers/kling.js
-        // itself, since KLING_IMAGE_MODEL_NAME's old default
-        // ('kling-3.0-omni') was never a valid value for this endpoint.
+        // now hardcoded in each provider module itself (providers/kling.js,
+        // providers/openai.js), since env-configurable values were never
+        // actually valid for either provider's real endpoint.
         // Lets the Lambda's own catch block refund directly if generation
         // fails cleanly (Kling never bills for a failed task).
         creditsCharged: aiCreditsRequired,
