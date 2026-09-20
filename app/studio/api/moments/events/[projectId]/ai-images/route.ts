@@ -136,7 +136,24 @@ export async function POST(
     const numImages = Number.isInteger(body.numImages) && (body.numImages as number) >= MIN_AI_IMAGES && (body.numImages as number) <= MAX_AI_IMAGES
       ? (body.numImages as number) : 1
 
-    let sourceKeys: string[] = []
+    // Real production failure (2026-09-20): OpenAI rejected real customer
+    // photos ("Invalid image file or mode") even though their stored
+    // mimeType said 'image/jpeg' and their magic bytes looked like valid
+    // JPEG — the actual internal encoding (progressive/HEIC-derived/unusual
+    // color profile, likely from a phone camera or an app export pipeline)
+    // apparently isn't something OpenAI's edit endpoint accepts, even
+    // though it's a perfectly normal, viewable photo everywhere else in
+    // this app. Fix: send the already-generated PREVIEW instead of the raw
+    // original — lambda/vayustudio-watermark/index.js always fully
+    // re-encodes every upload through sharp into a standard progressive
+    // JPEG (Q82, capped at 1200px) regardless of source format, which
+    // normalizes exactly this class of quirky encoding away. Real quality
+    // tradeoff: 1200px is close to but sometimes below the 2K/high edit
+    // tier's own output size (up to ~1536px) — accepted as a reasonable
+    // cost given OpenAI's edit is a generative re-render guided by the
+    // source, not pixel-precise inpainting, so the source doesn't need to
+    // exceed the model's own output resolution.
+    let sourcePreviewUrls: string[] = []
     if (mode === 'edit') {
       // Never trust client-supplied fileIds beyond using them to look up
       // this project's own real files.
@@ -148,8 +165,11 @@ export async function POST(
       if (selectedFiles.length !== sourceFileIds.length) {
         return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'One or more selected photos are not eligible for AI editing.' }, { status: 400 })
       }
-      sourceKeys = selectedFiles.map((f) => f.editedR2Key || f.r2Key).filter((k): k is string => !!k)
-      if (sourceKeys.length !== selectedFiles.length) {
+      // Already a full, publicly-fetchable HTTPS URL (same one every <img>
+      // tag in this app already uses directly) — no presigning needed,
+      // unlike the raw R2 key this used to send.
+      sourcePreviewUrls = selectedFiles.map((f) => f.r2PreviewUrl).filter((u): u is string => !!u)
+      if (sourcePreviewUrls.length !== selectedFiles.length) {
         return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible for AI editing yet.' }, { status: 400 })
       }
     }
@@ -173,7 +193,7 @@ export async function POST(
     // fetched above (needed early for the resolution rule).
     const { sellPricePaise } = pricing.imageProvider === 'openai'
       ? computeOpenAiImageCost(mode, resolution, numImages, pricing)
-      : computeImageEditCost(numImages, resolution, pricing, sourceKeys.length)
+      : computeImageEditCost(numImages, resolution, pricing, sourcePreviewUrls.length)
     const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
     const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
     const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
@@ -226,7 +246,7 @@ export async function POST(
       InvocationType: 'Event',
       Payload: Buffer.from(JSON.stringify({
         jobId, imageId, studioId, projectId,
-        mode, prompt, sourceR2Keys: sourceKeys, resolution, aspectRatio, numImages,
+        mode, prompt, sourceImageUrls: sourcePreviewUrls, resolution, aspectRatio, numImages,
         provider: pricing.imageProvider,
         r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
         r2Endpoint: process.env.STUDIO_R2_ENDPOINT,

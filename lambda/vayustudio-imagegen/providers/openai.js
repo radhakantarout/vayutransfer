@@ -66,15 +66,33 @@ async function callGenerate({ apiKey, prompt, size, quality, numImages }) {
 // source photos in this codebase are commonly JPEG (uploads accept
 // .jpg/.jpeg/.png per MediaFile), and mislabeling the multipart part's
 // Content-Type could cause OpenAI to reject or mis-decode the upload.
+// Returns null (not a guessed fallback) when the format can't be identified
+// — a real production failure (2026-09-20) traced to OpenAI rejecting a
+// photo with "Invalid image file or mode" even though its stored MediaFile
+// mimeType said 'image/jpeg'; silently mislabeling an unrecognized file as
+// PNG here would send OpenAI a Content-Type that doesn't match the actual
+// bytes, producing exactly this kind of confusing rejection AFTER a real,
+// billed API call — better to fail fast with a clear reason before ever
+// calling OpenAI. Common real-world cause: a file with a .jpg/.JPG
+// extension whose actual bytes are HEIC or some other non-JPEG format
+// (common from phones/apps that don't always re-encode on export).
 function detectImageMimeType(buffer) {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' }
   if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return { mime: 'image/png', ext: 'png' }
   if (buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return { mime: 'image/webp', ext: 'webp' }
-  return { mime: 'image/png', ext: 'png' } // sane fallback, matches the format this endpoint defaults to itself
+  return null
 }
 
 async function callEdit({ apiKey, prompt, size, quality, numImages, imageBuffer }) {
-  const { mime, ext } = detectImageMimeType(imageBuffer)
+  const detected = detectImageMimeType(imageBuffer)
+  if (!detected) {
+    // Logs only the first 8 bytes as hex (a format fingerprint, not visual
+    // content — reveals nothing about the actual photo) to help diagnose
+    // which real-world format is slipping through next time this happens.
+    console.error(`[openai] unrecognized image format, first bytes: ${imageBuffer.subarray(0, 8).toString('hex')}`)
+    throw new Error('This photo\'s file format isn\'t supported for AI editing — try a different photo (JPEG or PNG).')
+  }
+  const { mime, ext } = detected
   const form = new FormData()
   form.append('model', MODEL)
   form.append('image', new Blob([imageBuffer], { type: mime }), `source.${ext}`)

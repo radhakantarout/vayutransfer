@@ -1,7 +1,6 @@
 'use strict'
 
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3')
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
+const { S3Client } = require('@aws-sdk/client-s3')
 const { Upload } = require('@aws-sdk/lib-storage')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb')
@@ -83,7 +82,7 @@ async function refundCredits(studioId, credits, pool) {
 exports.handler = async (event) => {
   const {
     jobId, imageId, studioId, projectId,
-    mode, prompt, sourceR2Keys, resolution, aspectRatio, numImages,
+    mode, prompt, sourceImageUrls, resolution, aspectRatio, numImages,
     provider,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     klingApiKey, klingApiBaseUrl, openaiApiKey,
@@ -105,7 +104,7 @@ exports.handler = async (event) => {
     return
   }
 
-  console.log(`[imagegen] START jobId=${jobId} imageId=${imageId} mode=${mode} provider=${provider} refs=${(sourceR2Keys || []).length} numImages=${numImages}`)
+  console.log(`[imagegen] START jobId=${jobId} imageId=${imageId} mode=${mode} provider=${provider} refs=${(sourceImageUrls || []).length} numImages=${numImages}`)
 
   const r2 = new S3Client({
     region: 'auto',
@@ -122,13 +121,15 @@ exports.handler = async (event) => {
     // the only "generating" progress point there is until it resolves.
     await updateJob(jobId, { outputPayload: { stage: 'generating', processed: 0, total: 1 } })
 
-    // Presign source photos here (not in the route) — same reasoning as
-    // reelgen: a URL minted at request time could be stale by the time this
-    // fire-and-forget invoke actually runs under queueing/cold-start delay.
-    const sourceImageUrls = await Promise.all(
-      (sourceR2Keys || []).map((key) => getSignedUrl(r2, new GetObjectCommand({ Bucket: r2Bucket, Key: key }), { expiresIn: 3600 }))
-    )
-
+    // sourceImageUrls are already real, publicly-fetchable preview URLs
+    // (the route sends r2PreviewUrl, not a raw R2 key) — no presigning
+    // needed here at all, unlike before 2026-09-20. Real production
+    // failure found that OpenAI rejected raw originals with "Invalid image
+    // file or mode" for perfectly normal photos (likely a phone/app
+    // encoding quirk); the preview is always a full re-encode into a
+    // standard JPEG (lambda/vayustudio-watermark/index.js, sharp, Q82,
+    // capped at 1200px) regardless of the original's format, which
+    // normalizes this away. See the ai-images route's own comment on this.
     const impl = providers[provider] || providers.openai
     // No modelName passed through — each provider hardcodes its own real
     // confirmed model internally (kling.js: 'kling-v2-1' for edits; openai.js:
