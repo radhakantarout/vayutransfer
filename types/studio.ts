@@ -400,6 +400,17 @@ export interface MediaFile {
   // same convention as every other optional counter in this file.
   likeCount?: number
   commentCount?: number
+  // AI Image Studio (Moments) — a photo generated/edited via
+  // vayustudio-imagegen is a completely NORMAL MediaFile row (billed,
+  // downloaded, deleted exactly like any upload); these fields only drive
+  // the ✨ provenance badge + "why does this exist" transparency in the UI.
+  // Deliberately NOT reusing editedR2Key — that field is the studio-admin
+  // photographer-retouch pipeline and is read by the unrelated
+  // editingRequired selections workflow; overloading it here would silently
+  // mark AI output as "editing complete" in that other workflow.
+  aiGenerated?: boolean
+  aiPrompt?: string
+  aiSourceFileIds?: string[]
 }
 
 export interface StudioFace {
@@ -417,7 +428,7 @@ export interface StudioFace {
   updatedAt: string
 }
 
-export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL'
+export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL' | 'AI_IMAGE'
 // CANCELLED is only ever set by an explicit cancel request (never by a
 // Lambda on its own) — see lib/studio/jobs.ts and the two cancel routes.
 export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED'
@@ -446,7 +457,14 @@ export interface StudioJob {
 
 export type ReelSource = 'CLIENT_GALLERY' | 'GUEST_SELFIE_SEARCH' | 'MOMENTS'
 export type ReelStyle = 'CINEMATIC' | 'ROMANTIC' | 'BOLLYWOOD' | 'LUXURY' | 'MEMORIES' | 'PHOTOGRAPHERS_CHOICE'
-export type ReelAspectRatio = '9:16' | '4:5' | '16:9'
+// '1:1' only ever appears on mode: 'text' reels (Kling's real text-to-video
+// endpoint's own accepted aspect-ratio set, TEXT_TO_VIDEO_ASPECT_RATIOS in
+// constants/videoProviders.ts, genuinely differs from photo-mode's '9:16'|
+// '4:5'|'16:9' — those three are tied to REEL_ASPECT_RATIO_DIMENSIONS' own
+// post-crop pixel sizes, which text mode never uses). Included in this one
+// shared type rather than a cast at the write site, so the field's real
+// possible values are honest wherever it's read.
+export type ReelAspectRatio = '9:16' | '4:5' | '16:9' | '1:1'
 export type ReelResolution = '720p' | '1080p'
 // Finer-grained than JobStatus (which only tracks the envelope) — this is
 // the user-facing generation stage shown in ReelGenerationScreen.
@@ -498,6 +516,13 @@ export interface StudioReel {
   // here for audit — never trust a client-supplied projectId for guest reels
   // (see design doc §5's trust-boundary discussion).
   guestJwtProjectId?: string
+  // undefined = 'photo' (every reel before this field existed, and every
+  // Client Gallery/Guest reel today — text-to-video is Moments-only).
+  // 'text' reels have photoIds: [] — Kling's text-to-video endpoint has no
+  // source-photo concept at all, confirmed via a real API call (2026-09-18):
+  // it's a genuinely different endpoint (POST /text-to-video/{model}, flat
+  // body) from image-to-video, not a variant of it.
+  mode?: 'photo' | 'text'
   photoIds: string[]
   analysis?: ReelPhotoAnalysis[]
   storyPlan?: ReelStoryPlan
@@ -511,6 +536,12 @@ export interface StudioReel {
   aspectRatio: ReelAspectRatio
   resolution: ReelResolution
   durationSec: number
+  // Persisted purely for "Regenerate" pre-fill (My Reels history) — neither
+  // field is read anywhere in the generation pipeline itself, which only
+  // ever needs the derived stylePromptFragment computed once at creation
+  // time and handed straight to the Lambda.
+  customPrompt?: string
+  droneShot?: string
   status: ReelStatus
   provider?: 'kling'          // internal only — never sent to the frontend
   providerJobIds?: string[]   // one per hero clip, for cancel/retry
@@ -533,6 +564,66 @@ export interface StudioReel {
   completedAt?: string
   expiresAt?: string
   errorCode?: string
+  errorMessage?: string
+}
+
+// ── AI Image Studio (Moments) ──────────────────────────────────────────────
+// Table: TABLES.aiImages ('vayustudio-ai-images'), PK imageId, GSI
+// projectId-createdAt-index (mirrors vayustudio-reels' shape exactly — same
+// "My Reels"-style history query pattern). Driven by lambda/vayustudio-imagegen,
+// a batch-of-1..9 sibling to StudioReel rather than a video: 'generate' mode
+// has zero sourceFileIds (pure text-to-image); 'edit' mode has exactly 1 —
+// capped there 2026-09-20 after a real bug found the previous 1-10 range +
+// "@Image1"/"@Image2" prompt syntax was never a real Kling capability (see
+// lambda/vayustudio-imagegen/providers/kling.js's header for the full real
+// API facts). True multi-image fusion needs a different, unverified endpoint.
+export type AiImageMode = 'generate' | 'edit'
+// No '4K' — confirmed against a real Kling API call (2026-09-18) that this
+// account/tier only accepts lowercase '1k'/'2k'; '4k' returns "resolution
+// value '4k' is not supported". See lambda/vayustudio-imagegen/providers/kling.js's
+// header comment for the full probe results.
+export type AiImageResolution = '1K' | '2K'
+export type AiImageAspectRatio = 'auto' | '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3' | '21:9'
+export type AiImageStatus = 'generating' | 'completed' | 'failed'
+
+export interface StudioAiImage {
+  imageId: string
+  jobId: string              // FK back to the StudioJob (jobType: 'AI_IMAGE')
+  studioId: string
+  projectId: string
+  mode: AiImageMode
+  sourceFileIds: string[]    // empty for 'generate', exactly 1 for 'edit'
+  prompt: string
+  resolution: AiImageResolution
+  aspectRatio: AiImageAspectRatio
+  numImages: number          // batch size requested, 1-9
+  // Config-driven provider swap (see lib/pricingConfig.ts#imageProvider) —
+  // stamped per-image so history/audit shows what actually generated it even
+  // after the live config default later changes. Plain string (matches
+  // PricingConfig.imageProvider), not a literal union — 'openai' became a
+  // real second value 2026-09-20, and this must never need a type change
+  // again the next time the active provider changes.
+  provider: string
+  status: AiImageStatus
+  // Lambda writes results here as plain R2 keys (a staging area, NOT
+  // MediaFile rows) — generation is billed regardless of what the user
+  // keeps (the credit deduction already happened at request time), but
+  // storage should only count for images actually kept. The results screen
+  // shows these via a short-lived presigned URL per key; "Save" promotes a
+  // chosen subset into real MediaFile rows (see the /save route) and
+  // records the result in savedFileIds, "Discard" just never promotes them
+  // — unpromoted staging objects are swept by the existing storage-check
+  // cron the same way orphaned multipart uploads already are.
+  outputR2Keys?: string[]
+  // Parallel to outputR2Keys — byte size of each generated image, recorded
+  // by the Lambda straight from the in-memory buffer it already downloaded,
+  // so the /save route can bill accurate storage without a live R2
+  // HeadObject round-trip.
+  outputSizes?: number[]
+  savedFileIds?: string[]
+  creditsCharged?: number
+  createdAt: string
+  completedAt?: string
   errorMessage?: string
 }
 

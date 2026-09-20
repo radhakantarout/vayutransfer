@@ -163,6 +163,54 @@ export const DRONE_SHOT_META: Record<DroneShotStyle, {
 // short scene description/shot direction, not just a one-line nudge.
 export const MAX_CUSTOM_PROMPT_LENGTH = 2000
 
+// Moments' prompt-first "Reel It" compose screen's own tighter cap for
+// PHOTO mode. The Lambda always appends the fixed BASE_PROMPT_SUFFIX (144
+// chars) plus a style fragment (up to 81 chars for CINEMATIC, the default
+// this screen silently uses since it has no style picker) plus two ", "
+// separators (4 chars) before sending the assembled string to Kling — this
+// reserves all of that fixed overhead so the on-screen counter's promise
+// ("final prompt won't exceed 2000 characters") is actually true, not
+// approximate: 2000 - 144 - 81 - 4 = 1771, rounded down.
+export const MOMENTS_COMPOSE_PROMPT_MAX = 1750
+
+// Text-to-video mode's own cap — the Lambda appends TEXT_TO_VIDEO_SUFFIX
+// (lambda/vayustudio-reelgen/index.js), a shorter, generic quality guardrail
+// (no style fragment, no facial-identity preservation — there's no source
+// photo to preserve identity from in this mode): "high quality, smooth
+// natural motion, no text, no watermark, no logos." = 69 chars. 2000 - 69 -
+// 2 (one ", " separator) = 1929, rounded down.
+export const MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX = 1900
+
+// Text-only mode's own minimum — unlike photo mode (an empty prompt still
+// falls back to the default CINEMATIC style fragment server-side), text mode
+// has no photo/style fallback at all, so a near-blank prompt would waste a
+// real, billed Kling call producing an essentially undirected video.
+export const MIN_TEXT_PROMPT_LENGTH = 10
+
+// ── Text-to-video extra creative options (Phase 4) ──────────────────────
+// Gated on Kling's real /text-to-video/{model} endpoint CONFIRMED to accept
+// each field without erroring (see createKlingTextToVideoTask's header
+// comment in lambda/vayustudio-reelgen/index.js, confirmed 2026-09-18) —
+// unlike duration/resolution (confirmed present but SILENTLY IGNORED, never
+// exposed in any UI), these were accepted and passed through. What was NOT
+// separately re-verified is the exact accepted VALUE SET for aspect_ratio or
+// the object schema for camera_control — camera_control is deliberately not
+// exposed yet for that reason (a wrong guessed schema risks a real, if
+// cleanly-refunded, failed generation for the user). aspect_ratio's three
+// values below are the industry-standard set nearly every video model
+// (including Kling's own public docs elsewhere) supports, and cfg_scale's
+// 0-1 range matches Kling's own documented convention — both lower-risk
+// guesses than camera_control's schema, but still not independently
+// confirmed against a real call the way the endpoint/body shape was.
+export const TEXT_TO_VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
+export const DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO: (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number] = '9:16'
+
+export const CFG_SCALE_PRESETS = { LOW: 0.25, MEDIUM: 0.5, HIGH: 0.75 } as const
+export type CfgScalePreset = keyof typeof CFG_SCALE_PRESETS
+export const DEFAULT_CFG_SCALE_PRESET: CfgScalePreset = 'MEDIUM'
+
+export const MAX_NEGATIVE_PROMPT_LENGTH = 200
+
 export const REEL_ASPECT_RATIOS = ['9:16', '4:5', '16:9'] as const
 export const DEFAULT_REEL_ASPECT_RATIO = '9:16'
 
@@ -281,6 +329,28 @@ export function computeReelCost(
   const margin = rates?.targetMargin ?? TARGET_MARGIN
   const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
   const rawCostPaise = Math.round(heroClipCount * avgClipDurationSec * unitsPerSec * costPerUnit + overhead)
+  const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
+  const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
+  return { rawCostPaise, sellPricePaise, creditsRequired }
+}
+
+// Text-to-video (Moments only) has a fundamentally different cost shape from
+// computeReelCost above: Kling's own /text-to-video/{model} endpoint bills a
+// FLAT rate per video, confirmed via a real API call (2026-09-18) to ignore
+// both resolution and duration overrides entirely (every real test produced
+// the same ~5s clip regardless of requested duration, at the same 4-unit
+// cost regardless of requested resolution) — so there's no per-second ×
+// resolution multiplication like the photo-to-video path, just one fixed
+// per-clip unit count.
+export function computeTextToVideoCost(
+  rates?: { klingCostPaisePerUnit?: number; klingTextToVideoUnitsPerVideo?: number; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
+): ReelCostEstimate {
+  const costPerUnit = rates?.klingCostPaisePerUnit ?? KLING_COST_PAISE_PER_UNIT
+  const unitsPerVideo = rates?.klingTextToVideoUnitsPerVideo ?? 4
+  const overhead = rates?.fixedOverheadPaisePerReel ?? FIXED_OVERHEAD_PAISE_PER_REEL
+  const margin = rates?.targetMargin ?? TARGET_MARGIN
+  const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
+  const rawCostPaise = Math.round(unitsPerVideo * costPerUnit + overhead)
   const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
   return { rawCostPaise, sellPricePaise, creditsRequired }

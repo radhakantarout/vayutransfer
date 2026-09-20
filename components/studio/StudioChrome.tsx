@@ -48,11 +48,13 @@ function Chrome({ children }: { children: React.ReactNode }) {
         {children}
       </div>
       {!expanded && !isMomentsApp && <ConditionalFooter />}
-      {/* Admin dashboard: no floating trigger bubble by default (looked
-          cluttered on every page) — the sidebar's "?" Help icon is the only
-          way in, opening this same panel via ChatWidgetContext. Marketing
-          pages keep the floating trigger since they have no Help icon. */}
-      {!expanded && <ChatWidget showTrigger={!isAdminApp && !isMomentsApp} />}
+      {/* No floating trigger bubble anywhere in Studio (looked cluttered on
+          every page) — a "?" Help icon is the only way in everywhere now:
+          the admin dashboard sidebar, Moments' Profile panel, and
+          StudioNavbar (marketing/client/guest/print), all opening this same
+          panel via ChatWidgetContext. ChatWidget's own showTrigger already
+          defaults to false, so this prop is unnecessary — left unset. */}
+      {!expanded && <ChatWidget />}
     </div>
   )
 }

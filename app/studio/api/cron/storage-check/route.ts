@@ -7,12 +7,12 @@ import { deleteStudioR2Object, listStudioR2IncompleteMultipartUploads, abortStud
 import { getStudioAdminEmails, getMomentsGalleryOwnerEmail } from '@/lib/studio/notify'
 import { sendStorageOverageReminderEmail, sendMomentsRetentionReminderEmail } from '@/lib/aws/ses'
 import { activeStorageGrantBytes, currentStorageBytes, isOverStorageQuota, syncBillingCycle } from '@/lib/studio/quota'
-import { refundReelCredits } from '@/lib/studio/billing'
+import { refundReelCredits, refundAiSearchCredits } from '@/lib/studio/billing'
 import { logAuditEvent } from '@/lib/studio/auditLog'
 import { deleteMomentsGalleryCascade } from '@/lib/studio/momentsDelete'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { GB, DEFAULT_RETENTION_GRACE_DAYS } from '@/constants/studioPricing'
-import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer, StudioJob, StudioReel } from '@/types/studio'
+import type { Studio, StudioProject, MediaFile, Selection, StudioTransfer, StudioJob, StudioReel, StudioAiImage } from '@/types/studio'
 import type { PricingConfig } from '@/types/pricingConfig'
 
 // A Lambda timeout, crash, or lost invoke can leave an AI_REEL job sitting
@@ -59,7 +59,63 @@ async function sweepStuckReelJobs(): Promise<{ count: number }> {
     ).catch((e) => console.error('[storage-check] stuck reel update failed', e))
 
     if (reel.creditsCharged) {
-      await refundReelCredits(job.studioId, reel.creditsCharged).catch((e) => console.error('[storage-check] stuck reel credit refund failed', e))
+      // Moments reels deduct from the shared aiSearchCredits pool (₹0.30/
+      // credit), NOT the separate reelCreditsBalance pool (₹80/credit) that
+      // Client Gallery/Guest reels use — refunding to the wrong pool here
+      // was a real bug: a stuck Moments reel's credits were never actually
+      // returned to the balance they were taken from at all.
+      const refund = reel.source === 'MOMENTS' ? refundAiSearchCredits : refundReelCredits
+      await refund(job.studioId, reel.creditsCharged).catch((e) => console.error('[storage-check] stuck reel credit refund failed', e))
+    }
+  }
+
+  return { count: stuck.length }
+}
+
+// Same "Lambda timeout/crash/lost invoke leaves a job wedged forever with
+// credits already spent" risk as AI_REEL above — AI Image Studio's Lambda
+// has a 300s hard timeout (see lambda/vayustudio-imagegen/deploy.sh) and its
+// own catch block never runs at all if AWS kills the execution on timeout
+// rather than letting the code's own try/catch handle it, so this cron-level
+// backstop is the only guaranteed refund path for that case. 10 minutes
+// gives headroom over the Lambda's own 300s ceiling.
+const AI_IMAGE_STUCK_TIMEOUT_MS = 10 * 60 * 1000
+
+async function sweepStuckImageJobs(): Promise<{ count: number }> {
+  const jobs = await studioScanTable<StudioJob>(TABLES.jobs)
+  const now = Date.now()
+  const stuck = jobs.filter((j) =>
+    j.jobType === 'AI_IMAGE'
+    && (j.status === 'PENDING' || j.status === 'PROCESSING')
+    && now - new Date(j.createdAt).getTime() > AI_IMAGE_STUCK_TIMEOUT_MS
+  )
+
+  for (const job of stuck) {
+    const nowIso = new Date().toISOString()
+    await studioUpdateItem(
+      TABLES.jobs, { jobId: job.jobId },
+      'SET #s = :failed, errorMessage = :msg, completedAt = :now',
+      { ':failed': 'FAILED', ':msg': 'Generation timed out', ':now': nowIso },
+      { '#s': 'status' }
+    ).catch((e) => console.error('[storage-check] stuck image job update failed', e))
+
+    const imageId = job.inputPayload?.imageId as string | undefined
+    if (!imageId) continue
+    const image = await studioGetItem<StudioAiImage>(TABLES.aiImages, { imageId }).catch(() => null)
+    // Only touch it if the Lambda hasn't actually finished in the gap
+    // between the scan and now — never overwrite a real completed/failed
+    // result with a stale timeout.
+    if (!image || image.status === 'completed' || image.status === 'failed') continue
+
+    await studioUpdateItem(
+      TABLES.aiImages, { imageId },
+      'SET #s = :failed, errorMessage = :msg, completedAt = :now',
+      { ':failed': 'failed', ':msg': 'Generation timed out — please try again', ':now': nowIso },
+      { '#s': 'status' }
+    ).catch((e) => console.error('[storage-check] stuck image update failed', e))
+
+    if (image.creditsCharged) {
+      await refundAiSearchCredits(job.studioId, image.creditsCharged).catch((e) => console.error('[storage-check] stuck image credit refund failed', e))
     }
   }
 
@@ -265,6 +321,7 @@ export async function GET(req: NextRequest) {
 
   const pricing = await getPricingConfig()
   const stuckReels = await sweepStuckReelJobs()
+  const stuckImages = await sweepStuckImageJobs()
   const momentsRetention = await sweepExpiredMomentsGalleries(pricing).catch((err) => {
     console.error('[storage-check] moments retention sweep failed', err)
     return { wouldDeleteCount: 0, deletedCount: 0, remindedCount: 0, enforced: pricing.momentsRetentionEnforcementEnabled }
@@ -402,5 +459,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count, orphanedUploadsAborted: orphanedUploads.count, momentsRetention } })
+  return NextResponse.json({ success: true, data: { checked, reminded, deletedFrom, cyclesReset, expiredTransfersSwept: expiredSwept.count, stuckReelJobsSwept: stuckReels.count, stuckImageJobsSwept: stuckImages.count, orphanedUploadsAborted: orphanedUploads.count, momentsRetention } })
 }

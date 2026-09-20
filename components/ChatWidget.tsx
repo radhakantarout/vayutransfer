@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useUpload } from '@/lib/upload-context'
+import { useChatWidget } from '@/lib/chat-widget-context'
 
 type Message = {
   id: string
@@ -19,8 +20,16 @@ const SUGGESTIONS = [
 
 const WHATSAPP_URL = 'https://wa.me/918984769522'
 
-export default function ChatWidget() {
-  const [open, setOpen]           = useState(false)
+interface Props {
+  // Off by default — the Navbar's own "Help" link is the way in now (see
+  // ConditionalNavbar/Navbar.tsx), opening this same panel via
+  // lib/chat-widget-context. Kept as a prop rather than removed outright in
+  // case a future page genuinely has no Help link of its own to wire up.
+  showTrigger?: boolean
+}
+
+export default function ChatWidget({ showTrigger = false }: Props) {
+  const { open, setOpen }         = useChatWidget()
   const [messages, setMessages]   = useState<Message[]>([])
   const [input, setInput]         = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -234,25 +243,27 @@ export default function ChatWidget() {
       {/* ── Trigger button ── */}
       {/* Bumped up out of the way whenever UploadWidget is showing in the
           same bottom-right corner — see uploadWidgetShowing above. */}
-      <button
-        onClick={() => setOpen(!open)}
-        style={{ bottom: uploadWidgetShowing ? '25.5rem' : '1.25rem' }}
-        className={`
-          fixed right-4 sm:right-6 z-40
-          flex items-center gap-2 px-4 py-2.5
-          bg-accent text-white rounded-full
-          shadow-[0_4px_16px_rgba(0,0,0,0.2)]
-          hover:bg-accent/90 hover:shadow-[0_6px_24px_rgba(0,0,0,0.25)]
-          hover:scale-105 active:scale-95
-          transition-all duration-200
-        `}
-        aria-label={open ? 'Close chat' : 'Open chat'}
-      >
-        <span className={`transition-transform duration-300 ${open ? 'rotate-180' : 'rotate-0'}`}>
-          {open ? <ChevronDownMiniIcon /> : <RobotIcon size={18} className="text-white animate-bot-bob" />}
-        </span>
-        <span className="text-sm font-semibold">{open ? 'Close' : 'Chat'}</span>
-      </button>
+      {showTrigger && (
+        <button
+          onClick={() => setOpen(!open)}
+          style={{ bottom: uploadWidgetShowing ? '25.5rem' : '1.25rem' }}
+          className={`
+            fixed right-4 sm:right-6 z-40
+            flex items-center gap-2 px-4 py-2.5
+            bg-accent text-white rounded-full
+            shadow-[0_4px_16px_rgba(0,0,0,0.2)]
+            hover:bg-accent/90 hover:shadow-[0_6px_24px_rgba(0,0,0,0.25)]
+            hover:scale-105 active:scale-95
+            transition-all duration-200
+          `}
+          aria-label={open ? 'Close chat' : 'Open chat'}
+        >
+          <span className={`transition-transform duration-300 ${open ? 'rotate-180' : 'rotate-0'}`}>
+            {open ? <ChevronDownMiniIcon /> : <RobotIcon size={18} className="text-white animate-bot-bob" />}
+          </span>
+          <span className="text-sm font-semibold">{open ? 'Close' : 'Chat'}</span>
+        </button>
+      )}
     </>
   )
 }

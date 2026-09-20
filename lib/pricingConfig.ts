@@ -21,12 +21,43 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   minMarginFloor: 0.35,
   creditValuePaise: 8000,           // ₹80 / reel credit (Client Gallery/Guest pool)
   momentsRetentionDays: 17,
-  klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1 — feature not live yet
-  klingImageEditUnitsPerImage: 8,
+  klingImageEditPaisePer100kUnits: 3395000, // $350/100k units @ ~₹97/$1
+  klingImageEditUnitsPerImage1k: 8,         // CONFIRMED via real Kling API call, 2026-09-18
+  klingImageEditUnitsPerImage2k: 8,         // CONFIRMED via real Kling API call, 2026-09-18 (same as 1k)
+  // 0, not a margin-buffer guess — TWO independent real Kling calls
+  // (2026-09-18 and 2026-09-20) both billed identically whether or not a
+  // reference image was included, confirming no per-reference surcharge
+  // exists on this account. See constants/aiImageEditing.ts's comment on
+  // this same field and lambda/vayustudio-imagegen/providers/kling.js's
+  // header for the full real API facts.
+  klingImageEditUnitsPerReferenceImage: 0,
+  // Real usage-based costs — ALL FOUR now directly measured via real API
+  // `usage` responses (2026-09-20), rounded up for margin:
+  // generate/medium (1024x1024): 439 output image tokens -> ~$0.0133/~₹1.29
+  //   -> 150 paise.
+  // generate/high (1536x1024): 1372 output tokens -> ~$0.0413/~₹4.00
+  //   -> 450 paise.
+  // edit/medium (1024x1536, 1 reference): 1482 image-input + 343 output
+  //   tokens -> ~$0.0223/~₹2.16 -> 250 paise.
+  // edit/high (864x1536, 1 reference): 1482 image-input + 1078 output
+  //   tokens -> ~$0.0444/~₹4.30 -> 480 paise.
+  openaiGenerateCostPaiseMedium: 150,
+  openaiGenerateCostPaiseHigh: 450,
+  openaiEditCostPaiseMedium: 250,
+  openaiEditCostPaiseHigh: 480,
+  // Primary image gen/edit provider as of 2026-09-20 — see the field's own
+  // comment in types/pricingConfig.ts for why (Kling's edit path never
+  // faithfully preserved input photo identity).
+  imageProvider: 'openai',
+  klingTextToVideoUnitsPerVideo: 4,  // CONFIRMED via real Kling API call, 2026-09-18 — flat, not resolution-aware
   momentsCreditDivisor: 50,          // 50 raw AI credits = 1 "Moments Credit" (~₹15/credit)
   momentsRetentionEnforcementEnabled: false,
   momentsWelcomeBonusCredits: 120,
 }
+
+// Providers with an actual implementation in lambda/vayustudio-imagegen —
+// extend this the same commit that adds a new provider module there.
+export const IMAGE_PROVIDERS = ['kling', 'openai'] as const
 
 const CONFIG_KEY = 'live'
 const CACHE_TTL_MS = 60_000
@@ -50,8 +81,10 @@ const POSITIVE_FIELDS: (keyof PricingConfig)[] = [
   'freeStorageGB', 'storageExtraPaisePer100GB', 'aiExtraPaisePer1000',
   'klingCostPaisePerUnit', 'klingUnitsPerSec720', 'klingUnitsPerSec1080',
   'creditValuePaise', 'momentsRetentionDays',
-  'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage', 'momentsCreditDivisor',
-  'momentsWelcomeBonusCredits',
+  'klingImageEditPaisePer100kUnits', 'klingImageEditUnitsPerImage1k', 'klingImageEditUnitsPerImage2k',
+  'openaiGenerateCostPaiseMedium', 'openaiGenerateCostPaiseHigh', 'openaiEditCostPaiseMedium', 'openaiEditCostPaiseHigh',
+  'momentsCreditDivisor',
+  'momentsWelcomeBonusCredits', 'klingTextToVideoUnitsPerVideo',
 ]
 
 export function validatePricingConfigPatch(patch: Partial<PricingConfig>): string | null {
@@ -60,6 +93,13 @@ export function validatePricingConfigPatch(patch: Partial<PricingConfig>): strin
     if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v <= 0)) {
       return `${key} must be a positive number`
     }
+  }
+  // Not in POSITIVE_FIELDS deliberately — 0 is the real, confirmed-correct
+  // value (no per-reference-image surcharge exists on this account, see
+  // DEFAULT_PRICING_CONFIG's comment above), so an admin must be able to
+  // explicitly set/keep it at 0 rather than that being rejected as invalid.
+  if (patch.klingImageEditUnitsPerReferenceImage !== undefined && (typeof patch.klingImageEditUnitsPerReferenceImage !== 'number' || !Number.isFinite(patch.klingImageEditUnitsPerReferenceImage) || patch.klingImageEditUnitsPerReferenceImage < 0)) {
+    return 'klingImageEditUnitsPerReferenceImage cannot be negative'
   }
   if (patch.freeAiSearchCredits !== undefined && (typeof patch.freeAiSearchCredits !== 'number' || patch.freeAiSearchCredits < 0)) {
     return 'freeAiSearchCredits cannot be negative'
@@ -78,6 +118,9 @@ export function validatePricingConfigPatch(patch: Partial<PricingConfig>): strin
   }
   if (patch.momentsRetentionEnforcementEnabled !== undefined && typeof patch.momentsRetentionEnforcementEnabled !== 'boolean') {
     return 'momentsRetentionEnforcementEnabled must be true or false'
+  }
+  if (patch.imageProvider !== undefined && !(IMAGE_PROVIDERS as readonly string[]).includes(patch.imageProvider)) {
+    return `imageProvider must be one of: ${IMAGE_PROVIDERS.join(', ')}`
   }
   return null
 }

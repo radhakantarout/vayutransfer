@@ -44,10 +44,27 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     ],
   },
   {
-    title: 'AI image editing (Kling) — feature not live yet',
+    title: 'AI Image Studio (OpenAI gpt-image-2.5-sunburst) — primary provider as of 2026-09-20',
     fields: [
-      { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-edit units.', suffix: 'paise/100k units' },
-      { key: 'klingImageEditUnitsPerImage', label: 'Units per image', hint: 'How many Kling units one edited image consumes.', suffix: 'units/image' },
+      { key: 'openaiGenerateCostPaiseMedium', label: 'Generate — medium quality', hint: 'Real usage data: 439 output image tokens for a 1024x1024 generation (~₹1.29), rounded up for margin.', suffix: 'paise/image' },
+      { key: 'openaiGenerateCostPaiseHigh', label: 'Generate — high quality', hint: 'Real usage data: 1372 output image tokens for a 1536x1024 generation (~₹4.00), rounded up for margin.', suffix: 'paise/image' },
+      { key: 'openaiEditCostPaiseMedium', label: 'Edit — medium quality', hint: 'Real usage data: 1482 image-input + 343 output tokens for a 1-reference-photo edit (~₹2.16), rounded up for margin.', suffix: 'paise/edit' },
+      { key: 'openaiEditCostPaiseHigh', label: 'Edit — high quality', hint: 'Real usage data: 1482 image-input + 1078 output tokens for a 1-reference-photo edit (~₹4.30), rounded up for margin.', suffix: 'paise/edit' },
+    ],
+  },
+  {
+    title: 'AI Image Studio (Kling) — kept for rollback, not the active provider',
+    fields: [
+      { key: 'klingImageEditPaisePer100kUnits', label: 'Kling raw cost', hint: 'What Kling charges per 100,000 image-generation units.', suffix: 'paise/100k units' },
+      { key: 'klingImageEditUnitsPerImage1k', label: 'Units per image — 1K', hint: 'Confirmed against a real Kling API call.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerImage2k', label: 'Units per image — 2K (generate mode only — edit mode is 1K-only)', hint: 'Confirmed against a real Kling API call — same as 1K.', suffix: 'units/image' },
+      { key: 'klingImageEditUnitsPerReferenceImage', label: 'Units per reference image', hint: 'Should stay 0 — TWO independent real Kling tests (2026-09-18, 2026-09-20) confirmed no extra charge for editing with a reference photo. Edit mode is currently capped to exactly 1 reference photo; raising this above 0 would overcharge every edit with no matching real cost.', suffix: 'units/reference' },
+    ],
+  },
+  {
+    title: 'Text-to-Video (Kling) — Moments only, backend only, UI not live yet',
+    fields: [
+      { key: 'klingTextToVideoUnitsPerVideo', label: 'Units per video', hint: 'Confirmed against a real Kling API call — flat rate per ~5s clip, not resolution-aware (Kling silently ignores both resolution and duration overrides on this endpoint).', suffix: 'units/video' },
     ],
   },
 ]

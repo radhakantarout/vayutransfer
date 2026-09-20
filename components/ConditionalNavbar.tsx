@@ -3,6 +3,7 @@
 import { usePathname, useSearchParams } from 'next/navigation'
 import Navbar from './Navbar'
 import Footer from './Footer'
+import ChatWidget from './ChatWidget'
 
 // Navbar shows on every page, at every breakpoint — its own internal
 // session check trims it down once signed in (see Navbar.tsx). No route is
@@ -33,4 +34,17 @@ export function ConditionalFooter() {
   if (pathname.startsWith('/admin')) return null
   if (fromMoments) return null
   return <Footer />
+}
+
+// ChatWidget's own floating trigger defaults to off now — Navbar's Help icon
+// is the way in (see Navbar.tsx). /admin never renders Navbar (same
+// exclusion as above), so it would otherwise lose any way to open chat at
+// all — rather than a stray one-off showTrigger=true just for that route,
+// /admin simply doesn't get the support chatbot (it's support@vayutransfer.com's
+// own internal ops tool, not a customer-facing surface that needs it).
+export function ConditionalChatWidget() {
+  const pathname = usePathname()
+  if (pathname.startsWith('/studio')) return null
+  if (pathname.startsWith('/admin')) return null
+  return <ChatWidget />
 }

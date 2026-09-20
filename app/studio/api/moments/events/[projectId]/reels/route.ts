@@ -11,10 +11,12 @@ import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  computeReelCost, computeTextToVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
-  DRONE_SHOT_STYLES, DRONE_SHOT_META,
+  DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
+  MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
 
@@ -54,22 +56,62 @@ export async function GET(
     )
     reels.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 
-    const data = await Promise.all(reels.map(async (r) => ({
-      reelId: r.reelId,
-      status: r.status,
-      photoCount: r.photoIds?.length ?? 0,
-      durationSec: r.durationSec,
-      style: r.style,
-      templateId: r.templateId ?? null,
-      creditsCharged: r.creditsCharged ?? 0,
-      createdAt: r.createdAt,
-      completedAt: r.completedAt ?? null,
-      errorMessage: r.errorMessage ?? null,
-      outputUrl: r.status === 'completed' && r.outputR2Key
-        ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
-        : null,
-      progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
-    })))
+    const data = await Promise.all(reels.map(async (r) => {
+      // durationSec on the record is the reel's TOTAL length (per-clip ×
+      // photo count, see the POST route) — back out the per-clip value for
+      // "Regenerate" pre-fill by finding the closest real
+      // REEL_CLIP_DURATION_OPTIONS value, since floating-point division
+      // could land between two valid options.
+      const photoCount = r.photoIds?.length ?? 0
+      const impliedClipDuration = photoCount > 0 ? r.durationSec / photoCount : REEL_CLIP_DURATION_OPTIONS[0]
+      const clipDurationSec = REEL_CLIP_DURATION_OPTIONS.reduce((closest, opt) =>
+        Math.abs(opt - impliedClipDuration) < Math.abs(closest - impliedClipDuration) ? opt : closest
+      , REEL_CLIP_DURATION_OPTIONS[0])
+
+      return {
+        reelId: r.reelId,
+        status: r.status,
+        // undefined on every reel created before this field existed — those
+        // are all real photo-mode reels, so 'photo' is the correct fallback,
+        // not just a safe placeholder. The frontend needs this to know
+        // style/resolution/templateId below are real user choices (photo
+        // mode) vs placeholder constants the route fills in because
+        // StudioReel's shape requires them (text mode — see the POST
+        // handler's mode:'text' branch for why).
+        mode: r.mode ?? 'photo',
+        photoCount,
+        durationSec: r.durationSec,
+        style: r.style,
+        templateId: r.templateId ?? null,
+        creditsCharged: r.creditsCharged ?? 0,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt ?? null,
+        errorMessage: r.errorMessage ?? null,
+        outputUrl: r.status === 'completed' && r.outputR2Key
+          ? await getStudioR2SignedDownloadUrl(r.outputR2Key, `reel-${r.reelId}.mp4`, 3600)
+          : null,
+        progress: r.status === 'generating' ? await reelJobProgress(r.jobId) : null,
+        // Everything AiImageStudioModal's sibling, ReelMvpModal, needs to
+        // open pre-filled for "Regenerate" — only (status === 'completed' ||
+        // 'failed') items ever show that action, but sent for every status
+        // since it's cheap and keeps this shape uniform.
+        regenerate: {
+          photoIds: r.photoIds ?? [],
+          templateId: r.templateId ?? undefined,
+          style: r.style,
+          resolution: r.resolution,
+          clipDurationSec,
+          customPrompt: r.customPrompt ?? '',
+          droneShot: r.droneShot ?? undefined,
+          // Only meaningful for mode: 'text' reels (photo mode has no real
+          // per-reel aspect choice, see the comment above `mode` at the top
+          // of this map) — was persisted on StudioReel since Phase 4 but not
+          // previously threaded through to Regenerate, silently discarding
+          // the user's actual choice.
+          aspectRatio: r.aspectRatio ?? undefined,
+        },
+      }
+    }))
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
@@ -99,8 +141,159 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN', message: 'The gallery owner hasn\'t turned on Reels for members yet.' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+    const {
+      mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
+      textPrompt, aspectRatio: requestedAspectRatio, negativePrompt, cfgScale: requestedCfgScale,
+    } = await req.json().catch(() => ({})) as {
+      mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+      textPrompt?: string; aspectRatio?: string; negativePrompt?: string; cfgScale?: number
+    }
+    const mode: 'photo' | 'text' = requestedMode === 'text' ? 'text' : 'photo'
+
+    // ─── Text-to-video: a completely separate, much shorter validation +
+    // billing + Lambda-payload path — no photo selection, no template/style/
+    // duration concepts apply (Kling's text-to-video endpoint doesn't take
+    // any of them, confirmed via a real API call; see
+    // lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask header).
+    if (mode === 'text') {
+      // Sliced to MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX (1900), NOT the generic
+      // MAX_CUSTOM_PROMPT_LENGTH (2000) — that budget already reserves room
+      // for the Lambda's fixed TEXT_TO_VIDEO_SUFFIX + separator (see
+      // constants/videoProviders.ts's comment above that constant); slicing
+      // to 2000 here would let the assembled prompt sent to Kling exceed
+      // 2000 chars for anything the UI's own cap doesn't also block (e.g. a
+      // direct API call bypassing the client-side textarea limit).
+      const sanitizedTextPrompt = typeof textPrompt === 'string' ? textPrompt.trim().slice(0, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX) : ''
+      // Mirrors the modal's own MIN_TEXT_PROMPT_LENGTH guard — enforced here
+      // too since a near-empty prompt has no photo/style fallback to fall
+      // back on and would still waste a real, billed Kling call if this
+      // route were called directly, bypassing the UI's disabled button.
+      if (sanitizedTextPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
+        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
+      }
+      // Phase 4 extras — never trust the client value blindly (same posture
+      // as resolution/durationSec below): fall back to undefined (field
+      // simply omitted from the Kling request, same as today) rather than
+      // rejecting the whole request over an invalid aspect ratio or
+      // out-of-preset cfg_scale.
+      const sanitizedNegativePrompt = typeof negativePrompt === 'string' ? negativePrompt.trim().slice(0, MAX_NEGATIVE_PROMPT_LENGTH) : ''
+      const validAspectRatio = (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(requestedAspectRatio ?? '')
+        ? (requestedAspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
+        : undefined
+      const validCfgScale = typeof requestedCfgScale === 'number' && (Object.values(CFG_SCALE_PRESETS) as number[]).includes(requestedCfgScale)
+        ? requestedCfgScale
+        : undefined
+
+      const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+      const runningJobsText = await studioQueryByIndex<StudioJob>(
+        TABLES.jobs, 'projectId-status-index', 'projectId = :pid AND #s = :processing',
+        { ':pid': projectId, ':processing': 'PROCESSING' }, { '#s': 'status' }, 25
+      )
+      if (runningJobsText.find((j) => j.jobType === 'AI_REEL')) {
+        return NextResponse.json({ success: false, error: 'JOB_RUNNING' }, { status: 409 })
+      }
+
+      const pricing = await getPricingConfig()
+      const { sellPricePaise } = computeTextToVideoCost(pricing)
+      const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
+      const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
+      const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
+      if (!creditCheck.ok) {
+        const divisor = pricing.momentsCreditDivisor
+        const neededDisplay = toMomentsCredits(aiCreditsRequired, divisor)
+        const leftDisplay = toMomentsCredits(Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits), divisor)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: `This video needs ${neededDisplay} Moments Credits — you have ${leftDisplay} left.`,
+          data: creditCheck,
+        }, { status: 402 })
+      }
+
+      if (!process.env.REEL_LAMBDA_ARN) {
+        console.error('[moments reels POST] REEL_LAMBDA_ARN not set')
+        return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
+      }
+
+      try {
+        await deductAiSearchCredits(studioId, aiCreditsRequired, creditCheck.quotaCredits)
+      } catch (err) {
+        console.error('[moments reels POST] credit deduction lost a concurrency race (text-to-video)', err)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: 'Someone just used the last of these credits — please check your balance and try again.',
+        }, { status: 402 })
+      }
+
+      const reelId = randomUUID()
+      const jobId = randomUUID()
+      const now = new Date().toISOString()
+      const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+
+      // style/resolution/durationSec don't have a real meaning for
+      // text-to-video (no template picked, no per-clip duration control —
+      // Kling's own endpoint ignores duration entirely, confirmed fixed
+      // ~5s output) — populated with sensible constants purely so this
+      // still satisfies StudioReel's shared shape; History's UI (Phase 3)
+      // is responsible for not showing style/template info for mode:'text'
+      // rows rather than this route inventing a misleading style choice.
+      // aspectRatio DOES have real meaning here (Phase 4) — stores the
+      // actual value sent to Kling, not a placeholder, so history/Regenerate
+      // reflect the real choice. ReelAspectRatio's type includes '1:1'
+      // specifically for this (see types/studio.ts) since text mode's own
+      // accepted set genuinely differs from photo-mode's.
+      const reel: StudioReel = {
+        reelId, jobId, studioId, projectId,
+        source: 'MOMENTS',
+        mode: 'text',
+        photoIds: [],
+        style: 'CINEMATIC',
+        aspectRatio: validAspectRatio ?? DEFAULT_REEL_ASPECT_RATIO,
+        resolution: DEFAULT_REEL_RESOLUTION,
+        durationSec: 5,
+        customPrompt: sanitizedTextPrompt,
+        status: 'generating',
+        provider: 'kling',
+        creditsCharged: aiCreditsRequired,
+        createdAt: now,
+      }
+      await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+
+      const job: StudioJob = {
+        jobId, jobType: 'AI_REEL', status: 'PENDING',
+        projectId, studioId,
+        inputPayload: { reelId, mode: 'text' },
+        createdAt: now, ttl,
+      }
+      await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+
+      lambda.send(new InvokeCommand({
+        FunctionName: process.env.REEL_LAMBDA_ARN,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({
+          jobId, reelId, studioId, projectId,
+          mode: 'text',
+          textPrompt: sanitizedTextPrompt,
+          aspectRatio: validAspectRatio,
+          negativePrompt: sanitizedNegativePrompt || undefined,
+          cfgScale: validCfgScale,
+          r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
+          r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
+          r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
+          r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
+          klingApiKey: process.env.KLING_API_KEY,
+          klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
+          klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
+          creditsCharged: aiCreditsRequired,
+          refundPool: 'aiSearchCredits',
+        })),
+      })).catch(async (err: unknown) => {
+        console.error('[moments reels POST] Lambda invoke failed (text-to-video)', err)
+        await refundAiCreditsAndFail(studioId, aiCreditsRequired, jobId, reelId)
+      })
+
+      return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: aiCreditsRequired } })
     }
     // Never trust a client-supplied resolution/duration blindly — fall back
     // to the defaults on anything outside the allowed sets rather than
@@ -240,6 +433,8 @@ export async function POST(
       aspectRatio: template.aspectRatio,
       resolution,
       durationSec: durationSec * photos.length,
+      customPrompt: sanitizedPrompt || undefined,
+      droneShot: droneFragment ? requestedDroneShot : undefined,
       status: 'generating',
       provider: 'kling',
       creditsCharged: creditsRequired,
@@ -272,6 +467,12 @@ export async function POST(
         klingApiKey: process.env.KLING_API_KEY,
         klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
         klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
+        // Lets the Lambda's own catch block refund directly if generation
+        // fails cleanly (Kling never bills for a failed task) — Moments
+        // spends from the shared aiSearchCredits pool, not the reel-credit
+        // pool Client Gallery/Guest use.
+        creditsCharged: creditsRequired,
+        refundPool: 'aiSearchCredits',
       })),
     })).catch(async (err: unknown) => {
       console.error('[moments reels POST] Lambda invoke failed', err)

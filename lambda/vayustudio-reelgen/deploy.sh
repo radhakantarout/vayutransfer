@@ -12,12 +12,15 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ "$FUNCTION_NAME" == *-test ]]; then
   DEFAULT_JOBS_TABLE="vayustudio-jobs-test"
   DEFAULT_REELS_TABLE="vayustudio-reels-test"
+  DEFAULT_STUDIOS_TABLE="vayustudio-studios-test"
 else
   DEFAULT_JOBS_TABLE="vayustudio-jobs"
   DEFAULT_REELS_TABLE="vayustudio-reels"
+  DEFAULT_STUDIOS_TABLE="vayustudio-studios"
 fi
 JOBS_TABLE_VAL="${DYNAMO_STUDIO_JOBS_TABLE:-$DEFAULT_JOBS_TABLE}"
 REELS_TABLE_VAL="${DYNAMO_STUDIO_REELS_TABLE:-$DEFAULT_REELS_TABLE}"
+STUDIOS_TABLE_VAL="${DYNAMO_STUDIO_STUDIOS_TABLE:-$DEFAULT_STUDIOS_TABLE}"
 
 echo "==> Installing dependencies for Linux x64 (Lambda runtime)..."
 cd "$DIR"
@@ -54,8 +57,9 @@ if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" >
   ENV_JSON=$(python3 -c "
 import json
 env = {
-  'DYNAMO_STUDIO_JOBS_TABLE':  '${JOBS_TABLE_VAL}',
-  'DYNAMO_STUDIO_REELS_TABLE': '${REELS_TABLE_VAL}',
+  'DYNAMO_STUDIO_JOBS_TABLE':    '${JOBS_TABLE_VAL}',
+  'DYNAMO_STUDIO_REELS_TABLE':   '${REELS_TABLE_VAL}',
+  'DYNAMO_STUDIO_STUDIOS_TABLE': '${STUDIOS_TABLE_VAL}',
 }
 print(json.dumps({'Variables': env}))
 ")
@@ -80,8 +84,9 @@ fi
 
 echo ""
 echo "✓ Deploy complete: $FUNCTION_NAME"
-echo "  DYNAMO_STUDIO_JOBS_TABLE:  $JOBS_TABLE_VAL"
-echo "  DYNAMO_STUDIO_REELS_TABLE: $REELS_TABLE_VAL"
+echo "  DYNAMO_STUDIO_JOBS_TABLE:    $JOBS_TABLE_VAL"
+echo "  DYNAMO_STUDIO_REELS_TABLE:   $REELS_TABLE_VAL"
+echo "  DYNAMO_STUDIO_STUDIOS_TABLE: $STUDIOS_TABLE_VAL"
 echo ""
 echo "Reuses the shared vayustudio-lambda-role — its DynamoDB grant already"
 echo "covers any vayustudio-* table, no new IAM policy needed."

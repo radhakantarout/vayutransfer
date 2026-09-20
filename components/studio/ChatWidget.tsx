@@ -20,13 +20,16 @@ const SUGGESTIONS = [
 const WHATSAPP_URL = 'https://wa.me/918984769522'
 
 interface Props {
-  // Marketing pages have no other way to reach chat, so they keep the
-  // floating trigger pill. The admin dashboard hides it (its own "?" Help
-  // icon opens the same panel via context instead) — see StudioChrome.tsx.
+  // Every surface now has its own "?" Help icon opening this same panel via
+  // context (StudioNavbar for marketing/client/guest/print, the admin
+  // dashboard sidebar, Moments' Profile panel) — the floating bottom-right
+  // trigger pill is off everywhere by default. Kept as a prop rather than
+  // deleted outright in case a future surface genuinely has no Help icon of
+  // its own to wire up.
   showTrigger?: boolean
 }
 
-export default function ChatWidget({ showTrigger = true }: Props) {
+export default function ChatWidget({ showTrigger = false }: Props) {
   const { open, setOpen }         = useChatWidget()
   const [messages, setMessages]   = useState<Message[]>([])
   const [input, setInput]         = useState('')
