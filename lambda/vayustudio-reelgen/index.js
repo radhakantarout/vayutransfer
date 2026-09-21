@@ -240,7 +240,7 @@ function runFfmpeg(args) {
 exports.handler = async (event) => {
   const {
     jobId, reelId, studioId,
-    mode, // 'photo' (default, every existing caller) | 'text' — Moments only
+    mode, // 'photo' (default, every existing caller) | 'text' — Moments only | 'finalize' (new, 2026-09-21)
     photos, durationSec, resolution,
     stylePromptFragment, targetDimensions,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
@@ -248,6 +248,8 @@ exports.handler = async (event) => {
     creditsCharged, refundPool,
     // Text-to-video only:
     textPrompt, aspectRatio, negativePrompt, cfgScale, cameraControl,
+    // finalize only:
+    clipUrls,
   } = event
 
   // Idempotency guard — AWS automatically retries a failed async ("Event")
@@ -327,6 +329,83 @@ exports.handler = async (event) => {
       await updateReel(reelId, { status: 'failed', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
       await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[reelgen] refund failed', e))
       throw err
+    }
+    return
+  }
+
+  // ─── finalize (2026-09-21) ────────────────────────────────────────────
+  // Part of the async-redesign effort: task CREATION and STATUS POLLING
+  // move out of this Lambda entirely (into the calling route + a periodic
+  // external check, see the reelgen-async-redesign-plan memory) — this
+  // Lambda is invoked ONLY once every clip is already known to have
+  // succeeded, with their real URLs already in hand. No Kling calls happen
+  // in this branch at all; it's purely download + (photo-mode) ffmpeg
+  // concat/crop + upload + mark-complete. Bounded by download+encode time
+  // only, not by however long Kling takes to generate — this is the whole
+  // point of the redesign (today's 'photo'/'text' branches below still
+  // poll Kling internally and remain untouched until every caller is
+  // migrated to use this branch instead, per the phased plan).
+  //
+  // `targetDimensions` presence is the discriminator: present = photo-style
+  // (one or more clips, concat+crop via ffmpeg, identical pipeline to the
+  // legacy 'photo' branch below just fed pre-resolved URLs); absent =
+  // text-style (exactly one clip, no crop, identical to the legacy 'text'
+  // branch's own download+upload step) — avoids a separate mode-within-
+  // mode field since the two are already fully distinguished by whether a
+  // crop/concat is needed at all.
+  if (mode === 'finalize') {
+    console.log(`[reelgen] START (finalize) jobId=${jobId} reelId=${reelId} clips=${clipUrls?.length}`)
+    const r2Finalize = new S3Client({
+      region: 'auto',
+      endpoint: r2Endpoint,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      credentials: { accessKeyId: r2AccessKeyId, secretAccessKey: r2SecretAccessKey },
+    })
+    const finalizeWorkDir = targetDimensions ? await fs.mkdtemp(path.join(os.tmpdir(), 'reelgen-finalize-')) : null
+    try {
+      if (!Array.isArray(clipUrls) || clipUrls.length === 0) {
+        throw new Error('finalize called with no clip URLs — nothing to assemble')
+      }
+      await updateJob(jobId, { outputPayload: { stage: 'finalizing', processed: 0, total: clipUrls.length } })
+
+      let outputBuffer
+      if (targetDimensions) {
+        const clipPaths = []
+        for (let i = 0; i < clipUrls.length; i++) {
+          const clipPath = path.join(finalizeWorkDir, `clip-${i}.mp4`)
+          await downloadToFile(clipUrls[i], clipPath)
+          clipPaths.push(clipPath)
+        }
+        const listPath = path.join(finalizeWorkDir, 'list.txt')
+        await fs.writeFile(listPath, clipPaths.map((p) => `file '${p}'`).join('\n'))
+        const outputPath = path.join(finalizeWorkDir, 'output.mp4')
+        const cropFilter = `scale=${targetDimensions.width}:${targetDimensions.height}:force_original_aspect_ratio=increase,crop=${targetDimensions.width}:${targetDimensions.height}`
+        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-vf', cropFilter, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath])
+        outputBuffer = await fs.readFile(outputPath)
+      } else {
+        if (clipUrls.length > 1) {
+          console.warn(`[reelgen] finalize (text-style) received ${clipUrls.length} clip URLs but no targetDimensions — only clipUrls[0] is used, rest are discarded`)
+        }
+        outputBuffer = await downloadToBuffer(clipUrls[0])
+      }
+
+      await updateJob(jobId, { outputPayload: { stage: 'finalizing', processed: clipUrls.length, total: clipUrls.length } })
+      const finalKey = `studios/${studioId}/ai-reels/${reelId}/final.mp4`
+      await new Upload({ client: r2Finalize, params: { Bucket: r2Bucket, Key: finalKey, Body: outputBuffer, ContentType: 'video/mp4' } }).done()
+
+      const now = new Date().toISOString()
+      await updateJob(jobId, { status: 'READY', outputPayload: { stage: 'finalizing', processed: clipUrls.length, total: clipUrls.length, outputR2Key: finalKey }, completedAt: now })
+      await updateReel(reelId, { status: 'completed', outputR2Key: finalKey, completedAt: now })
+      console.log(`[reelgen] DONE (finalize) jobId=${jobId} reelId=${reelId}`)
+    } catch (err) {
+      console.error('[reelgen] ERROR (finalize):', err)
+      const now = new Date().toISOString()
+      await updateJob(jobId, { status: 'FAILED', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
+      await updateReel(reelId, { status: 'failed', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
+      await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[reelgen] refund failed', e))
+      throw err
+    } finally {
+      if (finalizeWorkDir) await fs.rm(finalizeWorkDir, { recursive: true, force: true }).catch(() => {})
     }
     return
   }
