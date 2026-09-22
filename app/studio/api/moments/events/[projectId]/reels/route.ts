@@ -3,9 +3,10 @@ import { randomUUID } from 'crypto'
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
-import { getStudioR2SignedDownloadUrl } from '@/lib/studio/r2'
+import { getStudioR2SignedDownloadUrl, getStudioR2SignedViewUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
-import { deductAiSearchCredits } from '@/lib/studio/billing'
+import { deductAiSearchCredits, refundAiSearchCredits } from '@/lib/studio/billing'
+import { createReelClipTasks } from '@/lib/studio/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
@@ -13,14 +14,39 @@ import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
   computeReelCost, computeTextToVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
-  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
+  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
   MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
   TEXT_TO_VIDEO_ASPECT_RATIOS, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
-import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
+import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
 
 const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
+
+// Project-wide "only one reel job at a time" dedupe (used by both mode
+// branches below) — was a single-status PROCESSING query before the async
+// redesign, when a job stayed PROCESSING for its entire lifetime. Now a
+// photo-mode job can also be briefly FINALIZING (clips done, Lambda
+// assembling) after Phase 4's migration below, and a request for either mode
+// must still see that as "a reel job is already running" — DynamoDB doesn't
+// support an OR across a single equality-keyed GSI query, so this runs both
+// queries and merges. Text-mode jobs never reach FINALIZING (legacy
+// pipeline, unmigrated), so the second query is a real no-op for them today,
+// but this stays mode-agnostic since either mode must be blocked by either
+// kind of in-flight job.
+async function findRunningReelJob(projectId: string): Promise<StudioJob | undefined> {
+  const [processing, finalizing] = await Promise.all([
+    studioQueryByIndex<StudioJob>(
+      TABLES.jobs, 'projectId-status-index', 'projectId = :pid AND #s = :s',
+      { ':pid': projectId, ':s': 'PROCESSING' }, { '#s': 'status' }, 25
+    ),
+    studioQueryByIndex<StudioJob>(
+      TABLES.jobs, 'projectId-status-index', 'projectId = :pid AND #s = :s',
+      { ':pid': projectId, ':s': 'FINALIZING' }, { '#s': 'status' }, 25
+    ),
+  ])
+  return [...processing, ...finalizing].find((j) => j.jobType === 'AI_REEL')
+}
 
 // Same "MVP" pipeline as the Client Gallery's reel routes — every selected
 // photo becomes one Kling AI clip, reusing the exact same Lambda/job
@@ -187,11 +213,7 @@ export async function POST(
       const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
       if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
 
-      const runningJobsText = await studioQueryByIndex<StudioJob>(
-        TABLES.jobs, 'projectId-status-index', 'projectId = :pid AND #s = :processing',
-        { ':pid': projectId, ':processing': 'PROCESSING' }, { '#s': 'status' }, 25
-      )
-      if (runningJobsText.find((j) => j.jobType === 'AI_REEL')) {
+      if (await findRunningReelJob(projectId)) {
         return NextResponse.json({ success: false, error: 'JOB_RUNNING' }, { status: 409 })
       }
 
@@ -361,15 +383,7 @@ export async function POST(
     // triggering a real, paid Kling Lambda invoke) beyond the credit check
     // alone, which itself only narrowly stops overspend, not repeated
     // legitimate-looking requests for the same gallery.
-    const runningJobs = await studioQueryByIndex<StudioJob>(
-      TABLES.jobs,
-      'projectId-status-index',
-      'projectId = :pid AND #s = :processing',
-      { ':pid': projectId, ':processing': 'PROCESSING' },
-      { '#s': 'status' },
-      25
-    )
-    const runningReelJob = runningJobs.find((j) => j.jobType === 'AI_REEL')
+    const runningReelJob = await findRunningReelJob(projectId)
     if (runningReelJob) {
       return NextResponse.json({
         success: false, error: 'JOB_RUNNING', data: { jobId: runningReelJob.jobId },
@@ -424,6 +438,48 @@ export async function POST(
     const now = new Date().toISOString()
     const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
 
+    // Async-redesign (Phase 4, photo-mode only — text-mode above is
+    // deliberately untouched, see reelgen-async-redesign-plan-2026-09 in
+    // memory): Kling task creation happens HERE, in the route, mirroring
+    // Phase 2/3's Client Gallery/Guest migration exactly. The Lambda is
+    // invoked later, by app/studio/api/cron/reel-check (jobType-agnostic,
+    // unchanged), once every clip is known to have succeeded.
+    const stylePromptFragment = [sanitizedPrompt || null, REEL_STYLE_META[reelStyle].promptFragment, droneFragment]
+      .filter(Boolean).join(', ')
+
+    // Credits are already deducted above — everything through task creation
+    // must refund on ANY failure, not just "some clips failed" below. Same
+    // fix Phase 2/3 needed for their own synchronous-throw gap.
+    let created: Awaited<ReturnType<typeof createReelClipTasks>>
+    try {
+      const clipsForKling = await Promise.all(photos.map(async (p) => ({
+        photoId: p.fileId,
+        imageUrl: await getStudioR2SignedViewUrl(p.key!),
+        prompt: stylePromptFragment,
+        // Not actually sent to Kling (see klingProvider.ts's real confirmed
+        // request body) — required by the ImageToVideoRequest interface only.
+        motion: 'slow_push_in' as ReelMotion,
+      })))
+
+      created = await createReelClipTasks({
+        reelId, style: reelStyle, clips: clipsForKling,
+        durationSec, aspectRatio: template.aspectRatio, resolution,
+      })
+    } catch (err) {
+      await refundAiSearchCredits(studioId, creditsRequired)
+      console.error('[moments reels POST] Kling task creation threw before any clip could be created', err)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
+
+    // MVP: a partial batch fails the whole reel rather than silently
+    // dropping photos or leaving orphaned, untracked Kling tasks running —
+    // same scope cut as Client Gallery/Guest's own migrations.
+    if (created.failed.length > 0) {
+      await refundAiSearchCredits(studioId, creditsRequired)
+      console.error('[moments reels POST] Kling task creation failed for one or more photos', created.failed)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
+
     const reel: StudioReel = {
       reelId, jobId, studioId, projectId,
       source: 'MOMENTS',
@@ -436,48 +492,27 @@ export async function POST(
       customPrompt: sanitizedPrompt || undefined,
       droneShot: droneFragment ? requestedDroneShot : undefined,
       status: 'generating',
-      provider: 'kling',
+      provider: created.provider,
+      // Ordered identically to photoIds/clipsForKling (see the same comment
+      // on Client Gallery/Guest's route.ts) — reel-check relies on this order.
+      providerJobIds: created.succeeded.map((s) => s.providerJobId),
       creditsCharged: creditsRequired,
       createdAt: now,
     }
     await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
 
     const job: StudioJob = {
-      jobId, jobType: 'AI_REEL', status: 'PENDING',
+      jobId, jobType: 'AI_REEL',
+      // PROCESSING, not PENDING — Kling tasks are already live as of this
+      // request, no Lambda invocation is pending. reel-check finds this via
+      // the jobType-status-index GSI.
+      status: 'PROCESSING',
       projectId, studioId,
       inputPayload: { reelId, photoCount: photos.length },
+      outputPayload: { stage: 'generating', processed: 0, total: photos.length },
       createdAt: now, ttl,
     }
     await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
-
-    lambda.send(new InvokeCommand({
-      FunctionName: process.env.REEL_LAMBDA_ARN,
-      InvocationType: 'Event',
-      Payload: Buffer.from(JSON.stringify({
-        jobId, reelId, studioId, projectId,
-        photos, durationSec, resolution,
-        style: reelStyle,
-        stylePromptFragment: [sanitizedPrompt || null, REEL_STYLE_META[reelStyle].promptFragment, droneFragment]
-          .filter(Boolean).join(', '),
-        targetDimensions: REEL_ASPECT_RATIO_DIMENSIONS[template.aspectRatio],
-        r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
-        r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
-        r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
-        r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
-        klingApiKey: process.env.KLING_API_KEY,
-        klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
-        klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
-        // Lets the Lambda's own catch block refund directly if generation
-        // fails cleanly (Kling never bills for a failed task) — Moments
-        // spends from the shared aiSearchCredits pool, not the reel-credit
-        // pool Client Gallery/Guest use.
-        creditsCharged: creditsRequired,
-        refundPool: 'aiSearchCredits',
-      })),
-    })).catch(async (err: unknown) => {
-      console.error('[moments reels POST] Lambda invoke failed', err)
-      await refundAiCreditsAndFail(studioId, creditsRequired, jobId, reelId)
-    })
 
     return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
   } catch (err) {
