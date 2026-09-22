@@ -27,6 +27,11 @@ function statusLine(job: TrackedJob): string {
   switch (job.status) {
     case 'PENDING':     return 'Starting…'
     case 'PROCESSING':  return `${job.processed} of ${job.total} photos`
+    // FINALIZING is AI_REEL-only (see JobStatus in types/studio.ts) — this
+    // toast only ever tracks WATERMARK/INDEX_FACES jobs (TrackedJob['jobType']
+    // above), so this case is unreachable in practice, only needed for
+    // exhaustiveness over the shared JobStatus union.
+    case 'FINALIZING':  return `${job.processed} of ${job.total} photos`
     case 'READY':       return 'Done'
     case 'CANCELLED':   return 'Cancelled'
     case 'FAILED':      return job.errorMessage || 'Something went wrong'

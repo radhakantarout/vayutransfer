@@ -61,8 +61,14 @@ export async function createReelClipTasks(params: {
       // Kling's own create-time dedupe instead of risking a second, separately
       // billed task for one photo. See klingProvider.ts's confirmed real
       // create->poll cycle for why external_task_id (not Kling's own returned
-      // id) is what status-checks must poll by.
-      const externalTaskId = `${params.reelId}:${clip.photoId}`
+      // id) is what status-checks must poll by. `-` + slice(0, 64) matches
+      // the exact scheme the legacy Lambda pipeline already uses in
+      // production (lambda/vayustudio-reelgen/index.js) — kept identical
+      // rather than switching to a `:` separator, since real UUIDs for both
+      // halves (36 + 1 + 36 = 73 chars) would otherwise silently lose the
+      // photoId's tail to truncation instead of the reelId's, an unnecessary
+      // behavior change with no upside.
+      const externalTaskId = `${params.reelId}-${clip.photoId}`.slice(0, 64)
       const result = await provider.generateImageToVideo({
         imageUrl: clip.imageUrl,
         prompt: clip.prompt,

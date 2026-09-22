@@ -23,6 +23,16 @@ import type { PricingConfig } from '@/types/pricingConfig'
 // scan — same approach this cron already uses for studios/transfers below,
 // not a new anti-pattern. 20 minutes gives real headroom over the pipeline's
 // own ~10-minute internal Kling-polling ceiling plus assembly time.
+//
+// FINALIZING (2026-09-21, async redesign — see reelgen-async-redesign-plan
+// in memory) included here too: it's set by app/studio/api/cron/reel-check
+// right before invoking the Lambda's finalize path, and a lost/failed
+// invoke there would otherwise leave the job wedged in FINALIZING forever
+// with no other sweep watching it (reel-check's own conditional
+// PROCESSING -> FINALIZING transition means it never revisits a job once
+// it's past PROCESSING). Same 20-minute ceiling is generous for finalize
+// (bounded by download+encode time, not Kling generation) but reuses the
+// existing constant rather than adding a second one for a rare edge case.
 const AI_REEL_STUCK_TIMEOUT_MS = 20 * 60 * 1000
 
 async function sweepStuckReelJobs(): Promise<{ count: number }> {
@@ -30,7 +40,7 @@ async function sweepStuckReelJobs(): Promise<{ count: number }> {
   const now = Date.now()
   const stuck = jobs.filter((j) =>
     j.jobType === 'AI_REEL'
-    && (j.status === 'PENDING' || j.status === 'PROCESSING')
+    && (j.status === 'PENDING' || j.status === 'PROCESSING' || j.status === 'FINALIZING')
     && now - new Date(j.createdAt).getTime() > AI_REEL_STUCK_TIMEOUT_MS
   )
 
