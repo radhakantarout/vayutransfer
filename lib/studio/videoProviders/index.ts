@@ -1,5 +1,5 @@
 export * from './types'
 export { KlingProvider } from './klingProvider'
 export { VideoProviderRouter } from './router'
-export { createReelClipTasks, checkReelClipStatuses } from './reelClipTasks'
-export type { ReelClipRequest, ReelClipTaskSuccess, ReelClipTaskFailure, CreateReelClipTasksResult, ReelClipStatusMap } from './reelClipTasks'
+export { createReelClipTasks, checkReelClipStatuses, attemptReclaimReelClips } from './reelClipTasks'
+export type { ReelClipRequest, ReelClipTaskSuccess, ReelClipTaskFailure, CreateReelClipTasksResult, ReelClipStatusMap, ReclaimResult } from './reelClipTasks'

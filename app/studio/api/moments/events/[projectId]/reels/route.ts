@@ -122,6 +122,10 @@ export async function GET(
         // 'failed') items ever show that action, but sent for every status
         // since it's cheap and keeps this shape uniform.
         regenerate: {
+          // Lets ReelMvpModal try a free "reclaim" check (2026-09 quick fix)
+          // before a full, freshly-billed regenerate — see
+          // reel-reclaim-quick-fix plan.
+          reelId: r.reelId,
           photoIds: r.photoIds ?? [],
           templateId: r.templateId ?? undefined,
           style: r.style,

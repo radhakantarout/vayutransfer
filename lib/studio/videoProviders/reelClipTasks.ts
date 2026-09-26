@@ -131,3 +131,45 @@ export async function checkReelClipStatuses(params: {
   })
   return result
 }
+
+export type ReclaimResult =
+  | { reclaimed: true; clipUrls: string[] }
+  | { reclaimed: false }
+
+// Quick-fix (2026-09, reel-reclaim-quick-fix plan): recovers an already-
+// Kling-completed reel instead of wastefully regenerating it. Works
+// retroactively on reels created by EITHER the legacy Lambda-does-everything
+// pipeline OR the new route-based createReelClipTasks above, because both use
+// the exact same deterministic external_task_id scheme
+// (`${reelId}-${photoId}`.slice(0, 64)) — the id never needs to have been
+// persisted anywhere, it's recomputed on demand from data every StudioReel
+// already has (reelId + photoIds), then checked against Kling directly via
+// checkReelClipStatuses (a free read, not a billed call).
+//
+// Photo-mode only. Text-to-video has no deterministic id (Kling's own
+// returned task id is required, with zero create-time dedupe) and is never
+// persisted anywhere either — out of scope, see the plan doc.
+export async function attemptReclaimReelClips(params: {
+  reelId: string
+  photoIds: string[]
+  providerName: VideoProviderName
+}): Promise<ReclaimResult> {
+  if (params.photoIds.length === 0) return { reclaimed: false }
+
+  const providerJobIds = params.photoIds.map((photoId) => `${params.reelId}-${photoId}`.slice(0, 64))
+  const statuses = await checkReelClipStatuses({ providerName: params.providerName, providerJobIds })
+
+  const clipUrls: string[] = []
+  for (const id of providerJobIds) {
+    const status = statuses[id]
+    // Require every single clip to be a real, completed success with an
+    // output URL — no partial reclaim. A partially-recovered reel with one
+    // missing clip would need the exact same "what do we do about the
+    // missing one" decision full regeneration already avoids by failing the
+    // whole batch (see createReelClipTasks's own comment) — simplest and
+    // safest to apply the same rule here.
+    if (status?.status !== 'completed' || !status.outputUrl) return { reclaimed: false }
+    clipUrls.push(status.outputUrl)
+  }
+  return { reclaimed: true, clipUrls }
+}

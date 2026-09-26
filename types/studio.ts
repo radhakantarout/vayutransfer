@@ -551,6 +551,18 @@ export interface StudioReel {
   customPrompt?: string
   droneShot?: string
   status: ReelStatus
+  // Set once, conditionally (attribute_not_exists guard), the moment a
+  // reclaim attempt against this specific (failed) reel is CONFIRMED
+  // successful (Kling has already reported every clip complete) — never set
+  // on a miss/transient-failure, so a reel whose reclaim attempt failed for
+  // a fixable reason (e.g. a transient status-check hiccup) can still be
+  // retried later. See the reel-reclaim-quick-fix plan. Purely a
+  // concurrency claim marker: without it, two overlapping "Regenerate"
+  // clicks that both see a successful Kling check could each spin up a
+  // separate new reel/job + Lambda finalize invoke for the identical clips
+  // (wasted infra, not a billing bug since reclaim is always credits:0
+  // either way, but worth closing). Never read for any other purpose.
+  reclaimedAt?: string
   provider?: VideoProviderName // internal only — never sent to the frontend
   providerJobIds?: string[]    // one per hero clip, for cancel/retry — order
                                 // matches photoIds (see reels route.ts's own
