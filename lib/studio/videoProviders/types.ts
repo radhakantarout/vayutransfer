@@ -1,4 +1,5 @@
 import type { ReelAspectRatio, ReelResolution, ReelMotion } from '@/types/studio'
+import type { VideoProviderName } from '@/constants/videoProviders'
 
 // Every provider implementation (KlingProvider today, Runway/Luma/Veo later)
 // speaks this shape only — no provider-specific request/response mapping is
@@ -48,7 +49,7 @@ export interface ProviderCapabilities {
 }
 
 export interface VideoProvider {
-  readonly name: string
+  readonly name: VideoProviderName
   generateImageToVideo(request: ImageToVideoRequest): Promise<ImageToVideoResult>
   getGenerationStatus(providerJobId: string): Promise<GenerationStatusResult>
   cancelGeneration(providerJobId: string): Promise<void>

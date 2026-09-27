@@ -1,3 +1,5 @@
+import type { VideoProviderName } from '@/constants/videoProviders'
+
 export type StudioRole = 'OWNER' | 'ADMIN' | 'CLIENT' | 'PRINT'
 export type StudioStatus = 'ACTIVE' | 'SUSPENDED'
 export type ProjectStatus = 'DRAFT' | 'ACTIVE' | 'SELECTION_RECEIVED' | 'COMPLETED'
@@ -431,7 +433,13 @@ export interface StudioFace {
 export type JobType   = 'INDEX_FACES' | 'ZIP_DOWNLOAD' | 'SELFIE_SEARCH' | 'WATERMARK' | 'AI_REEL' | 'AI_IMAGE'
 // CANCELLED is only ever set by an explicit cancel request (never by a
 // Lambda on its own) — see lib/studio/jobs.ts and the two cancel routes.
-export type JobStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'CANCELLED'
+// FINALIZING (2026-09-21, async reelgen redesign): AI_REEL only — set by the
+// periodic reel-check route (app/studio/api/cron/reel-check) right before it
+// invokes the reelgen Lambda's mode:'finalize' path, via a conditional
+// PROCESSING -> FINALIZING update. Exists specifically so two overlapping
+// check-cycle runs can't both see a job's clips as done and both fire
+// finalize — the second one's conditional update loses the race and skips.
+export type JobStatus = 'PENDING' | 'PROCESSING' | 'FINALIZING' | 'READY' | 'FAILED' | 'CANCELLED'
 
 export interface StudioJob {
   jobId: string
@@ -543,8 +551,22 @@ export interface StudioReel {
   customPrompt?: string
   droneShot?: string
   status: ReelStatus
-  provider?: 'kling'          // internal only — never sent to the frontend
-  providerJobIds?: string[]   // one per hero clip, for cancel/retry
+  // Set once, conditionally (attribute_not_exists guard), the moment a
+  // reclaim attempt against this specific (failed) reel is CONFIRMED
+  // successful (Kling has already reported every clip complete) — never set
+  // on a miss/transient-failure, so a reel whose reclaim attempt failed for
+  // a fixable reason (e.g. a transient status-check hiccup) can still be
+  // retried later. See the reel-reclaim-quick-fix plan. Purely a
+  // concurrency claim marker: without it, two overlapping "Regenerate"
+  // clicks that both see a successful Kling check could each spin up a
+  // separate new reel/job + Lambda finalize invoke for the identical clips
+  // (wasted infra, not a billing bug since reclaim is always credits:0
+  // either way, but worth closing). Never read for any other purpose.
+  reclaimedAt?: string
+  provider?: VideoProviderName // internal only — never sent to the frontend
+  providerJobIds?: string[]    // one per hero clip, for cancel/retry — order
+                                // matches photoIds (see reels route.ts's own
+                                // comment on why this order is load-bearing)
   // The durable pointer — R2 key, not a URL. A presigned download URL must
   // be minted fresh on every read (getStudioR2SignedDownloadUrl, same
   // pattern as every other download in this codebase) rather than ever

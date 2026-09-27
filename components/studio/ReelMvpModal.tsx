@@ -184,6 +184,13 @@ export interface ReelRegeneratePrefill {
   // as `string` here rather than either mode's own narrower union since
   // this single field is shared across both, validated at the point of use.
   aspectRatio?: string
+  // The reel being regenerated (2026-09, reel-reclaim quick fix) — when
+  // present, handleGenerate tries a free "reclaim" check first (is the old
+  // reel's video actually already sitting on Kling, just never picked up by
+  // our pipeline?) before falling through to a normal, freshly-billed
+  // regenerate. Undefined for a brand-new reel, always populated for a real
+  // Regenerate.
+  reelId?: string
 }
 
 type ReelMvpModalProps =
@@ -229,6 +236,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     : props.source === 'moments'
       ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/status`
       : `/studio/api/guest/${props.token}/reels/${reelId}/status`
+  const reclaimUrl = (reelId: string) => props.source === 'client'
+    ? `/studio/api/client/gallery/${props.token}/events/${props.projectId}/reels/${reelId}/reclaim`
+    : props.source === 'moments'
+      ? `/studio/api/moments/events/${props.projectId}/reels/${reelId}/reclaim`
+      : `/studio/api/guest/${props.token}/reels/${reelId}/reclaim`
   const { initial } = props
   // Fresh Moments opens (no Regenerate `initial`) land on the new prompt-
   // first 'compose' screen instead of the old template-first wizard's first
@@ -410,6 +422,26 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const handleGenerate = async () => {
     setStage('generating')
     setError(null)
+
+    // Reel-reclaim quick fix (2026-09): only ever attempted for a real
+    // Regenerate of a specific old reel (initial?.reelId set) — a brand-new
+    // reel has nothing to reclaim. A cheap server-side check (the endpoint
+    // itself short-circuits instantly for a completed reel or any non-
+    // reclaimable case, see reel-reclaim-quick-fix plan) — no visible extra
+    // step, the existing "generating" screen already covers this brief delay.
+    if (initial?.reelId) {
+      const reclaimRes = await fetch(reclaimUrl(initial.reelId), { method: 'POST' })
+        .then((r) => r.json()).catch(() => null)
+      if (reclaimRes?.success && reclaimRes.data?.reclaimed) {
+        setReelId(reclaimRes.data.reelId)
+        setCreditsCharged(0)
+        poll(reclaimRes.data.reelId)
+        return
+      }
+      // Any non-reclaimed outcome (including a request error) falls through
+      // to the exact same full-regenerate flow below, unchanged.
+    }
+
     const trimmedPrompt = customPrompt.trim() || undefined
     const droneShotField = droneMode ? droneShot : undefined
     // Text-to-video is a completely separate request shape (no photos,

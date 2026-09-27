@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import { randomUUID } from 'crypto'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
-import { studioGetItem, studioPutItem, studioUpdateItem, TABLES } from '@/lib/studio/dynamodb'
+import { studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
+import { getStudioR2SignedViewUrl } from '@/lib/studio/r2'
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
 import { deductReelCredits, refundReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
+import { createReelClipTasks } from '@/lib/studio/videoProviders'
 import {
   computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
-  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, REEL_ASPECT_RATIO_DIMENSIONS, MAX_CUSTOM_PROMPT_LENGTH,
+  REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META,
 } from '@/constants/videoProviders'
 import { getPricingConfig } from '@/lib/pricingConfig'
-import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution } from '@/types/studio'
-
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
+import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
 
 function getSecret() {
   return new TextEncoder().encode(process.env.STUDIO_JWT_SECRET!)
@@ -144,6 +143,51 @@ export async function POST(
     const now = new Date().toISOString()
     const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
 
+    // Async-redesign (Phase 3, mirrors Phase 2's Client Gallery migration —
+    // see reelgen-async-redesign-plan-2026-09 in memory): Kling task
+    // creation happens HERE, in the route, instead of inside the reelgen
+    // Lambda. The Lambda is only invoked later, by
+    // app/studio/api/cron/reel-check's periodic poll (jobType-agnostic,
+    // needed no changes for this migration), once every clip is already
+    // known to have succeeded (mode: 'finalize').
+    const stylePromptFragment = [sanitizedPrompt || null, REEL_STYLE_META[reelStyle].promptFragment, droneFragment]
+      .filter(Boolean).join(', ')
+
+    // Credits are already deducted above — everything through task creation
+    // must refund on ANY failure, not just "some clips failed" below. A
+    // synchronous throw (no provider configured, or a presigned-URL mint
+    // failing) would otherwise bypass that check and leak the deduction —
+    // same fix Phase 2's Client Gallery route needed.
+    let created: Awaited<ReturnType<typeof createReelClipTasks>>
+    try {
+      const clipsForKling = await Promise.all(photos.map(async (p) => ({
+        photoId: p.fileId,
+        imageUrl: await getStudioR2SignedViewUrl(p.key!),
+        prompt: stylePromptFragment,
+        // Not actually sent to Kling (see klingProvider.ts's real confirmed
+        // request body) — required by the ImageToVideoRequest interface only.
+        motion: 'slow_push_in' as ReelMotion,
+      })))
+
+      created = await createReelClipTasks({
+        reelId, style: reelStyle, clips: clipsForKling,
+        durationSec, aspectRatio: template.aspectRatio, resolution,
+      })
+    } catch (err) {
+      await refundReelCredits(studioId, creditsRequired)
+      console.error('[guest reels POST] Kling task creation threw before any clip could be created', err)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
+
+    // MVP: a partial batch fails the whole reel rather than silently
+    // dropping photos or leaving orphaned, untracked Kling tasks running —
+    // same scope cut as Client Gallery's Phase 2 migration.
+    if (created.failed.length > 0) {
+      await refundReelCredits(studioId, creditsRequired)
+      console.error('[guest reels POST] Kling task creation failed for one or more photos', created.failed)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
+
     const reel: StudioReel = {
       reelId, jobId, studioId, projectId,
       source: 'GUEST_SELFIE_SEARCH',
@@ -157,49 +201,27 @@ export async function POST(
       customPrompt: sanitizedPrompt || undefined,
       droneShot: droneFragment ? requestedDroneShot : undefined,
       status: 'generating',
-      provider: 'kling',
+      provider: created.provider,
+      // Ordered identically to photoIds/clipsForKling (see the same comment
+      // on Client Gallery's route.ts) — reel-check relies on this order.
+      providerJobIds: created.succeeded.map((s) => s.providerJobId),
       creditsCharged: creditsRequired,
       createdAt: now,
     }
     await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
 
     const job: StudioJob = {
-      jobId, jobType: 'AI_REEL', status: 'PENDING',
+      jobId, jobType: 'AI_REEL',
+      // PROCESSING, not PENDING — Kling tasks are already live as of this
+      // request, no Lambda invocation is pending. reel-check finds this via
+      // the jobType-status-index GSI.
+      status: 'PROCESSING',
       projectId, studioId,
       inputPayload: { reelId, photoCount: photos.length, source: 'GUEST_SELFIE_SEARCH' },
+      outputPayload: { stage: 'generating', processed: 0, total: photos.length },
       createdAt: now, ttl,
     }
     await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
-
-    lambda.send(new InvokeCommand({
-      FunctionName: process.env.REEL_LAMBDA_ARN,
-      InvocationType: 'Event',
-      Payload: Buffer.from(JSON.stringify({
-        jobId, reelId, studioId, projectId,
-        photos, durationSec, resolution,
-        style: reelStyle,
-        stylePromptFragment: [sanitizedPrompt || null, REEL_STYLE_META[reelStyle].promptFragment, droneFragment]
-          .filter(Boolean).join(', '),
-        targetDimensions: REEL_ASPECT_RATIO_DIMENSIONS[template.aspectRatio],
-        r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
-        r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
-        r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
-        r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
-        klingApiKey: process.env.KLING_API_KEY,
-        klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
-        klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
-        // Lets the Lambda's own catch block refund directly if generation
-        // fails cleanly (Kling never bills for a failed task).
-        creditsCharged: creditsRequired,
-        refundPool: 'reelCredits',
-      })),
-    })).catch(async (err: unknown) => {
-      console.error('[guest reels POST] Lambda invoke failed', err)
-      await refundReelCredits(studioId, creditsRequired)
-      const failedAt = new Date().toISOString()
-      await studioUpdateItem(TABLES.jobs, { jobId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'FAILED', ':msg': 'Could not start generation', ':now': failedAt }, { '#s': 'status' })
-      await studioUpdateItem(TABLES.reels, { reelId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'failed', ':msg': 'Could not start generation', ':now': failedAt }, { '#s': 'status' })
-    })
 
     return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
   } catch (err) {

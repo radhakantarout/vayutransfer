@@ -28,4 +28,15 @@ export class VideoProviderRouter {
     }
     throw new Error('No video provider is enabled and implemented — check constants/videoProviders.ts')
   }
+
+  // Status checks (and cancels) must hit the EXACT provider a task was
+  // created with, not whatever `select()` would pick today — a task created
+  // under an old config stays checkable even after priorities/enabled flags
+  // change later. Callers get the provider name from wherever they persisted
+  // it at creation time (e.g. StudioReel.provider).
+  getByName(name: VideoProviderName): VideoProvider {
+    const instance = PROVIDER_INSTANCES[name]
+    if (!instance) throw new Error(`Video provider "${name}" is not implemented — check constants/videoProviders.ts`)
+    return instance
+  }
 }
