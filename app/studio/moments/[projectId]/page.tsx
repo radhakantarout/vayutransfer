@@ -19,6 +19,7 @@ import SelfieSearchModal from '@/components/studio/SelfieSearchModal'
 import MomentsBottomNav from '@/components/studio/moments/BottomNav'
 import TopNavBar from '@/components/studio/moments/TopNavBar'
 import InstallPrompt from '@/components/studio/moments/InstallPrompt'
+import InAppBrowserGuard from '@/components/studio/InAppBrowserGuard'
 import { REEL_TEMPLATES, REEL_STYLE_META } from '@/constants/videoProviders'
 
 const MAX_CONCURRENT_UPLOADS = 4
@@ -1686,6 +1687,14 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     <div className="min-h-screen bg-bg pt-14 sm:pt-16 pb-20 md:pb-0 md:pl-20 lg:pl-56">
       <TopNavBar />
       <InstallPrompt />
+      {/* Android/iOS in-app-browser (WhatsApp, Instagram, etc.) detector —
+          same component already proven on Client Gallery/Guest. Moments
+          links are commonly shared via WhatsApp, where the in-app WebView
+          breaks both navigator.share({files}) and blob-anchor downloads
+          (the two mechanisms saveFiles() below relies on) — this prompts
+          the guest/member to reopen in their real browser instead of
+          silently failing to save photos. */}
+      <InAppBrowserGuard />
 
       <main className="max-w-3xl mx-auto px-5 sm:px-8 pt-5 pb-28 md:pb-12 space-y-5">
         {/* Gradient-bordered hero card — cover photo backdrop when one
