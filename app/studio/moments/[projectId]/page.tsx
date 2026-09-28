@@ -1037,7 +1037,31 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const [notFound, setNotFound] = useState(false)
   const [checking, setChecking] = useState(true)
   const [dragActive, setDragActive] = useState(false)
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  // Tracks the OPEN PHOTO by fileId, not by its position in viewablePhotos —
+  // the background poll (refreshFiles, every 4s) can insert/remove files
+  // from that array (a file finishing PROCESSING->READY, going FAILED, or
+  // being deleted by another member) while the lightbox is open, which
+  // shifts every index after that point. A stored plain number would then
+  // silently point at a different photo than the one the user actually
+  // opened — a real reported bug. The effective index is re-derived by
+  // fileId on every render instead (see lightboxIndex below), so it always
+  // tracks the same photo (or gracefully reflects that it's gone).
+  const [lightboxFileId, setLightboxFileId] = useState<string | null>(null)
+  // Permanently clears (rather than just hiding) the open photo the moment
+  // it stops being a valid, READY file — e.g. an admin re-edits it and
+  // reprocessing kicks off, or another member deletes it. Without this, the
+  // render guard alone would just hide the lightbox while lightboxFileId
+  // silently kept pointing at that fileId; if the SAME file later becomes
+  // READY again (a retry succeeding) while this page is still mounted, the
+  // lightbox would spontaneously reopen on its own with no user click. Has
+  // to live here, before this component's early returns, rather than next
+  // to viewablePhotos below — a hook placed after them would violate the
+  // Rules of Hooks (not called on every render).
+  useEffect(() => {
+    if (!lightboxFileId) return
+    const stillValid = files.some((f) => f.fileId === lightboxFileId && f.processingStatus === 'READY' && !!f.r2PreviewUrl)
+    if (!stillValid) setLightboxFileId(null)
+  }, [files, lightboxFileId])
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [commentsFor, setCommentsFor] = useState<string | null>(null)
   const [likersFor, setLikersFor] = useState<string | null>(null)
@@ -1350,7 +1374,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       }).then((r) => r.json())
       if (res.success) {
         setFiles((prev) => prev.filter((f) => f.fileId !== fileId))
-        setLightboxIndex(null)
+        setLightboxFileId(null)
       }
     } finally {
       setDeletingId(null)
@@ -1378,6 +1402,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     pendingLikeIds.current.delete(fileId)
     if (!res?.success) refreshFiles() // revert via a fresh fetch if the toggle failed
   }
+
+  // Defense-in-depth on top of the isReady tightening above: even a
+  // genuinely READY file's preview object could 404 for some other reason
+  // (e.g. deleted from R2 out-of-band) — this swaps in a clean placeholder
+  // instead of the native broken-image icon. Keyed by the actual URL, not
+  // just fileId, so a later successful reprocess (a new r2PreviewUrl for
+  // the same file) is automatically treated as untried rather than staying
+  // permanently hidden behind a stale error flag.
+  const [erroredPreviewUrls, setErroredPreviewUrls] = useState<Set<string>>(new Set())
 
   const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
   const retryFile = async (fileId: string) => {
@@ -1682,13 +1715,24 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   const canDownload = isAdmin || meta.allowMemberDownloads
   const canReel = isAdmin || meta.allowMemberReels
   const displayFiles = selfieFileIds ? files.filter((f) => selfieFileIds.has(f.fileId)) : files
+  // processingStatus === 'READY' specifically, not just "!== UPLOADING" — a
+  // FAILED file's r2PreviewUrl can be a stale leftover from a previous
+  // attempt (the retry route re-processes without clearing it), which
+  // otherwise let a broken/failed photo slip into the lightbox's photo list.
   const viewablePhotos: LightboxPhoto[] = displayFiles
-    .filter((f) => f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl)
+    .filter((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl)
     .map((f) => ({
       fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType,
       thumbnailUrl: f.videoThumbnailUrl,
       likeCount: f.likeCount, commentCount: f.commentCount, likedByMe: f.likedByMe,
     }))
+  // Re-derived by fileId on every render (see lightboxFileId's comment
+  // above) — -1 if the open photo has disappeared (deleted, or no longer
+  // READY); the render guard below simply doesn't render the lightbox in
+  // that case rather than needing a separate close effect (this plain
+  // computation sits after this component's early returns, so a useEffect
+  // here would violate the Rules of Hooks by not running on every render).
+  const lightboxIndex = lightboxFileId ? viewablePhotos.findIndex((p) => p.fileId === lightboxFileId) : -1
 
   const coverPhotoUrl = files.find((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl)?.r2PreviewUrl
   const photoCount = files.filter((f) => f.fileType === 'IMAGE').length
@@ -1838,7 +1882,14 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
                 {displayFiles.map((f) => {
-                  const isReady = f.processingStatus !== 'UPLOADING' && !!f.r2PreviewUrl
+                  // READY specifically, not just "!== UPLOADING" — a FAILED
+                  // file's r2PreviewUrl can be a stale leftover from a
+                  // previous attempt (the retry route re-processes without
+                  // clearing it), which otherwise let the code below try to
+                  // render a dead <img src>, showing a broken-image icon
+                  // underneath the "Processing failed" overlay instead of
+                  // the clean placeholder that overlay was designed to sit on.
+                  const isReady = f.processingStatus === 'READY' && !!f.r2PreviewUrl
                   const isPicked = selectedIds.has(f.fileId)
                   const anySelectMode = selectMode
                   // While still processing, show a blurred version of what
@@ -1855,7 +1906,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           if (longPressFiredRef.current) { longPressFiredRef.current = false; return }
                           if (!isReady) return
                           if (selectMode) { toggleSelected(f.fileId); return }
-                          setLightboxIndex(viewablePhotos.findIndex((p) => p.fileId === f.fileId))
+                          setLightboxFileId(f.fileId)
                         }}
                         onPointerDown={(e) => { if (isReady) startLongPress(f.fileId, e.clientX, e.clientY) }}
                         onPointerMove={(e) => handleLongPressMove(e.clientX, e.clientY)}
@@ -1881,9 +1932,13 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                             <div className="w-full h-full flex items-center justify-center text-2xl">{f.fileType === 'VIDEO' ? '🎬' : '🖼️'}</div>
                           )
                         ) : f.fileType === 'VIDEO' ? (
-                          f.videoThumbnailUrl ? (
+                          f.videoThumbnailUrl && !erroredPreviewUrls.has(f.videoThumbnailUrl) ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={f.videoThumbnailUrl} alt={f.originalFilename} draggable={false} className="w-full h-full object-cover" loading="lazy" />
+                            <img
+                              src={f.videoThumbnailUrl} alt={f.originalFilename} draggable={false}
+                              className="w-full h-full object-cover" loading="lazy"
+                              onError={() => setErroredPreviewUrls((prev) => new Set(prev).add(f.videoThumbnailUrl!))}
+                            />
                           ) : (
                             // Older videos transcoded before the poster-frame step
                             // existed have no videoThumbnailUrl yet. Never mount a
@@ -1894,9 +1949,19 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                             // fine in the lightbox via r2PreviewUrl.
                             <div className="w-full h-full flex items-center justify-center text-2xl bg-card">🎬</div>
                           )
+                        ) : erroredPreviewUrls.has(f.r2PreviewUrl!) ? (
+                          // A genuinely READY file whose preview object 404'd for
+                          // some other reason (e.g. deleted from R2 out-of-band) —
+                          // a clean placeholder instead of the native broken-image
+                          // icon, matching the FAILED-state tile's own look.
+                          <div className="w-full h-full flex items-center justify-center text-2xl bg-card">🖼️</div>
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={f.r2PreviewUrl} alt={f.originalFilename} draggable={false} className="w-full h-full object-cover" loading="lazy" />
+                          <img
+                            src={f.r2PreviewUrl} alt={f.originalFilename} draggable={false}
+                            className="w-full h-full object-cover" loading="lazy"
+                            onError={() => setErroredPreviewUrls((prev) => new Set(prev).add(f.r2PreviewUrl!))}
+                          />
                         )}
                       </div>
                       {f.fileType === 'VIDEO' && isReady && !anySelectMode && (
@@ -2056,12 +2121,15 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         />
       )}
 
-      {lightboxIndex !== null && (
+      {lightboxFileId !== null && lightboxIndex !== -1 && (
         <PhotoLightbox
           photos={viewablePhotos}
           index={lightboxIndex}
-          onIndexChange={setLightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          // Maps the new numeric index (next/prev/swipe/thumbnail-tap)
+          // straight back to a fileId — see lightboxFileId's comment above
+          // for why the source of truth is the id, not the index itself.
+          onIndexChange={(newIndex) => setLightboxFileId(viewablePhotos[newIndex]?.fileId ?? null)}
+          onClose={() => setLightboxFileId(null)}
           role="moments"
           onDelete={isAdmin ? (photo) => deleteFile(photo.fileId) : undefined}
           onDownload={canDownload ? (photo) => {
@@ -2074,7 +2142,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
           onOpenComments={(photo) => setCommentsFor(photo.fileId)}
           onEditWithAi={canReel ? (photo) => {
             setAiEditSourceFiles([{ fileId: photo.fileId, previewUrl: photo.previewUrl }])
-            setLightboxIndex(null)
+            setLightboxFileId(null)
             setShowAiImageModal(true)
           } : undefined}
         />
