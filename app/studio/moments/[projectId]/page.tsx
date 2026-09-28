@@ -1862,19 +1862,28 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                         onPointerUp={cancelLongPress}
                         onPointerLeave={cancelLongPress}
                         onPointerCancel={cancelLongPress}
-                        className={`w-full h-full ${isReady ? 'cursor-pointer' : ''} ${anySelectMode && isReady ? (isPicked ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border') : ''}`}
+                        // The tile has its own long-press-to-select gesture
+                        // (startLongPress above) — without these, the
+                        // browser's OWN native long-press image menu (iOS
+                        // Safari's "touch callout" popup) and right-click
+                        // context menu (desktop) fire at the same time,
+                        // competing with and visually interrupting our
+                        // custom selection gesture.
+                        onContextMenu={(e) => e.preventDefault()}
+                        style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                        className={`w-full h-full select-none ${isReady ? 'cursor-pointer' : ''} ${anySelectMode && isReady ? (isPicked ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg' : 'ring-1 ring-border') : ''}`}
                       >
                         {!isReady ? (
                           uploadingPreview ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={uploadingPreview} alt="" className="w-full h-full object-cover scale-110 blur-md opacity-70" />
+                            <img src={uploadingPreview} alt="" draggable={false} className="w-full h-full object-cover scale-110 blur-md opacity-70" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-2xl">{f.fileType === 'VIDEO' ? '🎬' : '🖼️'}</div>
                           )
                         ) : f.fileType === 'VIDEO' ? (
                           f.videoThumbnailUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={f.videoThumbnailUrl} alt={f.originalFilename} className="w-full h-full object-cover" loading="lazy" />
+                            <img src={f.videoThumbnailUrl} alt={f.originalFilename} draggable={false} className="w-full h-full object-cover" loading="lazy" />
                           ) : (
                             // Older videos transcoded before the poster-frame step
                             // existed have no videoThumbnailUrl yet. Never mount a
@@ -1887,7 +1896,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           )
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={f.r2PreviewUrl} alt={f.originalFilename} className="w-full h-full object-cover" loading="lazy" />
+                          <img src={f.r2PreviewUrl} alt={f.originalFilename} draggable={false} className="w-full h-full object-cover" loading="lazy" />
                         )}
                       </div>
                       {f.fileType === 'VIDEO' && isReady && !anySelectMode && (
