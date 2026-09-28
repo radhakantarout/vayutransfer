@@ -1439,18 +1439,23 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
     }
   }
 
-  // "Save" (Download) intent — distinct from shareFiles' "Share" intent, but
-  // mechanically the same on mobile: there is no cross-browser web API to
-  // write directly into the OS Photos/gallery app, so the Web Share API's
-  // file form is the only thing that reliably surfaces a native "Save
-  // Image"/"Save to Photos" option on both iOS Safari and Android Chrome.
-  // Feature-detected via canShare, not platform-sniffed, so a desktop
-  // browser that happens to support it gets the same path; everything else
-  // falls back to a sequential blob+hidden-<a download> loop (NOT a
-  // window.open() loop, which most browsers don't treat as a download at
-  // all for an image, and which multi-file popups get throttled/blocked
-  // with no error — the same failure mode already fixed for VayuTransfer's
-  // own Download-All).
+  // "Save" (Download) intent — distinct from shareFiles' "Share" intent.
+  // Platform-branched, not just feature-detected, based on a REAL device
+  // test (screenshot from an affected user, 2026-09): navigator.share({files})
+  // DOES fire correctly on Android, but Android's own native share sheet
+  // shows app targets (Gmail/Instagram/Messenger/...) with no obvious "Save
+  // to Photos" option front-and-center — exactly the confusion reported.
+  // Android Chrome's plain blob <a download> already saves straight to
+  // Downloads, which Android's MediaStore auto-indexes into the Gallery/
+  // Photos app with no extra tap — strictly better for Android's "Download"
+  // button specifically. iOS Safari is the opposite: it's well-known to
+  // largely ignore the `download` attribute on blob links for images
+  // (opens inline instead of saving), so navigator.share really is the only
+  // thing that reliably works there — iOS keeps its existing, already-
+  // working path completely untouched. Desktop/other still gets the
+  // canShare-feature-detected path, unchanged.
+  const isAndroidDevice = () => typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+
   const saveFiles = async (targets: { url: string; filename: string }[]) => {
     let fetched: File[]
     try {
@@ -1472,7 +1477,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       return
     }
 
-    if (navigator.canShare?.({ files: fetched })) {
+    if (!isAndroidDevice() && navigator.canShare?.({ files: fetched })) {
       try {
         await navigator.share({ files: fetched })
         return
@@ -1482,6 +1487,13 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       }
     }
 
+    // Sequential with a short gap between each <a download>.click() — NOT a
+    // window.open() loop (most browsers don't treat that as a download at
+    // all for an image), and NOT a tight back-to-back loop either: mobile
+    // Chrome silently throttles/drops multiple downloads fired in the same
+    // tick with no error shown, the same platform limit already fixed for
+    // VayuTransfer's own Download-All. A single photo (the common case)
+    // isn't affected either way since there's only one iteration.
     const anchor = document.createElement('a')
     anchor.style.display = 'none'
     document.body.appendChild(anchor)
@@ -1491,6 +1503,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       anchor.download = f.name
       anchor.click()
       URL.revokeObjectURL(url)
+      if (fetched.length > 1) await new Promise((resolve) => setTimeout(resolve, 400))
     }
     document.body.removeChild(anchor)
   }
