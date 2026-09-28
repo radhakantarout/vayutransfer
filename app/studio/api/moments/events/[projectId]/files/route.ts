@@ -98,10 +98,14 @@ export async function GET(
     if (staleUploadingFiles.length > 0) {
       await Promise.all(
         staleUploadingFiles.map((f) =>
-          studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId }, 'SET processingStatus = :s', { ':s': 'FAILED' }).catch(() => {})
+          studioUpdateItem(
+            TABLES.mediafiles, { projectId, fileId: f.fileId },
+            'SET processingStatus = :s, failureReason = :r',
+            { ':s': 'FAILED', ':r': 'UPLOAD_INCOMPLETE' }
+          ).catch(() => {})
         )
       )
-      staleUploadingFiles.forEach((f) => { f.processingStatus = 'FAILED' })
+      staleUploadingFiles.forEach((f) => { f.processingStatus = 'FAILED'; f.failureReason = 'UPLOAD_INCOMPLETE' })
     }
 
     files.sort((a, b) => {

@@ -1987,7 +1987,32 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           <div className="w-7 h-7 rounded-full border-[3px] border-white/30 border-t-white animate-spin" />
                         </div>
                       )}
-                      {f.processingStatus === 'FAILED' && isAdmin && (
+                      {/* Two genuinely different failure modes, deliberately
+                          shown differently — conflating them is exactly what
+                          confused a real admin (2026-09): Retry can never
+                          recover a photo whose upload never finished (nothing
+                          in storage to reprocess), only a genuine post-upload
+                          processing failure (source object confirmed present). */}
+                      {f.processingStatus === 'FAILED' && f.failureReason === 'UPLOAD_INCOMPLETE' && isAdmin && (
+                        <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 px-2 text-center">
+                          <span className="text-lg">📤</span>
+                          <span className="text-[10px] text-white/80">Upload didn't finish</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteFile(f.fileId) }}
+                            disabled={deletingId === f.fileId}
+                            className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-white/15 text-white disabled:opacity-60"
+                          >
+                            {deletingId === f.fileId ? 'Deleting…' : 'Delete & re-upload'}
+                          </button>
+                        </div>
+                      )}
+                      {f.processingStatus === 'FAILED' && f.failureReason === 'UPLOAD_INCOMPLETE' && !isAdmin && (
+                        <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1 px-2 text-center">
+                          <span className="text-lg">📤</span>
+                          <span className="text-[10px] text-white/80">Upload didn't finish</span>
+                        </div>
+                      )}
+                      {f.processingStatus === 'FAILED' && f.failureReason !== 'UPLOAD_INCOMPLETE' && isAdmin && (
                         <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5 px-2 text-center">
                           <span className="text-lg">⚠️</span>
                           <span className="text-[10px] text-white/80">Processing failed</span>
@@ -2001,7 +2026,7 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
                           </button>
                         </div>
                       )}
-                      {f.processingStatus === 'FAILED' && !isAdmin && (
+                      {f.processingStatus === 'FAILED' && f.failureReason !== 'UPLOAD_INCOMPLETE' && !isAdmin && (
                         <div className="absolute inset-0 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1 px-2 text-center">
                           <span className="text-lg">⚠️</span>
                           <span className="text-[10px] text-white/80">Processing failed</span>

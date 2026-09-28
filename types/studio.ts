@@ -374,6 +374,16 @@ export interface MediaFile {
   displayOrder: number
   uploadedAt: string
   processingStatus: ProcessingStatus
+  // Only meaningful when processingStatus === 'FAILED' — distinguishes "the
+  // raw file never finished uploading at all" (Retry can't help, since
+  // there's nothing in storage to reprocess — the only real fix is delete +
+  // re-upload) from "the raw file uploaded fine, watermarking/transcoding
+  // itself failed" (Retry has a real chance of working, since the source
+  // object genuinely exists). Undefined means the latter (every FAILED path
+  // before this field existed was already a genuine processing failure).
+  // Set specifically by the stuck-UPLOADING sweep in the files GET route —
+  // see its own comment for the real incident that motivated this.
+  failureReason?: 'UPLOAD_INCOMPLETE' | 'PROCESSING_ERROR'
   // S3 -> Cloudflare R2 originals migration (zero-downtime: absent/"S3" means
   // read s3Key/editedS3Key from AWS S3 as before; "R2" means read r2Key/
   // editedR2Key from Cloudflare R2 instead). Only ever set explicitly for the
