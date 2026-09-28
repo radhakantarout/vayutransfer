@@ -270,8 +270,16 @@ export const MAX_HERO_CLIPS = 6
 export const DEFAULT_AI_CLIP_DURATION_SEC = 3
 // User-selectable per-clip durations — real Kling billing scales linearly
 // with seconds, so the cost quote already recomputes correctly for any of
-// these via computeReelCost, no separate pricing table needed.
-export const REEL_CLIP_DURATION_OPTIONS = [3, 5, 8] as const
+// these via computeReelCost, no separate pricing table needed. 15 is Kling's
+// own documented max for image-to-video (KlingProvider.getCapabilities()) —
+// safe to offer now that the async redesign (2026-09) decoupled a clip's
+// actual Kling generation time from any Lambda timeout risk; previously a
+// longer max here directly widened the old architecture's worst-case
+// single-invocation exposure, which is no longer how generation works.
+// MAX_REEL_TOTAL_DURATION_SEC (still 40, deliberately unchanged) already
+// disables this option client-side, and rejects it server-side, for any
+// selected-photo count that would push the reel's total over that cap.
+export const REEL_CLIP_DURATION_OPTIONS = [3, 5, 8, 15] as const
 
 export function estimateHeroClipCount(photoCount: number): number {
   const raw = Math.round(photoCount * DEFAULT_HERO_CLIP_RATIO)
