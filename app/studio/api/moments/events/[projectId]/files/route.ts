@@ -76,6 +76,34 @@ export async function GET(
       staleFiles.forEach((f) => { f.processingStatus = 'FAILED' })
     }
 
+    // Same safety net as above, for the OTHER way a file can get stuck
+    // forever: the client's own upload-complete call never lands at all
+    // (tab closed/crashed, network dropped, app backgrounded mid-request) —
+    // nothing else ever re-checks a stuck UPLOADING row either, so without
+    // this a tile just shows a generic placeholder icon permanently with no
+    // path to recovery (a real production report — a gallery with photos
+    // stuck since a 3-days-ago upload attempt). 30 minutes, slightly more
+    // generous than PROCESSING's 20: unlike Lambda processing time, actual
+    // upload duration is user-connection-dependent, not bounded by a fixed
+    // server-side timeout. r2Key is already reserved before the byte upload
+    // starts (see upload-url route), so a real object very often already
+    // exists at that key even though this app record never heard about it
+    // completing — marking FAILED (not deleting) lets the existing Retry
+    // action re-invoke processing against it with no re-upload needed.
+    const STALE_UPLOADING_MS = 30 * 60 * 1000
+    const uploadingCutoff = Date.now() - STALE_UPLOADING_MS
+    const staleUploadingFiles = files.filter(
+      (f) => f.processingStatus === 'UPLOADING' && f.uploadedAt && new Date(f.uploadedAt).getTime() < uploadingCutoff
+    )
+    if (staleUploadingFiles.length > 0) {
+      await Promise.all(
+        staleUploadingFiles.map((f) =>
+          studioUpdateItem(TABLES.mediafiles, { projectId, fileId: f.fileId }, 'SET processingStatus = :s', { ':s': 'FAILED' }).catch(() => {})
+        )
+      )
+      staleUploadingFiles.forEach((f) => { f.processingStatus = 'FAILED' })
+    }
+
     files.sort((a, b) => {
       if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder
       return (a.uploadedAt ?? '').localeCompare(b.uploadedAt ?? '')
