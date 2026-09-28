@@ -80,6 +80,9 @@ export default function PhotoLightbox({
   // unaffected since it never sets this flag.
   const autoScrolling = useRef(false)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // True until the very first re-center effect run completes — see its own
+  // comment for why the FIRST positioning specifically must never animate.
+  const hasPositionedOnce = useRef(false)
   const current = photos[index]
 
   // Without this, a pending rAF from handleStripScroll can fire after the
@@ -103,15 +106,35 @@ export default function PhotoLightbox({
 
   // Re-centers the thumbnail strip whenever `index` changes from any other
   // source (arrows, swipe, keyboard, or its own scroll handler below).
+  //
+  // The VERY FIRST run (opening the lightbox at some index, e.g. clicking
+  // the 50th photo in a large gallery) is deliberately INSTANT (behavior:
+  // 'auto'), never smooth — a real reported bug: for a photo far into a
+  // large gallery, the strip must scroll a long distance, and a *smooth*
+  // scroll over that distance can genuinely take longer than the 400ms
+  // guard window below. When it does, the guard releases before the
+  // animation actually finishes, a leftover onScroll event from the
+  // still-animating scroll gets read as real user input, and
+  // handleStripScroll fires onIndexChange with whatever photo happened to
+  // be near that in-between position — silently swapping the displayed
+  // photo out from under the user the moment the lightbox opens. Every
+  // SUBSEQUENT index change (arrow/swipe/thumbnail-tap) is always exactly
+  // one step — a tiny, fast distance where 400ms is a safe margin — so
+  // those keep the smooth animation for the nicer feel.
   useEffect(() => {
     const el = stripRef.current
     if (!el) return
     const target = index * THUMB_STEP
-    if (Math.abs(el.scrollLeft - target) < 1) return // already there — nothing to guard
+    if (Math.abs(el.scrollLeft - target) < 1) { hasPositionedOnce.current = true; return } // already there — nothing to guard
+    const isFirstPositioning = !hasPositionedOnce.current
+    hasPositionedOnce.current = true
     autoScrolling.current = true
-    el.scrollTo({ left: target, behavior: 'smooth' })
+    el.scrollTo({ left: target, behavior: isFirstPositioning ? 'auto' : 'smooth' })
     if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
-    autoScrollTimer.current = setTimeout(() => { autoScrolling.current = false }, 400)
+    // An instant ('auto') jump has already fully happened by the time
+    // scrollTo() returns — no animation to guard against, so the guard can
+    // drop on the very next tick instead of waiting the full 400ms.
+    autoScrollTimer.current = setTimeout(() => { autoScrolling.current = false }, isFirstPositioning ? 0 : 400)
     return () => { if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current) }
   }, [index])
 
