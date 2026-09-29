@@ -1,7 +1,6 @@
 'use strict'
 
-const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3')
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
+const { S3Client } = require('@aws-sdk/client-s3')
 const { Upload } = require('@aws-sdk/lib-storage')
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb')
 const { DynamoDBDocumentClient, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb')
@@ -65,62 +64,19 @@ async function refundCredits(studioId, credits, pool) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// Base preservation instructions (identity/clothing/no-hallucination) stay
-// constant across every style — only the mood/motion fragment changes.
-// Mirrors constants/videoProviders.ts#REEL_STYLE_META's promptFragment
-// field, passed in per-invoke from the create-reel route rather than
-// duplicated here, so the two never drift out of sync.
-const BASE_PROMPT_SUFFIX = 'photorealistic motion, preserve facial identity, clothing and jewellery exactly, no additional people, no text, no logos, no artificial objects.'
-
 // Text-to-video mode has no source photo to preserve identity/clothing FOR
-// — appending BASE_PROMPT_SUFFIX's "preserve facial identity" instruction
-// to a from-scratch generation would be meaningless and would just burn
-// prompt-character budget for no reason. Lighter, generic quality guardrail
-// instead.
+// — appending a "preserve facial identity" instruction to a from-scratch
+// generation would be meaningless and would just burn prompt-character
+// budget for no reason. Lighter, generic quality guardrail instead.
 const TEXT_TO_VIDEO_SUFFIX = 'high quality, smooth natural motion, no text, no watermark, no logos.'
 
-// One Kling image-to-video task per selected photo. Confirmed request/
-// response contract (lib/studio/videoProviders/klingProvider.ts, same file
-// header has the full history of how this was confirmed against a real
-// live account — this Lambda duplicates that logic in plain JS rather than
-// importing it, since Lambdas in this codebase are self-contained JS
-// packages, never sharing code with the Next.js TS app).
-async function createKlingTask({ apiKey, baseUrl, modelName, imageUrl, externalTaskId, durationSec, resolution, stylePromptFragment }) {
-  const prompt = `${stylePromptFragment}, ${BASE_PROMPT_SUFFIX}`
-  const res = await fetchWithTimeout(`${baseUrl}/image-to-video/${modelName}`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        { type: 'prompt', text: prompt },
-        { type: 'first_frame', url: imageUrl },
-      ],
-      settings: { resolution, duration: durationSec },
-      options: { external_task_id: externalTaskId, watermark_info: { enabled: false } },
-    }),
-  })
-  if (!res.ok) throw new Error(`Kling create failed for ${externalTaskId}: ${res.status} ${await res.text().catch(() => '')}`)
-  const data = await res.json()
-  if (data.code !== 0) throw new Error(`Kling create returned error for ${externalTaskId}: ${data.code} ${data.message}`)
-  return data.data.id
-}
-
-// Used by every Kling/network call in this file. Originally added only for
-// text-to-video's own functions (image-to-video's real Kling-side
-// duplicate-task rejection means a hung fetch there could only ever waste
-// time, never double-charge — text-to-video has no such backstop). Real
-// production incident (2026-09-20/21) found the gap in that reasoning: a
-// hung fetch ANYWHERE in this file — including the original photo-mode
-// calls, which never got this wrapper — rides out to AWS's own 900s hard
-// SIGKILL (runs no JS at all, so the catch-and-refund block never executes,
-// and there's no automatic retry recovery either since the retry itself can
-// then hang the same way), leaving the job stuck in PROCESSING forever with
-// credits never refunded until a human notices. A real photo-mode reel got
-// stuck exactly this way for over 24 hours. A client-side timeout well
-// under 900s turns any hang into an ordinary thrown error, which the
-// surrounding try/catch already handles correctly (mark FAILED + refund)
-// long before AWS's own timeout could ever fire — now applied uniformly,
-// not just to the newer text-to-video path.
+// Used by every Kling/network call in this file. A hung fetch rides out to
+// AWS's own 900s hard SIGKILL otherwise (runs no JS at all, so the
+// catch-and-refund block never executes) — a real production incident
+// (2026-09-20/21) left a job stuck in PROCESSING for 24+ hours this way. A
+// client-side timeout well under 900s turns any hang into an ordinary
+// thrown error, which the surrounding try/catch already handles correctly
+// (mark FAILED + refund) long before AWS's own timeout could ever fire.
 async function fetchWithTimeout(url, options, timeoutMs = 30000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -129,16 +85,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 30000) {
   } finally {
     clearTimeout(timer)
   }
-}
-
-async function queryKlingTasks({ apiKey, baseUrl, externalTaskIds }) {
-  const res = await fetchWithTimeout(`${baseUrl}/tasks?external_task_ids=${encodeURIComponent(externalTaskIds.join(','))}`, {
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-  })
-  if (!res.ok) throw new Error(`Kling query failed: ${res.status} ${await res.text().catch(() => '')}`)
-  const data = await res.json()
-  if (data.code !== 0) throw new Error(`Kling query returned error: ${data.code} ${data.message}`)
-  return data.data // array
 }
 
 // Kling text-to-video — CONFIRMED via a real API call against this account
@@ -189,11 +135,10 @@ async function createKlingTextToVideoTask({ apiKey, baseUrl, modelName, prompt, 
 }
 
 // Polls by Kling's own real task id (`task_ids=`), NOT `external_task_ids=`
-// like queryKlingTasks above — confirmed the latter returns an empty result
-// set for text-to-video tasks even though the exact same query style works
-// for image-to-video. This is the single most easily-miswired part of this
-// integration if copy-pasted from queryKlingTasks without noticing the
-// param name changed.
+// — confirmed the latter returns an empty result set for text-to-video
+// tasks even though the exact same query style works for image-to-video.
+// This is the single most easily-miswired part of this integration if
+// copy-pasted without noticing the param name changed.
 async function queryKlingTasksByTaskId({ apiKey, baseUrl, taskIds }) {
   const res = await fetchWithTimeout(`${baseUrl}/tasks?task_ids=${encodeURIComponent(taskIds.join(','))}`, {
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -227,22 +172,26 @@ function runFfmpeg(args) {
 }
 
 // ─── Lambda handler ──────────────────────────────────────────────────────────
-// MVP scope (design doc's "fast minimal demo" path): every selected photo
-// becomes a Kling AI clip (no FFmpeg Ken Burns fallback, no hybrid
-// hero-clip selection, no story planning, no transitions/music) — simple
-// concat of N Kling clips in the order they were selected. Real hybrid
-// generation is a later pass once this end-to-end path is proven.
-//
-// Payload built by the create-reel API route (client gallery): a
-// pre-resolved list of {fileId, filename, key} for R2-backed photos only —
-// this MVP does not support S3-backed (pre-R2-migration) photos, since
-// every studio has already been migrated (see CLAUDE.md R2 migration notes).
+// Two live modes only (as of Phase 5 of the async redesign, 2026-09-28):
+//   - 'text'     — Moments text-to-video only, still the legacy full
+//                  pipeline (create + poll + download + upload, all in one
+//                  invocation) — pending its own migration (Phase 6).
+//   - 'finalize' — every other caller (Client Gallery, Guest, Moments
+//                  photo-mode, reel-reclaim). Kling task creation and status
+//                  polling already happened in the calling route + the
+//                  periodic reel-check cron; this Lambda is invoked only
+//                  once every clip is known to have succeeded, and does
+//                  purely download + (photo-mode) ffmpeg concat/crop +
+//                  upload + mark-complete.
+// The original single-invocation 'photo' pipeline (create + poll + download
+// + concat + upload, all inside one Lambda call, up to 900s) was retired
+// once all three photo-mode callers migrated to the split architecture —
+// see the UNSUPPORTED-mode fallback at the bottom of this function.
 exports.handler = async (event) => {
   const {
     jobId, reelId, studioId,
-    mode, // 'photo' (default, every existing caller) | 'text' — Moments only | 'finalize' (new, 2026-09-21)
-    photos, durationSec, resolution,
-    stylePromptFragment, targetDimensions,
+    mode, // 'text' — Moments only (legacy) | 'finalize' (every other caller)
+    targetDimensions,
     r2Bucket, r2Endpoint, r2AccessKeyId, r2SecretAccessKey,
     klingApiKey, klingApiBaseUrl, klingModelName,
     creditsCharged, refundPool,
@@ -266,11 +215,6 @@ exports.handler = async (event) => {
     console.log(`[reelgen] SKIP jobId=${jobId} already terminal (status=${existingJob.Item.status}) — not retrying`)
     return
   }
-
-  // Fallback matches constants/videoProviders.ts's own defaults, in case an
-  // older client (or a manual test invoke) doesn't send these.
-  const promptFragment = stylePromptFragment || 'cinematic film look, dramatic natural lighting, smooth deliberate camera movement'
-  const dims = targetDimensions || { width: 1080, height: 1920 }
 
   if (mode === 'text') {
     console.log(`[reelgen] START (text-to-video) jobId=${jobId} reelId=${reelId}`)
@@ -335,24 +279,20 @@ exports.handler = async (event) => {
 
   // ─── finalize (2026-09-21) ────────────────────────────────────────────
   // Part of the async-redesign effort: task CREATION and STATUS POLLING
-  // move out of this Lambda entirely (into the calling route + a periodic
-  // external check, see the reelgen-async-redesign-plan memory) — this
-  // Lambda is invoked ONLY once every clip is already known to have
-  // succeeded, with their real URLs already in hand. No Kling calls happen
-  // in this branch at all; it's purely download + (photo-mode) ffmpeg
-  // concat/crop + upload + mark-complete. Bounded by download+encode time
-  // only, not by however long Kling takes to generate — this is the whole
-  // point of the redesign (today's 'photo'/'text' branches below still
-  // poll Kling internally and remain untouched until every caller is
-  // migrated to use this branch instead, per the phased plan).
+  // happen in the calling route + a periodic external check, see the
+  // reelgen-async-redesign-plan memory — this Lambda is invoked ONLY once
+  // every clip is already known to have succeeded, with their real URLs
+  // already in hand. No Kling calls happen in this branch at all; it's
+  // purely download + (photo-mode) ffmpeg concat/crop + upload +
+  // mark-complete. Bounded by download+encode time only, not by however
+  // long Kling takes to generate.
   //
   // `targetDimensions` presence is the discriminator: present = photo-style
-  // (one or more clips, concat+crop via ffmpeg, identical pipeline to the
-  // legacy 'photo' branch below just fed pre-resolved URLs); absent =
-  // text-style (exactly one clip, no crop, identical to the legacy 'text'
-  // branch's own download+upload step) — avoids a separate mode-within-
-  // mode field since the two are already fully distinguished by whether a
-  // crop/concat is needed at all.
+  // (one or more clips, concat+crop via ffmpeg); absent = text-style
+  // (exactly one clip, no crop, identical to the legacy 'text' branch's own
+  // download+upload step) — avoids a separate mode-within-mode field since
+  // the two are already fully distinguished by whether a crop/concat is
+  // needed at all.
   if (mode === 'finalize') {
     console.log(`[reelgen] START (finalize) jobId=${jobId} reelId=${reelId} clips=${clipUrls?.length}`)
     const r2Finalize = new S3Client({
@@ -410,124 +350,20 @@ exports.handler = async (event) => {
     return
   }
 
-  console.log(`[reelgen] START jobId=${jobId} reelId=${reelId} photos=${photos?.length}`)
-
-  const r2 = new S3Client({
-    region: 'auto',
-    endpoint: r2Endpoint,
-    requestChecksumCalculation: 'WHEN_REQUIRED',
-    credentials: { accessKeyId: r2AccessKeyId, secretAccessKey: r2SecretAccessKey },
-  })
-
-  const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'reelgen-'))
-
-  try {
-    await updateJob(jobId, { status: 'PROCESSING', updatedAt: new Date().toISOString() })
-    await updateReel(reelId, { status: 'generating', startedAt: new Date().toISOString() })
-
-    // 1. Presign each source photo (Kling needs a plain fetchable HTTPS URL,
-    //    it cannot take R2 credentials or embedded bytes) and submit one
-    //    Kling task per photo, sequentially (MVP scale is a handful of
-    //    photos — no concurrency limiting needed yet).
-    const tasks = []
-    for (const p of photos) {
-      const imageUrl = await getSignedUrl(r2, new GetObjectCommand({ Bucket: r2Bucket, Key: p.key }), { expiresIn: 3600 })
-      const externalTaskId = `${reelId}-${p.fileId}`.slice(0, 64)
-      await createKlingTask({ apiKey: klingApiKey, baseUrl: klingApiBaseUrl, modelName: klingModelName, imageUrl, externalTaskId, durationSec, resolution, stylePromptFragment: promptFragment })
-      tasks.push({ fileId: p.fileId, externalTaskId })
-    }
-    await updateJob(jobId, { outputPayload: { stage: 'generating', processed: 0, total: tasks.length } })
-
-    // 2. Poll until every task reaches succeeded/failed, or we give up.
-    //    ~10 min ceiling at 8s/poll — well inside the Lambda's 900s limit
-    //    even after clip download + ffmpeg assembly.
-    const results = new Map()
-    for (let attempt = 0; attempt < 75 && results.size < tasks.length; attempt++) {
-      if (attempt > 0) await sleep(8000)
-      const pendingIds = tasks.filter((t) => !results.has(t.externalTaskId)).map((t) => t.externalTaskId)
-      const queried = await queryKlingTasks({ apiKey: klingApiKey, baseUrl: klingApiBaseUrl, externalTaskIds: pendingIds })
-      for (const t of queried) {
-        if (t.status === 'succeeded' || t.status === 'failed') results.set(t.external_id, t)
-      }
-      await updateJob(jobId, { outputPayload: { stage: 'generating', processed: results.size, total: tasks.length } })
-    }
-
-    // 3. Download every successfully-generated clip. A photo that failed or
-    //    never finished is simply dropped from the reel — MVP has no
-    //    partial-failure UI, we just do our best with what succeeded.
-    await updateJob(jobId, { outputPayload: { stage: 'assembling', processed: 0, total: tasks.length } })
-    const clipPaths = []
-    // Kling's own per-clip failure reason (result.message, e.g. "Failure to
-    // pass the risk control system") used to be discarded entirely — only
-    // logged via console.warn, never surfaced anywhere a user could see it.
-    // If nothing succeeds, this is what actually gets shown instead of a
-    // generic "nothing to assemble" message.
-    const failureReasons = []
-    for (let i = 0; i < tasks.length; i++) {
-      const result = results.get(tasks[i].externalTaskId)
-      if (!result || result.status !== 'succeeded') {
-        const reason = result?.message || (result ? 'unknown reason' : 'timed out waiting for a response')
-        console.warn(`[reelgen] task ${tasks[i].externalTaskId} did not succeed (status=${result?.status ?? 'timeout'}): ${reason}`)
-        failureReasons.push(reason)
-        continue
-      }
-      const video = (result.outputs || []).find((o) => o.type === 'video')
-      if (!video?.url) { console.warn(`[reelgen] task ${tasks[i].externalTaskId} succeeded but had no video output`); failureReasons.push('no video output'); continue }
-      const clipPath = path.join(workDir, `clip-${i}.mp4`)
-      await downloadToFile(video.url, clipPath)
-      clipPaths.push(clipPath)
-    }
-    if (clipPaths.length === 0) {
-      const uniqueReasons = [...new Set(failureReasons)]
-      throw new Error(`Our AI video provider couldn't process ${tasks.length === 1 ? 'this photo' : 'these photos'}: ${uniqueReasons.join('; ')}`)
-    }
-
-    // 4. Concat via ffmpeg's concat demuxer, re-encoding (not `-c copy`) since
-    //    Kling clip codec params aren't guaranteed identical across calls —
-    //    simple concat only, no transitions/music yet (later pass). Kling's
-    //    confirmed API has no aspect_ratio request field at all (see
-    //    klingProvider.ts's header), so hitting the client's chosen
-    //    template (Instagram/Shorts/Facebook) means cropping HERE, in the
-    //    final encode, not something Kling does for us — scale-then-crop
-    //    (not just scale) so the output always exactly fills the target
-    //    frame regardless of each clip's own native aspect ratio.
-    const listPath = path.join(workDir, 'list.txt')
-    await fs.writeFile(listPath, clipPaths.map((p) => `file '${p}'`).join('\n'))
-    const outputPath = path.join(workDir, 'output.mp4')
-    const cropFilter = `scale=${dims.width}:${dims.height}:force_original_aspect_ratio=increase,crop=${dims.width}:${dims.height}`
-    await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-vf', cropFilter, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath])
-
-    // 5. Upload the final video to R2.
-    await updateJob(jobId, { outputPayload: { stage: 'finalizing', processed: clipPaths.length, total: tasks.length } })
-    const finalKey = `studios/${studioId}/ai-reels/${reelId}/final.mp4`
-    const outputBuffer = await fs.readFile(outputPath)
-    await new Upload({
-      client: r2,
-      params: { Bucket: r2Bucket, Key: finalKey, Body: outputBuffer, ContentType: 'video/mp4' },
-    }).done()
-
-    // Store the durable R2 KEY, not a presigned URL — the video lives in R2
-    // indefinitely (same bucket/lifecycle as gallery originals), but any
-    // presigned URL baked in now would go dead after its expiry window even
-    // though the file itself is still there. The client-gallery status
-    // route mints a fresh URL from this key on every read instead.
-    const now = new Date().toISOString()
-    await updateJob(jobId, { status: 'READY', outputPayload: { stage: 'finalizing', processed: clipPaths.length, total: tasks.length, outputR2Key: finalKey }, completedAt: now })
-    await updateReel(reelId, { status: 'completed', outputR2Key: finalKey, completedAt: now })
-
-    console.log(`[reelgen] DONE jobId=${jobId} reelId=${reelId} clips=${clipPaths.length}/${tasks.length}`)
-  } catch (err) {
-    console.error('[reelgen] ERROR:', err)
-    const now = new Date().toISOString()
-    await updateJob(jobId, { status: 'FAILED', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
-    await updateReel(reelId, { status: 'failed', errorMessage: String(err.message || err), completedAt: now }).catch(() => {})
-    // Refund whatever this reel actually charged — Kling itself never bills
-    // for a failed generation, so the studio shouldn't be charged either.
-    // The idempotency guard above is what makes this safe to run exactly
-    // once even across AWS's automatic async-invoke retries.
-    await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[reelgen] refund failed', e))
-    throw err
-  } finally {
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {})
-  }
+  // Legacy 'photo' full-pipeline mode retired 2026-09-28 (Phase 5 of the
+  // async redesign) — every caller (Client Gallery, Guest, Moments
+  // photo-mode) now creates Kling tasks in its own route
+  // (lib/studio/videoProviders/) and invokes this Lambda only in
+  // mode:'finalize', once every clip is already known to have succeeded.
+  // Any invocation reaching here is unexpected (a stray old client, a
+  // manual test with a stale payload, etc.) — fail loudly with a clear
+  // error and refund, rather than silently returning without doing
+  // anything, which would leave the job stuck forever with no trace of why.
+  console.error(`[reelgen] UNSUPPORTED mode="${mode}" jobId=${jobId} reelId=${reelId} — legacy photo-mode pipeline was retired`)
+  const now = new Date().toISOString()
+  const errorMessage = `Unsupported mode: ${mode}`
+  await updateJob(jobId, { status: 'FAILED', errorMessage, completedAt: now }).catch(() => {})
+  await updateReel(reelId, { status: 'failed', errorMessage, completedAt: now }).catch(() => {})
+  await refundCredits(studioId, creditsCharged, refundPool).catch((e) => console.error('[reelgen] refund failed', e))
+  throw new Error(errorMessage)
 }
