@@ -122,7 +122,11 @@ export async function POST(
     studio = await grantFreeTrialReelCreditsIfNeeded(studio)
 
     const pricing = await getPricingConfig()
-    const { creditsRequired } = computeReelCost(photos.length, durationSec, resolution, pricing)
+    // resolution is validated against REEL_RESOLUTIONS ('720p'|'1080p' only)
+    // above — ReelResolution's own '4k' member is Omni-only and can never
+    // reach this photo-mode branch; narrowed here rather than widening
+    // computeReelCost itself, which is genuinely 720p/1080p-only pricing.
+    const { creditsRequired } = computeReelCost(photos.length, durationSec, resolution as '720p' | '1080p', pricing)
     const creditCheck = checkReelCreditsAvailable(studio, creditsRequired)
     if (!creditCheck.ok) {
       return NextResponse.json({

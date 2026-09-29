@@ -7,10 +7,11 @@ import {
   REEL_STYLES, REEL_STYLE_META, DEFAULT_REEL_STYLE, MAX_CUSTOM_PROMPT_LENGTH, MOMENTS_COMPOSE_PROMPT_MAX,
   REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_DRONE_SHOT, type DroneShotStyle,
-  MIN_REEL_PHOTOS, MAX_REEL_PHOTOS,
+  MIN_REEL_PHOTOS,
   computeTextToVideoCost, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
   TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
   CFG_SCALE_PRESETS, DEFAULT_CFG_SCALE_PRESET, type CfgScalePreset, MAX_NEGATIVE_PROMPT_LENGTH,
+  computeOmniVideoCost, OMNI_RESOLUTIONS, OMNI_MAX_REFERENCE_IMAGES,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
@@ -273,9 +274,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  // Text-mode-only Advanced fields (Phase 4) — inert/unused whenever
-  // isComposeTextMode is false, never read by handleGenerate's photo-mode
-  // body branch.
+  // Shared by BOTH text mode (Kling's legacy /text-to-video endpoint, real
+  // aspect_ratio field) AND the new Omni reference mode below (Kling 3.0
+  // Omni's own real, confirmed aspect_ratio field, same accepted value set)
+  // — one picker, not two, since both endpoints genuinely share this exact
+  // enum.
   const [textAspectRatio, setTextAspectRatio] = useState<(typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number]>(
     (initial?.aspectRatio && (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(initial.aspectRatio))
       ? (initial.aspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
@@ -283,7 +286,12 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   )
   const [cfgScalePreset, setCfgScalePreset] = useState<CfgScalePreset>(DEFAULT_CFG_SCALE_PRESET)
   const [negativePrompt, setNegativePrompt] = useState('')
+  // Omni reference-mode only (Kling 3.0 Omni redesign) — native synchronized
+  // audio generation, off by default (real added cost, see
+  // computeOmniVideoCost's own pricing header).
+  const [generateAudio, setGenerateAudio] = useState(false)
   const composeFileInputRef = useRef<HTMLInputElement>(null)
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [reelId, setReelId] = useState<string | null>(null)
   const [creditsCharged, setCreditsCharged] = useState<number | null>(null)
@@ -306,15 +314,32 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
 
   const template = REEL_TEMPLATES.find((t) => t.id === templateId) ?? REEL_TEMPLATES[0]
   // Auto-detected, not an explicit toggle: zero photos on the compose screen
-  // means text-to-video, one or more means image-to-video — matches how
-  // every other "generate from a prompt, optionally attach a reference"
-  // tool works, and one fewer decision for the user to make up front. Only
-  // ever true for Moments (the only source with a 'compose' stage/text-mode
-  // route at all) — client/guest always keep composePhotoIds >= 1.
+  // means text-to-video, one or more means the new Omni reference pipeline
+  // below — matches how every other "generate from a prompt, optionally
+  // attach a reference" tool works, and one fewer decision for the user to
+  // make up front. Only ever true for Moments (the only source with a
+  // 'compose' stage/text-mode route at all) — client/guest always keep
+  // composePhotoIds >= 1.
   const isComposeTextMode = isMoments && composePhotoIds.length === 0
+  // Kling 3.0 Omni redesign (2026-09-29): Moments' own prompt-first compose
+  // screen now drives the new Omni pipeline (real multi-photo consistency
+  // in one call, native audio, real aspect ratio, up to 4K) instead of the
+  // old one-Kling-call-per-photo pipeline, whenever it has at least one
+  // photo. The OLD template→style→prompt→confirm wizard stays reachable via
+  // "Use a template instead" (useLegacyWizard) for anyone who wants it, and
+  // remains the ONLY path for client/guest in this pass (no Omni UI there
+  // yet — their reels route does accept mode:'omni' server-side already,
+  // just not wired to any UI).
+  const [useLegacyWizard, setUseLegacyWizard] = useState(false)
+  const isOmniReferenceMode = isMoments && !useLegacyWizard && !isComposeTextMode && composePhotoIds.length > 0
   const { sellPricePaise, creditsRequired: reelPoolCreditsRequired } = isComposeTextMode
     ? computeTextToVideoCost(pricing ?? undefined)
-    : computeReelCost(composePhotoIds.length, durationSec, resolution, pricing ?? undefined)
+    : isOmniReferenceMode
+      ? computeOmniVideoCost(durationSec, resolution, false, generateAudio, pricing ?? undefined)
+      // resolution only ever comes from REEL_RESOLUTIONS ('720p'|'1080p') in
+      // the legacy wizard/client/guest flow — ReelResolution's own '4k'
+      // member can never reach here (that picker only renders in Omni mode).
+      : computeReelCost(composePhotoIds.length, durationSec, resolution as '720p' | '1080p', pricing ?? undefined)
   // Moments spends from the shared AI-search-credit pool (₹0.30/credit),
   // NOT the Client Gallery/Guest reel-credit pool (₹80/credit) this
   // component was originally built for — same real ₹ cost, wildly
@@ -418,6 +443,24 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     if (!fileId) { setUploadError('Upload failed — try again.'); return }
     addPhotoId(fileId)
   }
+  // Omni reference mode's core new interaction (Kling 3.0 Omni redesign) —
+  // tapping a reference chip mentions it in the prompt via its
+  // <<<tag>>> marker, so nobody has to type Kling's own tag syntax by hand.
+  // Appends at the end rather than true cursor-position insertion (would
+  // need tracking selectionStart/selectionEnd across mobile keyboards,
+  // which behave inconsistently) — simple and predictable is worth more
+  // here than precise placement. No-ops if already mentioned, so repeat
+  // taps can't spam duplicate tags.
+  const insertTag = (tag: string) => {
+    const marker = `<<<${tag}>>>`
+    setCustomPrompt((prev) => {
+      if (prev.includes(marker)) return prev
+      const sep = prev.trim().length > 0 ? ' ' : ''
+      const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
+      return `${prev}${sep}${marker}`.slice(0, max)
+    })
+    promptTextareaRef.current?.focus()
+  }
 
   const handleGenerate = async () => {
     setStage('generating')
@@ -444,19 +487,37 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
 
     const trimmedPrompt = customPrompt.trim() || undefined
     const droneShotField = droneMode ? droneShot : undefined
+    // Auto-tag references (image_1, image_2, ...) matching selection order
+    // — the reference chips' tap-to-insert already puts these in the prompt
+    // as the user builds it, but this is the safety net if a tag ever gets
+    // edited/removed from the text: the server rejects any reference whose
+    // tag isn't literally present, so every tag is force-appended here
+    // rather than risking a submit that's guaranteed to fail.
+    const imageTags = composePhotoIds.map((_, i) => `image_${i + 1}`)
+    const omniPrompt = imageTags.every((t) => (trimmedPrompt ?? '').includes(`<<<${t}>>>`))
+      ? (trimmedPrompt ?? '')
+      : `${trimmedPrompt ?? ''} ${imageTags.map((t) => `<<<${t}>>>`).join(' ')}`.trim()
     // Text-to-video is a completely separate request shape (no photos,
     // template, style, resolution, or duration — Kling's own endpoint takes
     // none of those, see the Moments reels route's mode:'text' branch) —
     // only ever reachable via Moments' compose screen with zero photos.
+    // Omni (Kling 3.0 Omni redesign) is Moments' compose screen's own new
+    // default whenever it has at least one photo — see isOmniReferenceMode.
     const body = isComposeTextMode
       ? {
           mode: 'text', textPrompt: trimmedPrompt ?? '',
           aspectRatio: textAspectRatio, cfgScale: CFG_SCALE_PRESETS[cfgScalePreset],
           negativePrompt: negativePrompt.trim() || undefined,
         }
-      : props.source === 'guest'
-        ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
-        : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments share this shape
+      : isOmniReferenceMode
+        ? {
+            mode: 'omni', prompt: omniPrompt,
+            references: composePhotoIds.map((fileId, i) => ({ kind: 'image', tag: imageTags[i], fileId })),
+            durationSec, resolution, aspectRatio: textAspectRatio, generateAudio,
+          }
+        : props.source === 'guest'
+          ? { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt, searchSessionId: props.searchSessionId }
+          : { photoIds: composePhotoIds, templateId, style, resolution, durationSec, droneShot: droneShotField, customPrompt: trimmedPrompt } // client + moments legacy-wizard share this shape
     const res = await fetch(createUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -479,7 +540,16 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
       onClick={stage === 'generating' && !canCloseWhileGenerating ? undefined : onClose}
     >
       <div
-        className="relative bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full sm:max-w-md max-h-[92vh] sm:max-h-[85vh] overflow-y-auto"
+        // Compose is the one screen with the new, meaningfully richer Omni
+        // UI (reference chips with tags, a 2-column quality/length row,
+        // audio toggle) — widened at tablet (sm) and desktop (lg) so it has
+        // real room to breathe instead of cramming into the same narrow
+        // card every other, simpler sequential screen (template/style/
+        // prompt/confirm/generating/completed/failed) still correctly uses.
+        // Mobile stays the identical full-width bottom sheet at every stage.
+        className={`relative bg-card border-t sm:border border-border rounded-t-3xl sm:rounded-3xl p-6 w-full max-h-[92vh] sm:max-h-[85vh] overflow-y-auto ${
+          stage === 'compose' ? 'sm:max-w-lg lg:max-w-2xl' : 'sm:max-w-md'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {stage === 'generating' && canCloseWhileGenerating && (
@@ -514,19 +584,42 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
 
             <div className="space-y-1.5">
               <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Photos (optional)</p>
-              <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
-                {composePhotoIds.map((fileId) => {
+              {composePhotoIds.length > 1 && (
+                <p className="text-[11px] text-muted -mt-1">Tap a photo to mention it in your description</p>
+              )}
+              {/* Horizontal scroll strip on mobile (the natural touch
+                  pattern for a row of thumbnails) — wraps into a real grid
+                  at tablet/desktop instead, where there's width to spare
+                  and a scroll strip would just waste it. */}
+              <div className="flex sm:flex-wrap items-center gap-2 overflow-x-auto sm:overflow-visible scrollbar-hide pb-1">
+                {composePhotoIds.map((fileId, i) => {
                   const photo = momentsPhotoById.get(fileId)
+                  const tag = `image_${i + 1}`
+                  const mentioned = customPrompt.includes(`<<<${tag}>>>`)
                   return (
-                    <div key={fileId} className="relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border border-border bg-bg">
+                    <div
+                      key={fileId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => insertTag(tag)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') insertTag(tag) }}
+                      aria-label={`Mention photo ${i + 1} in your description`}
+                      className={`relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 bg-bg transition-colors cursor-pointer ${mentioned ? 'border-accent' : 'border-border hover:border-accent/50'}`}
+                    >
                       {photo?.r2PreviewUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={photo.r2PreviewUrl} alt={photo.originalFilename} className="w-full h-full object-cover" />
+                        <img src={photo.r2PreviewUrl} alt={photo.originalFilename} className="w-full h-full object-cover pointer-events-none" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-lg">🖼️</div>
                       )}
+                      {composePhotoIds.length > 1 && (
+                        <span className={`absolute bottom-0.5 left-0.5 text-[9px] font-bold text-white px-1 rounded pointer-events-none ${mentioned ? 'bg-accent' : 'bg-black/60'}`}>
+                          {i + 1}
+                        </span>
+                      )}
                       <button
-                        onClick={() => removePhotoId(fileId)}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); removePhotoId(fileId) }}
                         aria-label="Remove photo"
                         className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors"
                       >
@@ -542,7 +635,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                     <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                   </div>
                 )}
-                {composePhotoIds.length < MAX_REEL_PHOTOS && !uploadingPhoto && (
+                {composePhotoIds.length < OMNI_MAX_REFERENCE_IMAGES && !uploadingPhoto && (
                   <button
                     onClick={() => setShowAddPhotoSheet(true)}
                     aria-label="Add a photo"
@@ -560,6 +653,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 {isComposeTextMode ? 'Describe your video' : 'Add a note (optional)'}
               </p>
               <textarea
+                ref={promptTextareaRef}
                 value={customPrompt}
                 onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
                 placeholder={isComposeTextMode
@@ -573,27 +667,24 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               </p>
             </div>
 
-            {!isComposeTextMode && (
+            {isOmniReferenceMode && (
               <button
-                onClick={() => setStage('template')}
+                onClick={() => { setUseLegacyWizard(true); setStage('template') }}
                 className="w-full text-xs font-semibold text-accent hover:underline text-center"
               >
-                🎨 Use a template instead
+                🎨 Use the classic template picker instead
               </button>
             )}
 
-            {/* Resolution/clip-length are photo-mode-only controls — Kling's
-                text-to-video endpoint silently ignores both, always
-                producing a fixed ~5s clip (confirmed via a real API call,
-                see lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask
-                header), so exposing them here would be a control that does
-                nothing. Text mode gets its own different Advanced panel
-                below instead (aspect ratio / prompt adherence / negative
-                prompt — all confirmed accepted by the same real call,
-                Phase 4). Camera movement is deliberately NOT exposed here —
-                Kling accepts a `camera_control` field on this endpoint, but
-                its exact schema wasn't independently confirmed the way the
-                endpoint/body shape was, and a wrong guessed shape risks a
+            {/* Resolution/duration are meaningless controls on the legacy
+                text-to-video endpoint (silently ignored, always a fixed
+                ~5s clip — confirmed via a real API call). Kling 3.0 Omni
+                (isOmniReferenceMode) genuinely respects all four controls
+                below (confirmed 2026-09-29) — real aspect ratio, real
+                resolution up to 4K, real duration, real native audio.
+                Camera movement is deliberately NOT exposed — Kling accepts
+                a `camera_control` field, but its exact schema wasn't
+                independently confirmed, and a wrong guessed shape risks a
                 real (if cleanly-refunded) failed generation. */}
             {isComposeTextMode ? (
               <div className="border border-border rounded-2xl overflow-hidden">
@@ -657,20 +748,20 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                   onClick={() => setAdvancedOpen((v) => !v)}
                   className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-text-primary hover:bg-border/30 transition-colors"
                 >
-                  <span>⚙️ Advanced (quality, clip length)</span>
+                  <span>⚙️ Advanced (quality, length, sound)</span>
                   <span className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>▾</span>
                 </button>
                 {advancedOpen && (
-                  <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+                  <div className="px-4 pb-4 space-y-3">
                     <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Aspect ratio</p>
                       <div className="flex gap-1.5">
-                        {REEL_RESOLUTIONS.map((r) => (
+                        {TEXT_TO_VIDEO_ASPECT_RATIOS.map((r) => (
                           <button
                             key={r}
-                            onClick={() => setResolution(r)}
+                            onClick={() => setTextAspectRatio(r)}
                             className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
-                              resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                              textAspectRatio === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
                             }`}
                           >
                             {r}
@@ -678,28 +769,62 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                         ))}
                       </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Clip length</p>
-                      <div className="flex gap-1.5">
-                        {REEL_CLIP_DURATION_OPTIONS.map((d) => {
-                          const disabled = composePhotoIds.length * d > MAX_REEL_TOTAL_DURATION_SEC
-                          return (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Quality</p>
+                        <div className="flex gap-1.5">
+                          {OMNI_RESOLUTIONS.map((r) => (
+                            <button
+                              key={r}
+                              onClick={() => setResolution(r)}
+                              className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
+                                resolution === r ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                              }`}
+                            >
+                              {r === '4k' ? '4K' : r}
+                            </button>
+                          ))}
+                        </div>
+                        {/* 4K is real, meaningfully higher cost (see
+                            computeOmniVideoCost's own pricing header) —
+                            never a silent default, always shown explicitly
+                            the moment it's picked, on top of the cost tile
+                            below that already updates live. */}
+                        {resolution === '4k' && (
+                          <p className="text-[10px] text-amber-500 font-medium">4K costs significantly more — see the price below</p>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Length</p>
+                        <div className="flex gap-1.5">
+                          {REEL_CLIP_DURATION_OPTIONS.map((d) => (
                             <button
                               key={d}
-                              onClick={() => !disabled && setDurationSec(d)}
-                              disabled={disabled}
+                              onClick={() => setDurationSec(d)}
                               className={`flex-1 text-xs font-bold py-2 rounded-xl border-2 transition-all ${
-                                disabled
-                                  ? 'border-border text-muted/40 cursor-not-allowed'
-                                  : durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
+                                durationSec === d ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent/40'
                               }`}
                             >
                               {d}s
                             </button>
-                          )
-                        })}
+                          ))}
+                        </div>
                       </div>
                     </div>
+                    <label className={`flex items-center justify-between gap-3 select-none bg-bg border border-border rounded-xl px-3 py-2.5 ${composePhotoIds.length === 0 ? 'opacity-40' : 'cursor-pointer'}`}>
+                      <span className="min-w-0">
+                        <span className="block text-xs font-bold text-text-primary">🔊 Add AI-generated sound</span>
+                        <span className="block text-[10px] text-muted leading-tight">Music and ambience matched to the scene</span>
+                      </span>
+                      <button
+                        type="button" role="switch" aria-checked={generateAudio}
+                        onClick={() => setGenerateAudio((v) => !v)}
+                        className={`relative flex-shrink-0 rounded-full transition-colors ${generateAudio ? 'bg-accent' : 'bg-border'}`}
+                        style={{ height: '22px', width: '38px' }}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 rounded-full bg-white shadow transition-transform ${generateAudio ? 'translate-x-4' : 'translate-x-0'}`} style={{ height: '18px', width: '18px' }} />
+                      </button>
+                    </label>
                   </div>
                 )}
               </div>
@@ -769,7 +894,11 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
             </div>
             {isMoments ? (
               <div className="flex gap-3">
-                <button onClick={() => setStage('compose')} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
+                {/* Resets the "use classic wizard" opt-in — Back always
+                    returns cleanly to the default Omni compose experience,
+                    only continuing FORWARD through template→style→prompt
+                    keeps the legacy wizard active. */}
+                <button onClick={() => { setUseLegacyWizard(false); setStage('compose') }} className="flex-1 border border-border text-text-primary text-sm font-semibold py-3 rounded-xl hover:bg-border transition-colors">Back</button>
                 <button onClick={() => setStage('style')} className={primaryBtnClass} style={primaryBtnStyle}>Next →</button>
               </div>
             ) : (

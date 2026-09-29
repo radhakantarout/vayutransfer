@@ -201,13 +201,17 @@ export async function GET(req: NextRequest) {
           jobId: job.jobId, reelId, studioId: job.studioId,
           mode: 'finalize',
           clipUrls,
-          // Photo-style (concat+crop) vs text-style (passthrough) — same
-          // discriminator the Lambda's finalize branch itself uses.
-          // aspectRatio's '1:1' variant only ever appears on mode:'text'
-          // reels (see the comment on ReelAspectRatio in types/studio.ts) —
-          // the cast is safe precisely because this branch already excludes
-          // that case.
-          targetDimensions: reel.mode === 'text' ? undefined : REEL_ASPECT_RATIO_DIMENSIONS[reel.aspectRatio as '9:16' | '4:5' | '16:9'],
+          // Photo-style (concat+crop) vs text/omni-style (passthrough) — same
+          // discriminator the Lambda's finalize branch itself uses. Omni
+          // reels get passthrough (undefined) because a real confirmed test
+          // (2026-09-29) showed a succeeded Omni task returns exactly ONE
+          // outputs[] video — Omni assembles everything itself, no ffmpeg
+          // concat/crop needed, same shape as text-mode's own single output.
+          // aspectRatio's '1:1' variant only ever appears on mode:'text'/
+          // 'omni' reels (see the comment on ReelAspectRatio in
+          // types/studio.ts) — the cast is safe precisely because this
+          // branch already excludes both cases.
+          targetDimensions: (reel.mode === 'text' || reel.mode === 'omni') ? undefined : REEL_ASPECT_RATIO_DIMENSIONS[reel.aspectRatio as '9:16' | '4:5' | '16:9'],
           r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
           r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
           r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,

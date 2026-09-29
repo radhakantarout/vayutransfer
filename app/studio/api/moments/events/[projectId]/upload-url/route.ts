@@ -18,19 +18,31 @@ export async function POST(
     const auth = await verifyStudioJWT(req)
     if (!auth?.studioId) return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
 
-    const { filename, mimeType, sizeBytes, partCount } = await req.json()
+    const { filename, mimeType, sizeBytes, partCount, purpose: requestedPurpose } = await req.json()
     if (!filename || !mimeType || !sizeBytes || !partCount) {
       return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
     }
     if (partCount < 1 || partCount > 10000) {
       return NextResponse.json({ success: false, error: 'INVALID_PART_COUNT' }, { status: 400 })
     }
+    // Never trust a client-supplied purpose blindly — only these two real
+    // values exist (see MediaFile.purpose's own comment); anything else
+    // falls back to the always-safe default rather than rejecting outright.
+    const purpose: 'GALLERY' | 'REEL_REFERENCE' = requestedPurpose === 'REEL_REFERENCE' ? 'REEL_REFERENCE' : 'GALLERY'
 
     const { projectId } = params
     const resolved = await resolveProjectForViewer(auth, projectId)
     if (!resolved) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     const { project, member } = resolved
-    if (!isOwnerOrAdmin(auth.studioId, project, member)) {
+    // Gallery uploads stay owner/admin-only, unchanged. A Kling 3.0 Omni
+    // reference upload (reel-generator-omni-redesign plan, Phase 2) is
+    // personal to whoever is about to create a reel — same gate the reels
+    // route itself already uses (isOwnerOrAdmin, or any member when the
+    // gallery owner has turned reels on for members).
+    const canUpload = purpose === 'REEL_REFERENCE'
+      ? isOwnerOrAdmin(auth.studioId, project, member) || project.allowMemberReels
+      : isOwnerOrAdmin(auth.studioId, project, member)
+    if (!canUpload) {
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
     // Uploads always land under the GALLERY's own personal Studio (billing/
@@ -52,7 +64,7 @@ export async function POST(
     }
 
     const fileId = randomUUID()
-    const fileType = mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE'
+    const fileType = mimeType.startsWith('video/') ? 'VIDEO' : mimeType.startsWith('audio/') ? 'AUDIO' : 'IMAGE'
     const r2Key = getStudioR2Key(studioId, projectId, fileId, filename)
 
     const uploadId = await initiateStudioR2MultipartUpload(r2Key, mimeType)
@@ -65,6 +77,7 @@ export async function POST(
       studioId,
       originalFilename: filename,
       fileType,
+      purpose,
       mimeType,
       sizeBytes,
       storageBackend: 'R2',

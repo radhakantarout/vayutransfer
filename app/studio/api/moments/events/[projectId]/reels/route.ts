@@ -5,18 +5,19 @@ import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABL
 import { getStudioR2SignedDownloadUrl, getStudioR2SignedViewUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits, refundAiSearchCredits } from '@/lib/studio/billing'
-import { createReelClipTasks, createTextToVideoTask } from '@/lib/studio/videoProviders'
+import { createReelClipTasks, createTextToVideoTask, createOmniVideoTask, type OmniReferenceInput } from '@/lib/studio/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
 import { reelJobProgress } from '@/lib/studio/reelProgress'
 import {
-  computeReelCost, computeTextToVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  computeReelCost, computeTextToVideoCost, computeOmniVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
   MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
-  TEXT_TO_VIDEO_ASPECT_RATIOS, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
+  OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION, OMNI_MAX_REFERENCE_IMAGES, OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
 
@@ -171,11 +172,13 @@ export async function POST(
     const {
       mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
       textPrompt, aspectRatio: requestedAspectRatio, negativePrompt, cfgScale: requestedCfgScale,
+      prompt: omniPrompt, references: requestedReferences, generateAudio: requestedGenerateAudio,
     } = await req.json().catch(() => ({})) as {
       mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
       textPrompt?: string; aspectRatio?: string; negativePrompt?: string; cfgScale?: number
+      prompt?: string; references?: { kind?: string; tag?: string; fileId?: string }[]; generateAudio?: boolean
     }
-    const mode: 'photo' | 'text' = requestedMode === 'text' ? 'text' : 'photo'
+    const mode: 'photo' | 'text' | 'omni' = requestedMode === 'text' ? 'text' : requestedMode === 'omni' ? 'omni' : 'photo'
 
     // ─── Text-to-video: a completely separate, much shorter validation +
     // billing + task-creation path — no photo selection, no template/style/
@@ -337,6 +340,176 @@ export async function POST(
 
       return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: aiCreditsRequired } })
     }
+
+    // ─── Kling 3.0 Omni — reel-generator-omni-redesign plan, 2026-09-29 ────
+    // A third, completely separate request shape again: 1+ references
+    // (photo/video/audio/subject) tagged and mentioned inline in the
+    // prompt, plus real duration/resolution/aspect-ratio/audio controls
+    // Kling actually respects (confirmed — unlike image-to-video's no-
+    // aspect-ratio-field and text-to-video's ignored duration/resolution).
+    if (mode === 'omni') {
+      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
+      if (sanitizedPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
+        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
+      }
+
+      const references = Array.isArray(requestedReferences) ? requestedReferences : []
+      if (references.length === 0) {
+        return NextResponse.json({ success: false, error: 'MISSING_REFERENCES', message: 'Add at least one photo, video, or audio reference.' }, { status: 400 })
+      }
+      const hasVideoReference = references.some((r) => r.kind === 'video')
+      const maxReferences = hasVideoReference ? OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO : OMNI_MAX_REFERENCE_IMAGES
+      if (references.length > maxReferences) {
+        return NextResponse.json({ success: false, error: 'TOO_MANY_REFERENCES', message: `You can use up to ${maxReferences} references${hasVideoReference ? ' when one of them is a video' : ''}.` }, { status: 400 })
+      }
+      const generateAudio = !!requestedGenerateAudio
+      if (generateAudio && hasVideoReference) {
+        // Kling's own real constraint (confirmed 2026-09-29): native audio
+        // generation and a reference video are mutually exclusive. Never
+        // trust the client to have disabled the incompatible control.
+        return NextResponse.json({ success: false, error: 'INVALID_COMBINATION', message: 'Native audio generation can\'t be combined with a reference video.' }, { status: 400 })
+      }
+      // Every reference's tag must literally appear as <<<tag>>> in the
+      // prompt — confirmed required by a real Kling 400 response. Cheap
+      // sanity check here avoids wasting a real, billed call on a request
+      // that's structurally certain to fail.
+      for (const ref of references) {
+        if (!ref.tag || !ref.kind || !ref.fileId || !sanitizedPrompt.includes(`<<<${ref.tag}>>>`)) {
+          return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: `Every reference must be mentioned in your prompt as <<<${ref.tag || 'tag'}>>>.` }, { status: 400 })
+        }
+      }
+
+      const durationSec = typeof requestedDurationSec === 'number' && requestedDurationSec >= 3 && requestedDurationSec <= 15
+        ? requestedDurationSec
+        : DEFAULT_AI_CLIP_DURATION_SEC
+      const omniResolution = (OMNI_RESOLUTIONS as readonly string[]).includes(requestedResolution ?? '')
+        ? (requestedResolution as (typeof OMNI_RESOLUTIONS)[number])
+        : DEFAULT_OMNI_RESOLUTION
+      const omniAspectRatio = (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(requestedAspectRatio ?? '')
+        ? (requestedAspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
+        : DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO
+
+      const studio = await studioGetItem<Studio>(TABLES.studios, { studioId })
+      if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+
+      if (await findRunningReelJob(projectId)) {
+        return NextResponse.json({ success: false, error: 'JOB_RUNNING' }, { status: 409 })
+      }
+
+      // Resolve each reference's fileId to a real, owned, ready file —
+      // never trust a client-supplied URL directly (same trust boundary as
+      // photo-mode resolving photoIds server-side). Deliberately NOT
+      // restricted to purpose: 'REEL_REFERENCE' — the main use case is
+      // animating photos already in the gallery (purpose: 'GALLERY'), same
+      // as today's photo-mode. purpose only ever governs gallery-grid
+      // visibility and the totalFiles stat, never what can be used as a
+      // Kling input. fileType must match the claimed reference kind (an
+      // 'image' reference can't secretly point at a video file).
+      const KIND_TO_FILE_TYPE: Record<string, MediaFile['fileType']> = { image: 'IMAGE', video: 'VIDEO', audio: 'AUDIO' }
+      const referenceFiles = await Promise.all(
+        references.map((r) => studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId: r.fileId! }))
+      )
+      const resolvedReferences: (OmniReferenceInput & { r2Key: string })[] = []
+      for (let i = 0; i < references.length; i++) {
+        const file = referenceFiles[i]
+        const expectedFileType = KIND_TO_FILE_TYPE[references[i].kind!]
+        if (!file || file.studioId !== studioId || file.fileType !== expectedFileType || file.processingStatus !== 'READY' || !file.r2Key) {
+          return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: 'One or more references are not ready yet — try re-uploading.' }, { status: 400 })
+        }
+        const url = await getStudioR2SignedViewUrl(file.r2Key)
+        resolvedReferences.push({ kind: references[i].kind as OmniReferenceInput['kind'], tag: references[i].tag!, url, r2Key: file.r2Key })
+      }
+
+      const pricing = await getPricingConfig()
+      const { sellPricePaise } = computeOmniVideoCost(durationSec, omniResolution, hasVideoReference, generateAudio, pricing ?? undefined)
+      const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
+      const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
+      const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)
+      if (!creditCheck.ok) {
+        const divisor = pricing.momentsCreditDivisor
+        const neededDisplay = toMomentsCredits(aiCreditsRequired, divisor)
+        const leftDisplay = toMomentsCredits(Math.max(0, creditCheck.quotaCredits - creditCheck.usedCredits), divisor)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: `This video needs ${neededDisplay} Moments Credits — you have ${leftDisplay} left.`,
+          data: creditCheck,
+        }, { status: 402 })
+      }
+
+      if (!process.env.REEL_LAMBDA_ARN) {
+        console.error('[moments reels POST] REEL_LAMBDA_ARN not set')
+        return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
+      }
+
+      try {
+        await deductAiSearchCredits(studioId, aiCreditsRequired, creditCheck.quotaCredits)
+      } catch (err) {
+        console.error('[moments reels POST] credit deduction lost a concurrency race (omni)', err)
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: 'Someone just used the last of these credits — please check your balance and try again.',
+        }, { status: 402 })
+      }
+
+      const reelId = randomUUID()
+      const jobId = randomUUID()
+      const now = new Date().toISOString()
+      const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+
+      let created: Awaited<ReturnType<typeof createOmniVideoTask>>
+      try {
+        created = await createOmniVideoTask({
+          reelId,
+          prompt: sanitizedPrompt,
+          references: resolvedReferences,
+          durationSec, aspectRatio: omniAspectRatio, resolution: omniResolution, generateAudio,
+        })
+      } catch (err) {
+        await refundAiSearchCredits(studioId, aiCreditsRequired)
+        console.error('[moments reels POST] Kling Omni task creation failed', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
+
+      const reel: StudioReel = {
+        reelId, jobId, studioId, projectId,
+        source: 'MOMENTS',
+        mode: 'omni',
+        photoIds: [],
+        omniReferences: resolvedReferences.map((r) => ({ kind: r.kind, tag: r.tag, r2Key: r.r2Key })),
+        generateAudio,
+        style: 'CINEMATIC',
+        aspectRatio: omniAspectRatio,
+        resolution: omniResolution,
+        durationSec,
+        customPrompt: sanitizedPrompt,
+        status: 'generating',
+        provider: created.provider,
+        providerJobIds: [created.providerJobId],
+        creditsCharged: aiCreditsRequired,
+        createdAt: now,
+      }
+      const job: StudioJob = {
+        jobId, jobType: 'AI_REEL',
+        status: 'PROCESSING',
+        projectId, studioId,
+        inputPayload: { reelId, mode: 'omni' },
+        outputPayload: { stage: 'generating', processed: 0, total: 1 },
+        createdAt: now, ttl,
+      }
+      // Same orphaned-paid-task risk as the text/photo branches above — the
+      // Omni task is already real and billed by the time we get here.
+      try {
+        await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+        await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+      } catch (err) {
+        await refundAiSearchCredits(studioId, aiCreditsRequired)
+        console.error('[moments reels POST] failed to persist omni reel/job after Kling task was already created (orphaned providerJobId:', created.providerJobId, ')', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
+
+      return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: aiCreditsRequired } })
+    }
+
     // Never trust a client-supplied resolution/duration blindly — fall back
     // to the defaults on anything outside the allowed sets rather than
     // rejecting the whole request, same posture as templateId/style below.
@@ -411,7 +584,11 @@ export async function POST(
     }
 
     const pricing = await getPricingConfig()
-    const { sellPricePaise } = computeReelCost(photos.length, durationSec, resolution, pricing)
+    // resolution is validated against REEL_RESOLUTIONS ('720p'|'1080p' only)
+    // above — ReelResolution's own '4k' member is Omni-only and can never
+    // reach this photo-mode branch; narrowed here rather than widening
+    // computeReelCost itself, which is genuinely 720p/1080p-only pricing.
+    const { sellPricePaise } = computeReelCost(photos.length, durationSec, resolution as '720p' | '1080p', pricing)
     const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
     const aiCreditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditPrice))
     const creditCheck = checkAiCreditsAvailable(studio, aiCreditsRequired, pricing.freeAiSearchCredits)

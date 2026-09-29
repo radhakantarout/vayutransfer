@@ -145,6 +145,58 @@ export async function createTextToVideoTask(params: {
   return { provider: provider.name, providerJobId: result.providerJobId }
 }
 
+export interface OmniReferenceInput {
+  kind: 'image' | 'video' | 'audio' | 'subject'
+  tag: string
+  url: string
+}
+
+export interface CreateOmniVideoTaskResult {
+  provider: VideoProviderName
+  providerJobId: string
+}
+
+// Kling 3.0 Omni's own create step (reel-generator-omni-redesign plan) —
+// like createTextToVideoTask, exactly one task per reel (Omni takes every
+// reference in a single call, no per-photo fan-out the way image-to-video
+// needs). Whether Omni has real create-time dedupe on external_task_id
+// (like image-to-video) or none at all (like text-to-video) was NOT tested
+// — treated conservatively as UNCONFIRMED/assume-none, same posture as
+// createTextToVideoTask's own caution, until verified.
+export async function createOmniVideoTask(params: {
+  reelId: string
+  prompt: string
+  references: OmniReferenceInput[]
+  durationSec: number
+  aspectRatio: ReelAspectRatio
+  resolution: ReelResolution
+  generateAudio?: boolean
+}): Promise<CreateOmniVideoTaskResult> {
+  const router = new VideoProviderRouter()
+  // select()'s criteria are the same uniform shape every mode passes —
+  // Omni doesn't have a real "style" concept the way photo-mode's mood
+  // presets do, 'CINEMATIC' here is inert (matches createTextToVideoTask's
+  // own precedent).
+  const provider = router.select({
+    style: 'CINEMATIC', durationSec: params.durationSec, aspectRatio: params.aspectRatio, resolution: params.resolution,
+  })
+  if (!provider.getCapabilities().supportsOmni || !provider.generateOmniVideo) {
+    throw new Error(`Video provider "${provider.name}" does not support Omni`)
+  }
+
+  const externalTaskId = `${params.reelId}-omni`.slice(0, 64)
+  const result = await provider.generateOmniVideo({
+    prompt: params.prompt,
+    references: params.references,
+    durationSec: params.durationSec,
+    aspectRatio: params.aspectRatio,
+    resolution: params.resolution,
+    generateAudio: params.generateAudio,
+    externalTaskId,
+  })
+  return { provider: provider.name, providerJobId: result.providerJobId }
+}
+
 // Keyed by providerJobId (== the externalTaskId createReelClipTasks minted)
 // so a caller can look up any one clip's status directly without re-deriving
 // photoId <-> jobId pairing itself.

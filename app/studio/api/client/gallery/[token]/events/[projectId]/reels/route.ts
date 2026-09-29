@@ -5,12 +5,14 @@ import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABL
 import { getStudioR2SignedDownloadUrl, getStudioR2SignedViewUrl } from '@/lib/studio/r2'
 import { checkReelCreditsAvailable } from '@/lib/studio/quota'
 import { deductReelCredits, refundReelCredits, grantFreeTrialReelCreditsIfNeeded } from '@/lib/studio/billing'
-import { createReelClipTasks } from '@/lib/studio/videoProviders'
+import { createReelClipTasks, createOmniVideoTask, type OmniReferenceInput } from '@/lib/studio/videoProviders'
 import {
-  computeReelCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
+  computeReelCost, computeOmniVideoCost, MIN_REEL_PHOTOS, MAX_REEL_PHOTOS, MAX_REEL_TOTAL_DURATION_SEC, REEL_RESOLUTIONS, DEFAULT_REEL_RESOLUTION,
   REEL_CLIP_DURATION_OPTIONS, DEFAULT_AI_CLIP_DURATION_SEC,
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META,
+  OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION, OMNI_MAX_REFERENCE_IMAGES, MIN_TEXT_PROMPT_LENGTH,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
 } from '@/constants/videoProviders'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import type { StudioProject, MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
@@ -112,9 +114,145 @@ export async function POST(
       return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
 
-    const { photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot } = await req.json().catch(() => ({})) as {
-      photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+    const {
+      mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
+      prompt: omniPrompt, generateAudio: requestedGenerateAudio, aspectRatio: requestedAspectRatio,
+    } = await req.json().catch(() => ({})) as {
+      mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
+      prompt?: string; generateAudio?: boolean; aspectRatio?: string
     }
+
+    // ─── Kling 3.0 Omni — reel-generator-omni-redesign plan, 2026-09-29 ────
+    // Client Gallery has no separate reference-upload pipeline (that's a
+    // Moments-only addition, Phase 2 of the plan) — the natural fit here is
+    // reusing the client's EXISTING selected gallery photos as auto-tagged
+    // image references (image_1, image_2, ... in selection order) in ONE
+    // Omni call, instead of today's one-Kling-call-per-photo pipeline. No
+    // video/audio reference support for Client Gallery in this pass (would
+    // need its own upload pipeline) — image-only Omni is still a real
+    // upgrade: genuine multi-photo consistency in one call, native audio,
+    // real aspect-ratio control, 4K.
+    if (requestedMode === 'omni') {
+      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
+      if (sanitizedPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
+        return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
+      }
+      if (!Array.isArray(photoIds) || photoIds.length < MIN_REEL_PHOTOS) {
+        return NextResponse.json({ success: false, error: 'INVALID_PHOTO_COUNT', message: 'Select at least 1 photo.' }, { status: 400 })
+      }
+      if (photoIds.length > OMNI_MAX_REFERENCE_IMAGES) {
+        return NextResponse.json({ success: false, error: 'TOO_MANY_PHOTOS', message: `You can use up to ${OMNI_MAX_REFERENCE_IMAGES} photos.` }, { status: 400 })
+      }
+      const generateAudio = !!requestedGenerateAudio
+
+      const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+      const requestedSet = new Set(photoIds)
+      const selectedFiles = allFiles.filter((f) => requestedSet.has(f.fileId) && f.processingStatus === 'READY' && f.fileType === 'IMAGE')
+      if (selectedFiles.length !== photoIds.length) {
+        return NextResponse.json({ success: false, error: 'INVALID_PHOTOS', message: 'Only photos can be used for AI Reels.' }, { status: 400 })
+      }
+      // Preserve the client's own selection order — becomes the tag order
+      // (image_1 = photoIds[0], etc.) so "the first person" in a prompt
+      // maps predictably to the first photo they picked.
+      const orderedFiles = photoIds.map((id) => selectedFiles.find((f) => f.fileId === id)!).filter(Boolean)
+      const tags = orderedFiles.map((_, i) => `image_${i + 1}`)
+      const autoPrompt = tags.length === sanitizedPrompt.split('<<<').length - 1
+        ? sanitizedPrompt // client already inserted tags itself (future UI)
+        : `${sanitizedPrompt} ${tags.map((t) => `<<<${t}>>>`).join(' ')}`.trim()
+
+      const references: (OmniReferenceInput & { r2Key: string })[] = []
+      for (let i = 0; i < orderedFiles.length; i++) {
+        const key = orderedFiles[i].editedR2Key || orderedFiles[i].r2Key
+        if (!key) return NextResponse.json({ success: false, error: 'UNSUPPORTED_PHOTO', message: 'One or more selected photos are not eligible yet.' }, { status: 400 })
+        const url = await getStudioR2SignedViewUrl(key)
+        references.push({ kind: 'image', tag: tags[i], url, r2Key: key })
+      }
+
+      const durationSec = typeof requestedDurationSec === 'number' && requestedDurationSec >= 3 && requestedDurationSec <= 15
+        ? requestedDurationSec
+        : DEFAULT_AI_CLIP_DURATION_SEC
+      const omniResolution = (OMNI_RESOLUTIONS as readonly string[]).includes(requestedResolution ?? '')
+        ? (requestedResolution as (typeof OMNI_RESOLUTIONS)[number])
+        : DEFAULT_OMNI_RESOLUTION
+      const omniAspectRatio = (TEXT_TO_VIDEO_ASPECT_RATIOS as readonly string[]).includes(requestedAspectRatio ?? '')
+        ? (requestedAspectRatio as (typeof TEXT_TO_VIDEO_ASPECT_RATIOS)[number])
+        : DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO
+
+      let studio = await studioGetItem<Studio>(TABLES.studios, { studioId: entry.studioId })
+      if (!studio) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+      studio = await grantFreeTrialReelCreditsIfNeeded(studio)
+
+      const pricing = await getPricingConfig()
+      const { creditsRequired } = computeOmniVideoCost(durationSec, omniResolution, false, generateAudio, pricing)
+      const creditCheck = checkReelCreditsAvailable(studio, creditsRequired)
+      if (!creditCheck.ok) {
+        return NextResponse.json({
+          success: false, error: 'INSUFFICIENT_CREDITS',
+          message: `This reel needs ${creditsRequired} credits — the studio has ${creditCheck.balance}.`,
+          data: creditCheck,
+        }, { status: 402 })
+      }
+      if (!process.env.REEL_LAMBDA_ARN) {
+        console.error('[client reels POST] REEL_LAMBDA_ARN not set')
+        return NextResponse.json({ success: false, error: 'NOT_CONFIGURED' }, { status: 503 })
+      }
+
+      await deductReelCredits(entry.studioId, creditsRequired)
+
+      const reelId = randomUUID()
+      const jobId = randomUUID()
+      const now = new Date().toISOString()
+      const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
+
+      let created: Awaited<ReturnType<typeof createOmniVideoTask>>
+      try {
+        created = await createOmniVideoTask({
+          reelId, prompt: autoPrompt, references,
+          durationSec, aspectRatio: omniAspectRatio, resolution: omniResolution, generateAudio,
+        })
+      } catch (err) {
+        await refundReelCredits(entry.studioId, creditsRequired)
+        console.error('[client reels POST] Kling Omni task creation failed', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
+
+      const reel: StudioReel = {
+        reelId, jobId, studioId: entry.studioId, projectId,
+        source: 'CLIENT_GALLERY',
+        mode: 'omni',
+        photoIds: orderedFiles.map((f) => f.fileId),
+        omniReferences: references.map((r) => ({ kind: r.kind, tag: r.tag, r2Key: r.r2Key })),
+        generateAudio,
+        style: 'CINEMATIC',
+        aspectRatio: omniAspectRatio,
+        resolution: omniResolution,
+        durationSec,
+        customPrompt: sanitizedPrompt,
+        status: 'generating',
+        provider: created.provider,
+        providerJobIds: [created.providerJobId],
+        creditsCharged: creditsRequired,
+        createdAt: now,
+      }
+      const job: StudioJob = {
+        jobId, jobType: 'AI_REEL', status: 'PROCESSING',
+        projectId, studioId: entry.studioId,
+        inputPayload: { reelId, mode: 'omni' },
+        outputPayload: { stage: 'generating', processed: 0, total: 1 },
+        createdAt: now, ttl,
+      }
+      try {
+        await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+        await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+      } catch (err) {
+        await refundReelCredits(entry.studioId, creditsRequired)
+        console.error('[client reels POST] failed to persist omni reel/job after Kling task was already created (orphaned providerJobId:', created.providerJobId, ')', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
+
+      return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
+    }
+
     const resolution: ReelResolution = (REEL_RESOLUTIONS as readonly string[]).includes(requestedResolution ?? '')
       ? (requestedResolution as ReelResolution)
       : DEFAULT_REEL_RESOLUTION
@@ -178,7 +316,11 @@ export async function POST(
 
     // MVP: every photo is a "hero clip" (Kling-only, no FFmpeg fallback yet).
     const pricing = await getPricingConfig()
-    const { creditsRequired } = computeReelCost(photos.length, durationSec, resolution, pricing)
+    // resolution is validated against REEL_RESOLUTIONS ('720p'|'1080p' only)
+    // above — ReelResolution's own '4k' member is Omni-only and can never
+    // reach this photo-mode branch; narrowed here rather than widening
+    // computeReelCost itself, which is genuinely 720p/1080p-only pricing.
+    const { creditsRequired } = computeReelCost(photos.length, durationSec, resolution as '720p' | '1080p', pricing)
     const creditCheck = checkReelCreditsAvailable(studio, creditsRequired)
     if (!creditCheck.ok) {
       return NextResponse.json({

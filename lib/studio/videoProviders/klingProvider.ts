@@ -1,6 +1,6 @@
 import type {
   VideoProvider, ImageToVideoRequest, ImageToVideoResult, TextToVideoRequest, TextToVideoResult,
-  GenerationStatusResult, ProviderCapabilities,
+  OmniVideoRequest, OmniVideoResult, GenerationStatusResult, ProviderCapabilities,
 } from './types'
 
 // Base URL + auth confirmed against Kling's own console (2026-09-09): simple
@@ -35,6 +35,16 @@ import type {
 const KLING_API_BASE_URL = process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com'
 const KLING_API_KEY = process.env.KLING_API_KEY
 const KLING_MODEL_NAME = process.env.KLING_MODEL_NAME || 'kling-3.0-turbo'
+// Unlike image-to-video/text-to-video's ${KLING_MODEL_NAME}-interpolated
+// path, the confirmed real Omni endpoint bakes the model into the path
+// literally (POST /omni-video/kling-3.0-omni) — no env-configurable model
+// name for this one, since only one Omni model exists today.
+const KLING_OMNI_MODEL_PATH = 'omni-video/kling-3.0-omni'
+// Feature-flagged off by default (reel-generator-omni-redesign plan, Phase
+// 1) — getCapabilities().supportsOmni only reports true once this is
+// explicitly set, so no route can call generateOmniVideo before the rollout
+// is ready for it, same pattern as KLING_API_KEY gating every Kling call.
+const OMNI_ENABLED = process.env.KLING_OMNI_ENABLED === 'true'
 
 // Base preservation instructions (identity/clothing/no-hallucination) stay
 // constant across every style — only the mood/motion fragment (composed by
@@ -225,6 +235,94 @@ export class KlingProvider implements VideoProvider {
     return { providerJobId: `${TEXT_TO_VIDEO_JOB_PREFIX}${data.data.id}` }
   }
 
+  // Kling 3.0 Omni — CONFIRMED via a real API call against this account
+  // (2026-09-29, external_task_id "vayutransfer-omni-spike-...", one
+  // reference image, 3s/720p/no-audio, real succeeded response with a real
+  // video output and real billing of 1.8 units). Genuinely a third endpoint,
+  // not a variant of the other two:
+  //   - Real endpoint: POST {baseUrl}/omni-video/kling-3.0-omni.
+  //   - Request envelope matches image-to-video's nested contents[]/
+  //     settings{}/options{} shape — NOT a flat body. Confirmed by a real
+  //     "contents cannot be empty" rejection when a flat body was tried.
+  //   - Reference images are extra contents[] entries:
+  //     {type:'image', url, tag} — the SAME tag string must appear literally
+  //     as <<<tag>>> inside the prompt text, confirmed required (a request
+  //     with no first_frame/image and no aspect_ratio was rejected: "Aspect
+  //     ratio must be specified unless a first frame is provided or the task
+  //     is video editing" — implies a `type:'first_frame'` alternate content
+  //     kind and a distinct "video editing" task shape both exist, neither
+  //     independently confirmed yet).
+  //   - settings.audio is a STRING enum: 'native' | 'off' | 'original' — NOT
+  //     a boolean (a first real attempt with `audio: false` was rejected
+  //     with "settings.audio value is invalid").
+  //   - settings.aspect_ratio is REAL and matters here (unlike image-to-
+  //     video, which has no such field at all) — required whenever no
+  //     first-frame/video-editing content is present.
+  //   - Status polling reuses image-to-video's own confirmed
+  //     `external_task_ids=` scheme (NOT text-to-video's `task_ids=`) — the
+  //     existing getGenerationStatus branch below needs no Omni-specific
+  //     handling at all, confirmed by a real create->poll->succeeded cycle.
+  //   - A succeeded task returned exactly ONE outputs[] video entry for the
+  //     single-reference case — real evidence Omni assembles everything
+  //     itself (no per-shot pieces needing our own ffmpeg concat), though
+  //     this is not independently confirmed for a genuinely multi-shot
+  //     narrative prompt.
+  //   - Multi-image reference (2+ contents[] image entries), a 'video' kind
+  //     reference (restyle), a 'subject' kind reference, and `audio:
+  //     'native'` output quality are all UNCONFIRMED — extrapolated from the
+  //     single-image case and third-party doc cross-reference, not
+  //     independently tested. See OmniReference's own comment in types.ts.
+  async generateOmniVideo(request: OmniVideoRequest): Promise<OmniVideoResult> {
+    this.assertConfigured()
+    if (!OMNI_ENABLED) {
+      throw new Error('Kling Omni is not enabled (KLING_OMNI_ENABLED env var) — see reel-generator-omni-redesign plan')
+    }
+
+    const contents: Array<Record<string, unknown>> = [{ type: 'prompt', text: request.prompt }]
+    for (const ref of request.references) {
+      if (ref.kind !== 'image') {
+        // video/audio/subject reference kinds: request shape not yet
+        // confirmed against a real call — fail loudly rather than send a
+        // guessed shape that could produce a real, billed, wrong result.
+        throw new Error(`Omni reference kind "${ref.kind}" is not yet wired — request shape unconfirmed, see klingProvider.ts's generateOmniVideo header`)
+      }
+      contents.push({ type: 'image', url: ref.url, tag: ref.tag })
+    }
+
+    const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/${KLING_OMNI_MODEL_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${KLING_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents,
+        settings: {
+          resolution: request.resolution,
+          duration: request.durationSec,
+          audio: request.generateAudio ? 'native' : 'off',
+          aspect_ratio: request.aspectRatio,
+        },
+        options: {
+          external_task_id: request.externalTaskId,
+          watermark_info: { enabled: false },
+        },
+      }),
+    })
+
+    if (!res.ok) {
+      throw new Error(`Kling generateOmniVideo failed: ${res.status} ${await res.text().catch(() => '')}`)
+    }
+    const data = await res.json() as KlingCreateResponse
+    if (data.code !== 0) {
+      throw new Error(`Kling generateOmniVideo returned an error code: ${data.code} ${data.message}`)
+    }
+    // Unprefixed external_task_id, same as generateImageToVideo — confirmed
+    // Omni's status-check endpoint polls by external_task_ids= same as
+    // image-to-video, so getGenerationStatus needs no special-casing.
+    return { providerJobId: request.externalTaskId }
+  }
+
   async getGenerationStatus(providerJobId: string): Promise<GenerationStatusResult> {
     this.assertConfigured()
 
@@ -307,6 +405,12 @@ export class KlingProvider implements VideoProvider {
       resolutions: ['720p', '1080p'],
       supportsAudio: false, // deliberately unused — music is mixed in during FFmpeg assembly instead
       supportsTextToVideo: true,
+      supportsOmni: OMNI_ENABLED,
+      // 7 with images only, capping to 4 once a video reference is present
+      // — per third-party doc cross-reference, NOT independently confirmed
+      // (only a single image reference has been tested for real).
+      maxOmniReferenceImages: 7,
+      maxOmniReferenceImagesWithVideo: 4,
     }
   }
 }

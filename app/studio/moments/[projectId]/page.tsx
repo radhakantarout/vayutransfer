@@ -1719,10 +1719,16 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   // FAILED file's r2PreviewUrl can be a stale leftover from a previous
   // attempt (the retry route re-processes without clearing it), which
   // otherwise let a broken/failed photo slip into the lightbox's photo list.
+  // fileType !== 'AUDIO' excludes Kling 3.0 Omni reference-audio uploads
+  // (purpose: 'REEL_REFERENCE', not a gallery deliverable — never has a
+  // meaningful grid preview and LightboxPhoto has no audio-rendering
+  // concept at all) — a defensive no-op today (no upload path produces
+  // AUDIO files yet), forward-correct once Phase 2 of the Omni redesign
+  // adds reference uploads.
   const viewablePhotos: LightboxPhoto[] = displayFiles
-    .filter((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl)
+    .filter((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl && f.fileType !== 'AUDIO')
     .map((f) => ({
-      fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType,
+      fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType as 'IMAGE' | 'VIDEO',
       thumbnailUrl: f.videoThumbnailUrl,
       likeCount: f.likeCount, commentCount: f.commentCount, likedByMe: f.likedByMe,
     }))

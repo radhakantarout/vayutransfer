@@ -30,14 +30,21 @@ export async function POST(
 
     const { projectId } = params
     const resolved = await resolveProjectForViewer(auth, projectId)
-    if (!resolved || !isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member)) {
-      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
-    }
+    if (!resolved) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     const studioId = resolved.project.studioId
 
     const mediaFile = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
     if (!mediaFile || mediaFile.studioId !== studioId) {
       return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
+    }
+    // Same purpose-aware gate as upload-url — a member who started a
+    // REEL_REFERENCE upload there must be able to complete it here too, not
+    // just the gallery's owner/admin.
+    const canComplete = mediaFile.purpose === 'REEL_REFERENCE'
+      ? isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member) || resolved.project.allowMemberReels
+      : isOwnerOrAdmin(auth.studioId, resolved.project, resolved.member)
+    if (!canComplete) {
+      return NextResponse.json({ success: false, error: 'FORBIDDEN' }, { status: 403 })
     }
     if (!mediaFile.r2Key) {
       return NextResponse.json({ success: false, error: 'INVALID_STATE', message: 'Missing r2Key' }, { status: 500 })
@@ -52,14 +59,21 @@ export async function POST(
 
     const now = new Date().toISOString()
 
-    await studioUpdateItem(
-      TABLES.projects,
-      { studioId, projectId },
-      'ADD totalFiles :one SET updatedAt = :now, #s = :active',
-      { ':one': 1, ':now': now, ':active': 'ACTIVE' },
-      { '#s': 'status' },
-      'attribute_exists(studioId)'
-    )
+    // totalFiles is a user-facing "how many photos in this gallery" stat
+    // (dashboard totals, and gates whether a share link can even be
+    // created) — a reference upload is never a gallery deliverable and must
+    // not inflate it, nor flip a still-empty project to ACTIVE as if it now
+    // has real shareable content.
+    if (mediaFile.purpose !== 'REEL_REFERENCE') {
+      await studioUpdateItem(
+        TABLES.projects,
+        { studioId, projectId },
+        'ADD totalFiles :one SET updatedAt = :now, #s = :active',
+        { ':one': 1, ':now': now, ':active': 'ACTIVE' },
+        { '#s': 'status' },
+        'attribute_exists(studioId)'
+      )
+    }
 
     await studioUpdateItem(
       TABLES.studios,
@@ -67,6 +81,22 @@ export async function POST(
       'ADD storageUsedBytes :size, billableStorageBytes :size SET updatedAt = :now',
       { ':size': mediaFile.sizeBytes, ':now': now }
     )
+
+    // Reference uploads (Kling 3.0 Omni redesign) are never watermarked or
+    // transcoded — they're a generation INPUT Kling reads directly via a
+    // signed URL, not a client-facing deliverable that needs a browser-
+    // playable copy or a watermark overlay. Skip straight to READY, same
+    // shortcut shape as the "no Lambda ARN configured" fallback below, but
+    // driven by purpose rather than missing config.
+    if (mediaFile.purpose === 'REEL_REFERENCE') {
+      await studioUpdateItem(
+        TABLES.mediafiles,
+        { projectId, fileId },
+        'SET processingStatus = :s, uploadedAt = :now',
+        { ':s': 'READY', ':now': now }
+      )
+      return NextResponse.json({ success: true, data: { fileId, status: 'READY' } })
+    }
 
     const isVideo = mediaFile.fileType === 'VIDEO'
     const lambdaArn = isVideo ? process.env.VIDEO_TRANSCODE_LAMBDA_ARN : process.env.WATERMARK_LAMBDA_ARN
