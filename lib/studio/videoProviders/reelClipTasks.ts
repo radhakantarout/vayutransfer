@@ -8,8 +8,6 @@ import type { GenerationStatusResult } from './types'
 // talking to KlingProvider/VideoProviderRouter directly, so the parallel-
 // creation + deterministic-id + partial-failure handling below lives in one
 // place regardless of which route (Client Gallery, Guest, Moments) calls it.
-// Not wired into any real route yet — Phase 2+ does that. Image-to-video
-// only; text-to-video needs its own interface extension (Phase 6, see plan).
 
 export interface ReelClipRequest {
   photoId: string
@@ -94,6 +92,57 @@ export async function createReelClipTasks(params: {
   })
 
   return { provider: provider.name, succeeded, failed }
+}
+
+export interface CreateTextToVideoTaskResult {
+  provider: VideoProviderName
+  providerJobId: string
+}
+
+// Text-to-video's own create step (Phase 6) — deliberately separate from
+// createReelClipTasks above rather than folded in: text mode always has
+// exactly one task per reel (no per-photo fan-out, no partial-failure
+// handling to share), and its provider call has no create-time dedupe
+// backstop at all (see TextToVideoRequest's own comment), unlike
+// image-to-video's real one. Mixing the two into one generic helper would
+// make that difference easy to miss.
+export async function createTextToVideoTask(params: {
+  reelId: string
+  prompt: string
+  aspectRatio?: ReelAspectRatio
+  negativePrompt?: string
+  cfgScale?: number
+  cameraControl?: unknown
+}): Promise<CreateTextToVideoTaskResult> {
+  const router = new VideoProviderRouter()
+  // select()'s criteria don't actually mean anything for text-to-video
+  // (Kling's endpoint ignores duration/resolution entirely, confirmed in
+  // klingProvider.ts) — passed only to satisfy VideoProviderRouter's one
+  // uniform selection signature; a future second provider that only
+  // implements text-to-video (not image-to-video) would need router.select
+  // to branch on more than style/duration, not a concern with one provider.
+  const provider = router.select({
+    style: 'CINEMATIC', durationSec: 5, aspectRatio: params.aspectRatio ?? '9:16', resolution: '720p',
+  })
+  if (!provider.getCapabilities().supportsTextToVideo || !provider.generateTextToVideo) {
+    throw new Error(`Video provider "${provider.name}" does not support text-to-video`)
+  }
+
+  // reelId alone is unique enough for CloudWatch/Kling-dashboard
+  // traceability (text mode never has more than one task per reel) — NOT
+  // relied on for retry-safety, since this endpoint has no create-time
+  // dedupe at all. The caller's own idempotency check (has this job already
+  // reached a terminal state?) before calling this is the only real guard.
+  const externalTaskId = `${params.reelId}-text`.slice(0, 64)
+  const result = await provider.generateTextToVideo({
+    prompt: params.prompt,
+    externalTaskId,
+    aspectRatio: params.aspectRatio,
+    negativePrompt: params.negativePrompt,
+    cfgScale: params.cfgScale,
+    cameraControl: params.cameraControl,
+  })
+  return { provider: provider.name, providerJobId: result.providerJobId }
 }
 
 // Keyed by providerJobId (== the externalTaskId createReelClipTasks minted)

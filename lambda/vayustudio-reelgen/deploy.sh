@@ -64,15 +64,13 @@ env = {
 print(json.dumps({'Variables': env}))
 ")
 
-  # Timeout cut from 900s to 420s (Phase 5, 2026-09-28): the retired legacy
-  # 'photo' pipeline was the only reason this needed a near-15-min ceiling
-  # (up to ~10 min of in-Lambda Kling polling). The two remaining live modes
-  # need far less — 'finalize' is bounded by download+ffmpeg+upload time only
-  # (observed well under a minute per clip in real testing), and legacy
-  # 'text' mode's own poll loop tops out at ~320s (40 attempts x 8s) plus
-  # overhead. 420s covers 'text' mode's worst case with real margin; once
-  # Phase 6 retires 'text' too, this can shrink much further (finalize-only
-  # workloads shouldn't need more than ~120-180s even for a 5-clip reel).
+  # Timeout cut further, 420s -> 180s (Phase 6, 2026-09-29): Phase 5 already
+  # retired the legacy 'photo' pipeline; this phase retires the equivalent
+  # 'text' pipeline (its own in-Lambda poll loop topped out at ~320s, which
+  # is why 420s was kept as of Phase 5). 'finalize' is now the ONLY live
+  # mode — bounded purely by download+ffmpeg+upload time, observed well
+  # under a minute per clip in real testing, comfortably fitting even a
+  # 5-clip reel within 180s with real margin.
   # Memory left at 3008MB, unchanged — ffmpeg's concat/crop re-encode still
   # benefits from the higher proportional vCPU that comes with more memory,
   # and there isn't yet enough real observed data to safely shrink it
@@ -80,7 +78,7 @@ print(json.dumps({'Variables': env}))
   aws lambda update-function-configuration \
     --function-name "$FUNCTION_NAME" \
     --runtime nodejs20.x \
-    --timeout 420 \
+    --timeout 180 \
     --memory-size 3008 \
     --region "$REGION" \
     --environment "$ENV_JSON" \

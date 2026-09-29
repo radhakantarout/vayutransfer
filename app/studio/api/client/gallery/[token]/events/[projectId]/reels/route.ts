@@ -273,8 +273,6 @@ export async function POST(
       creditsCharged: creditsRequired,
       createdAt: now,
     }
-    await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
-
     const job: StudioJob = {
       jobId, jobType: 'AI_REEL',
       // PROCESSING, not PENDING — no Lambda invocation is pending anymore,
@@ -286,7 +284,21 @@ export async function POST(
       outputPayload: { stage: 'generating', processed: 0, total: photos.length },
       createdAt: now, ttl,
     }
-    await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+    // The Kling clip tasks above are already real and billed — a write
+    // failure here would otherwise leak the studio's credits and leave the
+    // paid clips with no record for reel-check to find (recoverable later
+    // via attemptReclaimReelClips since the deterministic
+    // `${reelId}-${photoId}` id is recomputable, but that needs a manual/UI
+    // reclaim attempt — refunding immediately here is still strictly better
+    // than silently losing the credits with no explanation).
+    try {
+      await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+      await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+    } catch (err) {
+      await refundReelCredits(entry.studioId, creditsRequired)
+      console.error('[client reels POST] failed to persist reel/job after Kling tasks were already created (reelId:', reelId, ')', err)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
 
     return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
   } catch (err) {
