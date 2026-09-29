@@ -34,6 +34,29 @@ export interface ImageToVideoResult {
   estimatedCostPaise: number
 }
 
+// Kling's real /text-to-video/{model} endpoint (Phase 6, 2026-09-29) — a
+// genuinely separate endpoint from image-to-video, not a variant of it (see
+// klingProvider.ts's header for the full confirmed contract). No source
+// photo/motion concept applies here.
+export interface TextToVideoRequest {
+  prompt: string
+  // Unlike ImageToVideoRequest#externalTaskId, this is NOT a retry-safety
+  // mechanism — Kling's text-to-video endpoint gives NO create-time
+  // duplicate protection on external_task_id (confirmed: submitting the
+  // identical value twice creates two separate, separately-billed real
+  // tasks). Sent for CloudWatch/Kling-dashboard traceability only; callers
+  // must not rely on it to make a retry safe.
+  externalTaskId: string
+  aspectRatio?: ReelAspectRatio
+  negativePrompt?: string
+  cfgScale?: number
+  cameraControl?: unknown
+}
+
+export interface TextToVideoResult {
+  providerJobId: string
+}
+
 export interface GenerationStatusResult {
   status: 'processing' | 'completed' | 'failed'
   outputUrl?: string
@@ -46,11 +69,16 @@ export interface ProviderCapabilities {
   minDurationSec: number
   resolutions: ReelResolution[]
   supportsAudio: boolean
+  supportsTextToVideo: boolean
 }
 
 export interface VideoProvider {
   readonly name: VideoProviderName
   generateImageToVideo(request: ImageToVideoRequest): Promise<ImageToVideoResult>
+  // Optional — not every provider supports text-to-video (Kling does; a
+  // future Runway/Luma/Veo integration may or may not). Callers must check
+  // getCapabilities().supportsTextToVideo before calling this.
+  generateTextToVideo?(request: TextToVideoRequest): Promise<TextToVideoResult>
   getGenerationStatus(providerJobId: string): Promise<GenerationStatusResult>
   cancelGeneration(providerJobId: string): Promise<void>
   getCapabilities(): ProviderCapabilities

@@ -164,21 +164,22 @@ export const DRONE_SHOT_META: Record<DroneShotStyle, {
 export const MAX_CUSTOM_PROMPT_LENGTH = 2000
 
 // Moments' prompt-first "Reel It" compose screen's own tighter cap for
-// PHOTO mode. The Lambda always appends the fixed BASE_PROMPT_SUFFIX (144
-// chars) plus a style fragment (up to 81 chars for CINEMATIC, the default
-// this screen silently uses since it has no style picker) plus two ", "
-// separators (4 chars) before sending the assembled string to Kling — this
-// reserves all of that fixed overhead so the on-screen counter's promise
-// ("final prompt won't exceed 2000 characters") is actually true, not
-// approximate: 2000 - 144 - 81 - 4 = 1771, rounded down.
+// PHOTO mode. klingProvider.ts#generateImageToVideo always appends the fixed
+// IMAGE_TO_VIDEO_BASE_SUFFIX (144 chars) plus a style fragment (up to 81
+// chars for CINEMATIC, the default this screen silently uses since it has no
+// style picker) plus two ", " separators (4 chars) before sending the
+// assembled string to Kling — this reserves all of that fixed overhead so
+// the on-screen counter's promise ("final prompt won't exceed 2000
+// characters") is actually true, not approximate: 2000 - 144 - 81 - 4 =
+// 1771, rounded down.
 export const MOMENTS_COMPOSE_PROMPT_MAX = 1750
 
-// Text-to-video mode's own cap — the Lambda appends TEXT_TO_VIDEO_SUFFIX
-// (lambda/vayustudio-reelgen/index.js), a shorter, generic quality guardrail
-// (no style fragment, no facial-identity preservation — there's no source
-// photo to preserve identity from in this mode): "high quality, smooth
-// natural motion, no text, no watermark, no logos." = 69 chars. 2000 - 69 -
-// 2 (one ", " separator) = 1929, rounded down.
+// Text-to-video mode's own cap — klingProvider.ts#generateTextToVideo always
+// appends TEXT_TO_VIDEO_BASE_SUFFIX, a shorter, generic quality guardrail (no
+// style fragment, no facial-identity preservation — there's no source photo
+// to preserve identity from in this mode): "high quality, smooth natural
+// motion, no text, no watermark, no logos." = 69 chars. 2000 - 69 - 2 (one
+// ", " separator) = 1929, rounded down.
 export const MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX = 1900
 
 // Text-only mode's own minimum — unlike photo mode (an empty prompt still

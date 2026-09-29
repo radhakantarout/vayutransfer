@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { verifyStudioJWT } from '@/lib/studio/auth'
 import { studioQueryByIndex, studioQueryByPK, studioGetItem, studioPutItem, TABLES } from '@/lib/studio/dynamodb'
 import { getStudioR2SignedDownloadUrl, getStudioR2SignedViewUrl } from '@/lib/studio/r2'
 import { checkAiCreditsAvailable } from '@/lib/studio/quota'
 import { deductAiSearchCredits, refundAiSearchCredits } from '@/lib/studio/billing'
-import { createReelClipTasks } from '@/lib/studio/videoProviders'
+import { createReelClipTasks, createTextToVideoTask } from '@/lib/studio/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import { resolveProjectForViewer, isOwnerOrAdmin } from '@/lib/studio/galleryMembers'
@@ -20,8 +19,6 @@ import {
   TEXT_TO_VIDEO_ASPECT_RATIOS, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
-
-const lambda = new LambdaClient({ region: process.env.AWS_REGION ?? 'ap-south-1' })
 
 // Project-wide "only one reel job at a time" dedupe (used by both mode
 // branches below) — was a single-status PROCESSING query before the async
@@ -181,18 +178,18 @@ export async function POST(
     const mode: 'photo' | 'text' = requestedMode === 'text' ? 'text' : 'photo'
 
     // ─── Text-to-video: a completely separate, much shorter validation +
-    // billing + Lambda-payload path — no photo selection, no template/style/
+    // billing + task-creation path — no photo selection, no template/style/
     // duration concepts apply (Kling's text-to-video endpoint doesn't take
     // any of them, confirmed via a real API call; see
-    // lambda/vayustudio-reelgen/index.js's createKlingTextToVideoTask header).
+    // klingProvider.ts#generateTextToVideo's header).
     if (mode === 'text') {
       // Sliced to MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX (1900), NOT the generic
       // MAX_CUSTOM_PROMPT_LENGTH (2000) — that budget already reserves room
-      // for the Lambda's fixed TEXT_TO_VIDEO_SUFFIX + separator (see
-      // constants/videoProviders.ts's comment above that constant); slicing
-      // to 2000 here would let the assembled prompt sent to Kling exceed
-      // 2000 chars for anything the UI's own cap doesn't also block (e.g. a
-      // direct API call bypassing the client-side textarea limit).
+      // for klingProvider.ts's fixed TEXT_TO_VIDEO_BASE_SUFFIX + separator
+      // (see constants/videoProviders.ts's comment above that constant);
+      // slicing to 2000 here would let the assembled prompt sent to Kling
+      // exceed 2000 chars for anything the UI's own cap doesn't also block
+      // (e.g. a direct API call bypassing the client-side textarea limit).
       const sanitizedTextPrompt = typeof textPrompt === 'string' ? textPrompt.trim().slice(0, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX) : ''
       // Mirrors the modal's own MIN_TEXT_PROMPT_LENGTH guard — enforced here
       // too since a near-empty prompt has no photo/style fallback to fall
@@ -257,6 +254,31 @@ export async function POST(
       const now = new Date().toISOString()
       const ttl = Math.floor(Date.now() / 1000) + 24 * 60 * 60
 
+      // Async-redesign (Phase 6, 2026-09-29 — text-to-video's own migration,
+      // deliberately last per reelgen-async-redesign-plan-2026-09 since this
+      // endpoint has no create-time dedupe backstop, see
+      // createTextToVideoTask's own comment): Kling task creation happens
+      // HERE, in the route, mirroring the photo-mode branch below exactly.
+      // The Lambda is invoked later, by app/studio/api/cron/reel-check
+      // (already mode-agnostic — see its own targetDimensions ternary), once
+      // the single text-to-video task is known to have succeeded. Credits
+      // are already deducted above — any failure from here on must refund,
+      // same as the photo-mode branch's own try/catch below.
+      let created: Awaited<ReturnType<typeof createTextToVideoTask>>
+      try {
+        created = await createTextToVideoTask({
+          reelId,
+          prompt: sanitizedTextPrompt,
+          aspectRatio: validAspectRatio,
+          negativePrompt: sanitizedNegativePrompt || undefined,
+          cfgScale: validCfgScale,
+        })
+      } catch (err) {
+        await refundAiSearchCredits(studioId, aiCreditsRequired)
+        console.error('[moments reels POST] Kling text-to-video task creation failed', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
+
       // style/resolution/durationSec don't have a real meaning for
       // text-to-video (no template picked, no per-clip duration control —
       // Kling's own endpoint ignores duration entirely, confirmed fixed
@@ -280,44 +302,38 @@ export async function POST(
         durationSec: 5,
         customPrompt: sanitizedTextPrompt,
         status: 'generating',
-        provider: 'kling',
+        provider: created.provider,
+        providerJobIds: [created.providerJobId],
         creditsCharged: aiCreditsRequired,
         createdAt: now,
       }
-      await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
-
       const job: StudioJob = {
-        jobId, jobType: 'AI_REEL', status: 'PENDING',
+        jobId, jobType: 'AI_REEL',
+        // PROCESSING, not PENDING — the Kling task is already live as of
+        // this request, no Lambda invocation is pending. reel-check finds
+        // this via the jobType-status-index GSI, same as photo-mode.
+        status: 'PROCESSING',
         projectId, studioId,
         inputPayload: { reelId, mode: 'text' },
+        outputPayload: { stage: 'generating', processed: 0, total: 1 },
         createdAt: now, ttl,
       }
-      await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
-
-      lambda.send(new InvokeCommand({
-        FunctionName: process.env.REEL_LAMBDA_ARN,
-        InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify({
-          jobId, reelId, studioId, projectId,
-          mode: 'text',
-          textPrompt: sanitizedTextPrompt,
-          aspectRatio: validAspectRatio,
-          negativePrompt: sanitizedNegativePrompt || undefined,
-          cfgScale: validCfgScale,
-          r2Bucket: process.env.STUDIO_R2_ORIGINAL_BUCKET,
-          r2Endpoint: process.env.STUDIO_R2_ENDPOINT,
-          r2AccessKeyId: process.env.STUDIO_R2_ORIGINAL_ACCESS_KEY_ID,
-          r2SecretAccessKey: process.env.STUDIO_R2_ORIGINAL_SECRET_ACCESS_KEY,
-          klingApiKey: process.env.KLING_API_KEY,
-          klingApiBaseUrl: process.env.KLING_API_BASE_URL || 'https://api-singapore.klingai.com',
-          klingModelName: process.env.KLING_MODEL_NAME || 'kling-3.0-turbo',
-          creditsCharged: aiCreditsRequired,
-          refundPool: 'aiSearchCredits',
-        })),
-      })).catch(async (err: unknown) => {
-        console.error('[moments reels POST] Lambda invoke failed (text-to-video)', err)
-        await refundAiCreditsAndFail(studioId, aiCreditsRequired, jobId, reelId)
-      })
+      // The Kling task above is already real and billed, with NO create-time
+      // dedupe on this endpoint (unlike image-to-video) and no reclaim path
+      // for text mode (see attemptReclaimReelClips's own scoping) — a write
+      // failure here would otherwise both leak the studio's credits AND
+      // orphan a paid Kling task with no record anywhere for reel-check to
+      // ever find. Refund + log the orphaned providerJobId (at least
+      // manually recoverable from Kling's own dashboard) rather than losing
+      // both the money and the trail.
+      try {
+        await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+        await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+      } catch (err) {
+        await refundAiSearchCredits(studioId, aiCreditsRequired)
+        console.error('[moments reels POST] failed to persist text-to-video reel/job after Kling task was already created (orphaned providerJobId:', created.providerJobId, ')', err)
+        return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+      }
 
       return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: aiCreditsRequired } })
     }
@@ -503,8 +519,6 @@ export async function POST(
       creditsCharged: creditsRequired,
       createdAt: now,
     }
-    await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
-
     const job: StudioJob = {
       jobId, jobType: 'AI_REEL',
       // PROCESSING, not PENDING — Kling tasks are already live as of this
@@ -516,20 +530,29 @@ export async function POST(
       outputPayload: { stage: 'generating', processed: 0, total: photos.length },
       createdAt: now, ttl,
     }
-    await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+    // The Kling clip tasks above are already real and billed (photo mode
+    // does get Kling's create-time dedupe, unlike text-to-video, but that
+    // only protects a RETRY of the exact same external_task_id — it doesn't
+    // help if this write fails and the caller instead gives up or starts a
+    // fresh reel) — a write failure here would leak the studio's credits and
+    // leave the paid clips with no record for reel-check to find (photo mode
+    // CAN reclaim these later via attemptReclaimReelClips, since the
+    // deterministic `${reelId}-${photoId}` id is recomputable from data this
+    // catch block still has in scope, but that requires a manual/UI-driven
+    // reclaim attempt — refunding immediately here is still strictly better
+    // than leaving the studio's credits silently gone with no explanation).
+    try {
+      await studioPutItem(TABLES.reels, reel as unknown as Record<string, unknown>)
+      await studioPutItem(TABLES.jobs, job as unknown as Record<string, unknown>)
+    } catch (err) {
+      await refundAiSearchCredits(studioId, creditsRequired)
+      console.error('[moments reels POST] failed to persist photo-mode reel/job after Kling tasks were already created (reelId:', reelId, ')', err)
+      return NextResponse.json({ success: false, error: 'GENERATION_FAILED', message: 'Could not start generation — please try again.' }, { status: 502 })
+    }
 
     return NextResponse.json({ success: true, data: { reelId, jobId, creditsCharged: creditsRequired } })
   } catch (err) {
     console.error('[moments reels POST]', err)
     return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
   }
-}
-
-async function refundAiCreditsAndFail(studioId: string, credits: number, jobId: string, reelId: string) {
-  const { refundAiSearchCredits } = await import('@/lib/studio/billing')
-  const { studioUpdateItem } = await import('@/lib/studio/dynamodb')
-  await refundAiSearchCredits(studioId, credits)
-  const now = new Date().toISOString()
-  await studioUpdateItem(TABLES.jobs, { jobId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'FAILED', ':msg': 'Could not start generation', ':now': now }, { '#s': 'status' })
-  await studioUpdateItem(TABLES.reels, { reelId }, 'SET #s = :failed, errorMessage = :msg, completedAt = :now', { ':failed': 'failed', ':msg': 'Could not start generation', ':now': now }, { '#s': 'status' })
 }
