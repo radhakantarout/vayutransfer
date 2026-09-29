@@ -20,11 +20,18 @@ interface ReelHistoryItem {
 
 const STATUS_LABEL: Record<string, string> = {
   generating: 'Generating…',
+  // 'assembling' is a real, brief transient status reel-check sets right
+  // before invoking the finalize Lambda (whether or not there's actually
+  // anything to assemble — an Omni/text reel's single clip just gets
+  // downloaded+uploaded, no real concat) — previously unmapped here, so it
+  // fell through to showing the raw string "assembling" to the user.
+  assembling: 'Finishing up…',
   completed: 'Ready',
   failed: 'Failed',
 }
 const STATUS_DOT: Record<string, string> = {
   generating: 'bg-yellow-400 animate-pulse',
+  assembling: 'bg-yellow-400 animate-pulse',
   completed: 'bg-success',
   failed: 'bg-danger',
 }
