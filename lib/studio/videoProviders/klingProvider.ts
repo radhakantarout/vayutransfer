@@ -64,6 +64,33 @@ const TEXT_TO_VIDEO_BASE_SUFFIX = 'high quality, smooth natural motion, no text,
 // (confirmed: the former returns an empty array for text-to-video tasks).
 const TEXT_TO_VIDEO_JOB_PREFIX = 'text:'
 
+// Every Kling call in this file goes through this — a real production
+// incident (2026-09-29) found a reel stuck showing "generating" for over an
+// hour despite Kling having genuinely completed and billed the clip: Kling
+// itself confirmed 'succeeded' when queried directly, and the exact same
+// status-check code run locally with the same credentials returned
+// 'completed' immediately, but the live reel-check cron never advanced it.
+// The strongest remaining explanation is a hung/very slow fetch specific to
+// Vercel's production network path — this file had NO timeout at all,
+// unlike the reelgen Lambda's own Kling calls, which got the identical fix
+// after an earlier, separate hang incident (see lambda/vayustudio-reelgen/
+// index.js's fetchWithTimeout). A hung fetch here doesn't crash reel-check
+// (there's no top-level try/catch around the per-job loop to catch it
+// cleanly), so a call that never resolves would silently starve that
+// specific job forever with no error anywhere to explain why. A timeout
+// turns a hang into an ordinary rejected promise, which checkReelClipStatuses
+// already handles (surfaces as 'processing' with an errorMessage — see
+// below — rather than a permanent, invisible stall).
+async function fetchWithTimeout(url: string, options?: RequestInit, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 interface KlingCreateResponse {
   code: number
   message: string
@@ -101,7 +128,7 @@ export class KlingProvider implements VideoProvider {
   async generateImageToVideo(request: ImageToVideoRequest): Promise<ImageToVideoResult> {
     this.assertConfigured()
 
-    const res = await fetch(`${KLING_API_BASE_URL}/image-to-video/${KLING_MODEL_NAME}`, {
+    const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/image-to-video/${KLING_MODEL_NAME}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${KLING_API_KEY}`,
@@ -176,7 +203,7 @@ export class KlingProvider implements VideoProvider {
     if (typeof request.cfgScale === 'number') body.cfg_scale = request.cfgScale
     if (request.cameraControl) body.camera_control = request.cameraControl
 
-    const res = await fetch(`${KLING_API_BASE_URL}/text-to-video/${KLING_MODEL_NAME}`, {
+    const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/text-to-video/${KLING_MODEL_NAME}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${KLING_API_KEY}`,
@@ -205,7 +232,7 @@ export class KlingProvider implements VideoProvider {
       return this.getTextToVideoStatus(providerJobId.slice(TEXT_TO_VIDEO_JOB_PREFIX.length))
     }
 
-    const res = await fetch(`${KLING_API_BASE_URL}/tasks?external_task_ids=${encodeURIComponent(providerJobId)}`, {
+    const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/tasks?external_task_ids=${encodeURIComponent(providerJobId)}`, {
       headers: {
         'Authorization': `Bearer ${KLING_API_KEY}`,
         'Content-Type': 'application/json',
@@ -238,7 +265,7 @@ export class KlingProvider implements VideoProvider {
   // for image-to-video. This is the single most easily-miswired part of this
   // integration if copy-pasted without noticing the param name changed.
   private async getTextToVideoStatus(klingTaskId: string): Promise<GenerationStatusResult> {
-    const res = await fetch(`${KLING_API_BASE_URL}/tasks?task_ids=${encodeURIComponent(klingTaskId)}`, {
+    const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/tasks?task_ids=${encodeURIComponent(klingTaskId)}`, {
       headers: {
         'Authorization': `Bearer ${KLING_API_KEY}`,
         'Content-Type': 'application/json',

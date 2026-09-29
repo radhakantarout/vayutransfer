@@ -173,9 +173,14 @@ export async function checkReelClipStatuses(params: {
       // reporting the task itself failed — surfaced as 'processing' so a
       // transient check-cycle hiccup doesn't fail (and refund) a job that's
       // still genuinely generating. The next ~1/min check cycle just retries.
+      // errorMessage is still populated (a real production stuck-reel
+      // incident, 2026-09-29, had nothing anywhere — not even accessible
+      // logs — explaining why a job never advanced) so the caller can
+      // persist it somewhere inspectable (see reel-check's own use of this).
       const reason = outcome.reason as unknown
+      const errorMessage = reason instanceof Error ? reason.message : String(reason)
       console.error(`[reelClipTasks] status check failed for ${providerJobId}:`, reason)
-      result[providerJobId] = { status: 'processing' }
+      result[providerJobId] = { status: 'processing', errorMessage }
     }
   })
   return result

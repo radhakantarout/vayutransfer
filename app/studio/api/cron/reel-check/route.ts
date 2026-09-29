@@ -85,7 +85,18 @@ export async function GET(req: NextRequest) {
     try {
       statuses = await checkReelClipStatuses({ providerName: reel.provider, providerJobIds: reel.providerJobIds })
     } catch (err) {
+      // checkReelClipStatuses is designed to never throw (Promise.allSettled
+      // internally) — reaching here means something upstream of that (e.g.
+      // router.getByName rejecting an unrecognized reel.provider) failed.
+      // Surfaced the same way as a normal per-clip check failure so this
+      // stays diagnosable from the job record alone.
+      const errorMessage = err instanceof Error ? err.message : String(err)
       console.error('[reel-check] status check threw for reel', reelId, err)
+      await studioUpdateItem(
+        TABLES.jobs, { jobId: job.jobId },
+        'SET outputPayload.lastCheckError = :err, updatedAt = :now',
+        { ':err': errorMessage, ':now': new Date().toISOString() }
+      ).catch((e) => console.error('[reel-check] lastCheckError update failed', reelId, e))
       stillGenerating++
       continue
     }
@@ -122,10 +133,19 @@ export async function GET(req: NextRequest) {
     }
 
     if (!allCompleted) {
+      // lastCheckError surfaces a genuine status-check failure (network
+      // hiccup, unexpected Kling response, etc. — see
+      // checkReelClipStatuses's own comment) directly into a record this
+      // route can already read via a plain DynamoDB get — no log access
+      // needed to diagnose a stuck reel. Not a definitive root cause on its
+      // own (a real production incident, 2026-09-29, saw a job stuck for
+      // 1h+ with no way to inspect why), just the cheapest possible
+      // improvement over "provably stuck, zero visible reason."
+      const lastCheckError = values.find((s) => s?.errorMessage)?.errorMessage
       await studioUpdateItem(
         TABLES.jobs, { jobId: job.jobId },
         'SET outputPayload = :p, updatedAt = :now',
-        { ':p': { stage: 'generating', processed: values.filter((s) => s?.status === 'completed').length, total: values.length }, ':now': new Date().toISOString() }
+        { ':p': { stage: 'generating', processed: values.filter((s) => s?.status === 'completed').length, total: values.length, ...(lastCheckError ? { lastCheckError } : {}) }, ':now': new Date().toISOString() }
       ).catch((e) => console.error('[reel-check] progress update failed', reelId, e))
       stillGenerating++
       continue
