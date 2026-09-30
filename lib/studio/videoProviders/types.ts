@@ -57,6 +57,54 @@ export interface TextToVideoResult {
   providerJobId: string
 }
 
+// Kling 3.0 Omni (reel-generator-omni-redesign plan, 2026-09-29) — a THIRD,
+// genuinely different Kling endpoint (POST /omni-video/kling-3.0-omni),
+// confirmed via a real API call. Unlike image-to-video/text-to-video, one
+// call takes 1+ reference items (images today; video/audio/subject kinds
+// are typed here for the full v1 scope but their exact request shape is
+// NOT yet confirmed — see OmniReference's own comment) referenced inline in
+// the prompt via literal `<<<tag>>>` markers, confirmed required by a real
+// 400 response. Status polling reuses the SAME `external_task_ids=` scheme
+// as image-to-video (confirmed) — simpler than text-to-video, which needed
+// its own `task_ids=`/prefix-discrimination scheme.
+export interface OmniReference {
+  kind: 'image' | 'video' | 'audio' | 'subject'
+  // Must exactly match a `<<<tag>>>` marker literally present in the
+  // request's prompt string — Kling rejects (or silently ignores; not
+  // independently tested) a reference with no corresponding prompt mention.
+  tag: string
+  url: string
+  // 'subject' kind only — 1-3 image URLs forming one named consistent
+  // character (per third-party doc cross-reference; NOT independently
+  // confirmed against a real call — do not build UI/routes that construct
+  // a subject reference until this is confirmed).
+  extraUrls?: string[]
+}
+
+export interface OmniVideoRequest {
+  // Must literally contain a `<<<tag>>>` marker per entry in `references`.
+  prompt: string
+  references: OmniReference[]
+  durationSec: number
+  aspectRatio: ReelAspectRatio
+  resolution: ReelResolution
+  // Maps to Kling's real `settings.audio` field, confirmed to be a STRING
+  // enum ('native'|'off'|'original'), NOT a boolean — a first real test
+  // with a boolean was rejected. `true` here means 'native' (generate new
+  // audio); `original` (preserve a reference video's own audio) is not yet
+  // exposed at this interface layer since it only makes sense paired with
+  // a 'video' kind reference, whose own request shape isn't confirmed yet.
+  generateAudio?: boolean
+  externalTaskId: string
+}
+
+export interface OmniVideoResult {
+  // Unprefixed, same as ImageToVideoResult#providerJobId — Omni's confirmed
+  // `external_task_ids=` poll scheme means getGenerationStatus needs no
+  // special-casing for Omni job ids at all, unlike text-to-video's.
+  providerJobId: string
+}
+
 export interface GenerationStatusResult {
   status: 'processing' | 'completed' | 'failed'
   outputUrl?: string
@@ -70,6 +118,9 @@ export interface ProviderCapabilities {
   resolutions: ReelResolution[]
   supportsAudio: boolean
   supportsTextToVideo: boolean
+  supportsOmni: boolean
+  maxOmniReferenceImages: number
+  maxOmniReferenceImagesWithVideo: number
 }
 
 export interface VideoProvider {
@@ -79,6 +130,9 @@ export interface VideoProvider {
   // future Runway/Luma/Veo integration may or may not). Callers must check
   // getCapabilities().supportsTextToVideo before calling this.
   generateTextToVideo?(request: TextToVideoRequest): Promise<TextToVideoResult>
+  // Optional — same pattern as generateTextToVideo?. Callers must check
+  // getCapabilities().supportsOmni before calling this.
+  generateOmniVideo?(request: OmniVideoRequest): Promise<OmniVideoResult>
   getGenerationStatus(providerJobId: string): Promise<GenerationStatusResult>
   cancelGeneration(providerJobId: string): Promise<void>
   getCapabilities(): ProviderCapabilities

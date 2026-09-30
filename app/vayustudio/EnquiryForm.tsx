@@ -1,13 +1,30 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSession, signIn } from 'next-auth/react'
 
+// Gated behind a real NextAuth session (Google or email-OTP — both verify
+// the email before a session can exist) since 2026-09-30. Previously this
+// form let anyone POST any string as "email" with zero verification, which
+// made /api/vayustudio/enquiry a magnet for bot spam (random-string
+// enquiries, real SES cost per submission, no way to tell a real prospect
+// from noise). The email a submission is filed under now comes only from
+// the verified session server-side, never from this form — see the API
+// route's own comment for the full reasoning.
 export default function EnquiryForm() {
-  const [form, setForm] = useState({ name: '', studioName: '', email: '', phone: '', message: '' })
+  const { data: session, status } = useSession()
+  const [form, setForm] = useState({ name: '', studioName: '', phone: '', message: '' })
   const [loading, setLoading]  = useState(false)
   const [success, setSuccess]  = useState(false)
   const [error, setError]      = useState<string | null>(null)
   const [emailExists, setEmailExists] = useState(false)
+
+  // Prefills "Your name" from the verified Google/OTP profile once
+  // available — purely a convenience, not a security boundary (name stays
+  // freely editable, only email is locked).
+  useEffect(() => {
+    if (session?.user?.name && !form.name) setForm((f) => ({ ...f, name: session.user!.name! }))
+  }, [session, form.name])
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -26,6 +43,8 @@ export default function EnquiryForm() {
         if (res.error === 'EMAIL_EXISTS') {
           setEmailExists(true)
           setError('An account with this email already exists.')
+        } else if (res.error === 'UNAUTHENTICATED') {
+          setError('Your session expired — please sign in again below.')
         } else {
           setError('Something went wrong. Please try WhatsApp below.')
         }
@@ -43,31 +62,79 @@ export default function EnquiryForm() {
     <div className="bg-success/10 border border-success/30 rounded-2xl p-8 text-center space-y-3">
       <div className="text-4xl">✅</div>
       <div className="text-text-primary font-bold text-lg">We've got your request!</div>
-      <div className="text-muted text-sm">We'll reach out to {form.email} within 24 hours to set up your studio.</div>
+      <div className="text-muted text-sm">We'll reach out to {session?.user?.email} within 24 hours to set up your studio.</div>
+    </div>
+  )
+
+  if (status === 'loading') return (
+    <div className="bg-card border border-border rounded-2xl p-8 flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+
+  if (status !== 'authenticated') return (
+    <div className="bg-card border border-border rounded-2xl p-8 text-center space-y-4">
+      <div className="text-3xl">🔒</div>
+      <div className="text-text-primary font-bold text-lg">Verify your email to continue</div>
+      <p className="text-muted text-sm">To keep enquiries genuine (and stop spam), please sign in first — takes a few seconds, no password needed.</p>
+      <button
+        onClick={() => signIn('google')}
+        className="w-full bg-accent text-bg font-bold py-3.5 rounded-xl hover:bg-accent/90 transition-colors text-sm"
+      >
+        Continue with Google
+      </button>
+      <p className="text-xs text-muted">
+        Or reach us directly at{' '}
+        <a href="mailto:support@vayutransfer.com" className="text-accent hover:underline">support@vayutransfer.com</a>
+      </p>
     </div>
   )
 
   return (
     <form onSubmit={handleSubmit} className="bg-card border border-border rounded-2xl p-8 space-y-5">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-        {[
-          { label: 'Your name',    key: 'name',        type: 'text',  placeholder: 'Ravi Kumar',         required: true  },
-          { label: 'Studio name',  key: 'studioName',  type: 'text',  placeholder: 'Ravi Clicks Studio', required: true  },
-          { label: 'Email',        key: 'email',        type: 'email', placeholder: 'ravi@raviphotos.com', required: true  },
-          { label: 'Phone',        key: 'phone',        type: 'tel',   placeholder: '9876543210',          required: true  },
-        ].map(({ label, key, type, placeholder, required }) => (
-          <div key={key} className="space-y-1.5">
-            <label className="text-sm text-muted">{label}{required && <span className="text-danger ml-0.5">*</span>}</label>
-            <input
-              type={type}
-              value={form[key as keyof typeof form]}
-              onChange={(e) => set(key, e.target.value)}
-              required={required}
-              placeholder={placeholder}
-              className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent"
-            />
-          </div>
-        ))}
+        <div className="space-y-1.5">
+          <label className="text-sm text-muted">Your name<span className="text-danger ml-0.5">*</span></label>
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => set('name', e.target.value)}
+            required
+            placeholder="Ravi Kumar"
+            className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm text-muted">Studio name<span className="text-danger ml-0.5">*</span></label>
+          <input
+            type="text"
+            value={form.studioName}
+            onChange={(e) => set('studioName', e.target.value)}
+            required
+            placeholder="Ravi Clicks Studio"
+            className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm text-muted flex items-center gap-1.5">Email <span className="text-success text-xs">✓ verified</span></label>
+          <input
+            type="email"
+            value={session?.user?.email ?? ''}
+            disabled
+            className="w-full bg-bg/50 border border-border rounded-lg px-4 py-3 text-sm text-muted cursor-not-allowed"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm text-muted">Phone<span className="text-danger ml-0.5">*</span></label>
+          <input
+            type="tel"
+            value={form.phone}
+            onChange={(e) => set('phone', e.target.value)}
+            required
+            placeholder="9876543210"
+            className="w-full bg-bg border border-border rounded-lg px-4 py-3 text-sm text-text-primary placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
       </div>
 
       <div className="space-y-1.5">

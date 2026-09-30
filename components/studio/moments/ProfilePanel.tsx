@@ -85,8 +85,11 @@ function CollapsibleSection({
   )
 }
 
-const REEL_ACTIVITY_STATUS_DOT: Record<string, string> = { generating: 'bg-yellow-400 animate-pulse', completed: 'bg-success', failed: 'bg-danger' }
-const REEL_ACTIVITY_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', completed: 'Ready', failed: 'Failed' }
+// 'assembling' is a real, brief transient status (see the same fix in
+// app/studio/moments/[projectId]/page.tsx) — previously unmapped here too,
+// falling through to the raw string "assembling".
+const REEL_ACTIVITY_STATUS_DOT: Record<string, string> = { generating: 'bg-yellow-400 animate-pulse', assembling: 'bg-yellow-400 animate-pulse', completed: 'bg-success', failed: 'bg-danger' }
+const REEL_ACTIVITY_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', assembling: 'Finishing up…', completed: 'Ready', failed: 'Failed' }
 
 function fmtActivityDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })

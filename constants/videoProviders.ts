@@ -250,6 +250,20 @@ export function getReelTemplate(templateId: string): ReelTemplate | undefined {
 export const REEL_RESOLUTIONS = ['720p', '1080p'] as const
 export const DEFAULT_REEL_RESOLUTION = '720p'
 
+// Kling 3.0 Omni's own wider resolution set (reel-generator-omni-redesign
+// plan) — deliberately a SEPARATE constant from REEL_RESOLUTIONS, not an
+// extension of it: image-to-video/text-to-video only ever accept 720p/1080p
+// (confirmed, unchanged), and '4k' must never leak into their own
+// validation/UI. '4k' resolution-tier acceptance itself is NOT independently
+// confirmed against a real call (only '720p' was tested) — treat as a
+// reasonable extrapolation of the same lowercase convention until verified.
+export const OMNI_RESOLUTIONS = ['720p', '1080p', '4k'] as const
+export const DEFAULT_OMNI_RESOLUTION = '720p'
+// 4K is real money (see computeOmniVideoCost's own header) — never the
+// silent default; a studio must explicitly pick it.
+export const OMNI_MAX_REFERENCE_IMAGES = 7
+export const OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO = 4
+
 export const REEL_DURATIONS = [15, 30, 45, 60] as const
 export const DEFAULT_REEL_DURATION_SEC = 30
 
@@ -360,6 +374,52 @@ export function computeTextToVideoCost(
   const margin = rates?.targetMargin ?? TARGET_MARGIN
   const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
   const rawCostPaise = Math.round(unitsPerVideo * costPerUnit + overhead)
+  const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
+  const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
+  return { rawCostPaise, sellPricePaise, creditsRequired }
+}
+
+// Kling 3.0 Omni's own pricing (reel-generator-omni-redesign plan) — REAL,
+// confirmed directly from Kling's own pricing page (screenshot, 2026-09-29),
+// not estimated. Genuinely its own table, NOT a reuse of
+// KLING_UNITS_PER_SEC_720/1080 above (those are image-to-video's own,
+// different rates) — duration-linear per-second billing like
+// computeReelCost, but the units/sec rate depends on resolution tier AND
+// whether a video reference or native audio is requested. The $0.14/unit
+// conversion matches KLING_COST_PAISE_PER_UNIT exactly across every cell of
+// the confirmed table, so that one base rate is reused as-is.
+//
+// Resolution-tier labels (Standard=720p, Pro=1080p) are inferred from
+// context in the pricing screenshot, not read from an explicit API enum —
+// only '720p' itself was independently confirmed against a real call.
+// "With video input" + "With native audio" is not a real billable
+// combination at all (Kling's own real constraint: the two are mutually
+// exclusive) and has no entry here.
+export const KLING_OMNI_UNITS_PER_SEC: Record<'720p' | '1080p' | '4k', { noVideoNoAudio: number; noVideoWithAudio: number; withVideoNoAudio: number }> = {
+  '720p':  { noVideoNoAudio: 0.6, noVideoWithAudio: 0.8, withVideoNoAudio: 0.9 },
+  '1080p': { noVideoNoAudio: 0.8, noVideoWithAudio: 1.0, withVideoNoAudio: 1.2 },
+  // 4K is flat regardless of audio/video-reference combo per the confirmed
+  // table — real money: a 15s 4K clip alone is ~₹611 in raw Kling spend.
+  // Never the silent default (see DEFAULT_OMNI_RESOLUTION) — the UI must
+  // show this cost prominently before generation, same existing pattern
+  // every other resolution/duration choice already uses.
+  '4k':    { noVideoNoAudio: 3.0, noVideoWithAudio: 3.0, withVideoNoAudio: 3.0 },
+}
+
+export function computeOmniVideoCost(
+  durationSec: number,
+  resolution: '720p' | '1080p' | '4k',
+  hasVideoReference: boolean,
+  generateAudio: boolean,
+  rates?: { klingCostPaisePerUnit?: number; klingOmniUnitsPerSec?: typeof KLING_OMNI_UNITS_PER_SEC; fixedOverheadPaisePerReel?: number; targetMargin?: number; creditValuePaise?: number }
+): ReelCostEstimate {
+  const costPerUnit = rates?.klingCostPaisePerUnit ?? KLING_COST_PAISE_PER_UNIT
+  const tier = (rates?.klingOmniUnitsPerSec ?? KLING_OMNI_UNITS_PER_SEC)[resolution]
+  const unitsPerSec = hasVideoReference ? tier.withVideoNoAudio : (generateAudio ? tier.noVideoWithAudio : tier.noVideoNoAudio)
+  const overhead = rates?.fixedOverheadPaisePerReel ?? FIXED_OVERHEAD_PAISE_PER_REEL
+  const margin = rates?.targetMargin ?? TARGET_MARGIN
+  const creditValue = rates?.creditValuePaise ?? CREDIT_VALUE_PAISE
+  const rawCostPaise = Math.round(durationSec * unitsPerSec * costPerUnit + overhead)
   const sellPricePaise = Math.round(rawCostPaise / (1 - margin))
   const creditsRequired = Math.max(1, Math.ceil(sellPricePaise / creditValue))
   return { rawCostPaise, sellPricePaise, creditsRequired }

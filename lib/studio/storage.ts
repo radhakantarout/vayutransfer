@@ -65,6 +65,21 @@ export async function getMediaDownloadUrl(
 export async function getMediaPreviewUrl(file: StorageFile): Promise<string | undefined> {
   if (file.r2PreviewUrl) return file.r2PreviewUrl
   if (file.fileType === 'VIDEO') return undefined
+  // resolveCurrent's own contract assumes a real file (exactly one of
+  // s3Key/r2Key always set) — true for every normal upload, but this is the
+  // one call site that runs once per file on every routine gallery listing,
+  // so it's the one place a genuinely corrupt/ghost record (a real one
+  // found 2026-09-29: only {processingStatus, projectId, fileId,
+  // updatedAt}, no key of any kind — likely a stale async callback racing a
+  // deleted file, DynamoDB's UpdateItem silently creating a stub on a
+  // missing key rather than erroring) reliably surfaces first, crashing the
+  // AWS SDK call with "No value provided for input HTTP label: Key." Fails
+  // the same clean way a still-processing video already does, rather than
+  // calling resolveCurrent at all.
+  if (!file.editedR2Key && !file.editedS3Key && !file.r2Key && !file.s3Key) {
+    console.error('[getMediaPreviewUrl] file has no storage key at all (corrupt/ghost record), skipping', file)
+    return undefined
+  }
   const { key, backend } = resolveCurrent(file)
   try {
     return backend === 'R2' ? await r2.getStudioR2SignedViewUrl(key) : await s3.getStudioSignedViewUrl(key)

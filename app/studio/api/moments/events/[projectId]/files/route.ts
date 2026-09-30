@@ -23,7 +23,19 @@ export async function GET(
     if (!resolved) return NextResponse.json({ success: false, error: 'NOT_FOUND' }, { status: 404 })
     const { project } = resolved
 
-    const files = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+    // Default view (no ?purpose=) is the normal client-facing gallery —
+    // reference uploads for Kling 3.0 Omni (purpose: 'REEL_REFERENCE',
+    // reel-generator-omni-redesign plan) are generation inputs, not
+    // deliverables, and must never appear in the grid/lightbox. Filtered
+    // here (once, before every downstream sweep/enrichment step below) so
+    // nothing else in this route has to remember to exclude them.
+    // `?purpose=REEL_REFERENCE` is the reel composer's own reference picker
+    // fetching the OTHER subset — deliberately not both at once, since the
+    // two have no legitimate reason to ever be shown side by side.
+    const requestedPurpose = req.nextUrl.searchParams.get('purpose')
+    const wantReferences = requestedPurpose === 'REEL_REFERENCE'
+    const allFiles = await studioQueryByPK<MediaFile>(TABLES.mediafiles, 'projectId', projectId)
+    const files = allFiles.filter((f) => wantReferences ? f.purpose === 'REEL_REFERENCE' : f.purpose !== 'REEL_REFERENCE')
 
     if (!process.env.WATERMARK_LAMBDA_ARN || !process.env.VIDEO_TRANSCODE_LAMBDA_ARN) {
       // Only force-flip files whose OWN processing Lambda is actually
@@ -185,15 +197,21 @@ export async function DELETE(
 
     const now = new Date().toISOString()
     const totalBytes = files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
+    // Only gallery deliverables ever incremented totalFiles (see
+    // upload-complete's own matching guard) — a reference upload's delete
+    // must not decrement it, or the count drifts negative/wrong over time.
+    const galleryFileCount = files.filter((f) => f.purpose !== 'REEL_REFERENCE').length
 
-    await studioUpdateItem(
-      TABLES.projects,
-      { studioId, projectId },
-      'ADD totalFiles :neg SET updatedAt = :now',
-      { ':neg': -files.length, ':now': now },
-      undefined,
-      'attribute_exists(studioId)'
-    ).catch(() => {})
+    if (galleryFileCount > 0) {
+      await studioUpdateItem(
+        TABLES.projects,
+        { studioId, projectId },
+        'ADD totalFiles :neg SET updatedAt = :now',
+        { ':neg': -galleryFileCount, ':now': now },
+        undefined,
+        'attribute_exists(studioId)'
+      ).catch(() => {})
+    }
     await studioUpdateItem(
       TABLES.studios,
       { studioId },

@@ -1,5 +1,5 @@
 export * from './types'
 export { KlingProvider } from './klingProvider'
 export { VideoProviderRouter } from './router'
-export { createReelClipTasks, checkReelClipStatuses, attemptReclaimReelClips, createTextToVideoTask } from './reelClipTasks'
-export type { ReelClipRequest, ReelClipTaskSuccess, ReelClipTaskFailure, CreateReelClipTasksResult, ReelClipStatusMap, ReclaimResult, CreateTextToVideoTaskResult } from './reelClipTasks'
+export { createReelClipTasks, checkReelClipStatuses, attemptReclaimReelClips, createTextToVideoTask, createOmniVideoTask } from './reelClipTasks'
+export type { ReelClipRequest, ReelClipTaskSuccess, ReelClipTaskFailure, CreateReelClipTasksResult, ReelClipStatusMap, ReclaimResult, CreateTextToVideoTaskResult, OmniReferenceInput, CreateOmniVideoTaskResult } from './reelClipTasks'

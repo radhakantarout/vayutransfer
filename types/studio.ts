@@ -355,7 +355,15 @@ export interface MediaFile {
   fileId: string
   studioId: string
   originalFilename: string
-  fileType: 'IMAGE' | 'VIDEO'
+  fileType: 'IMAGE' | 'VIDEO' | 'AUDIO'
+  // undefined = 'GALLERY' (every file before this field existed, and every
+  // normal upload today) — a real client-facing deliverable, counted and
+  // shown everywhere gallery files are. 'REEL_REFERENCE' (Kling 3.0 Omni
+  // redesign, 2026-09-29) is a generation INPUT, not a deliverable — still
+  // counted against the studio's storage quota (explicit product decision:
+  // same rules as gallery photos, not a separate ephemeral path), but
+  // filtered out of every client-facing gallery list/grid by `purpose`.
+  purpose?: 'GALLERY' | 'REEL_REFERENCE'
   mimeType: string
   sizeBytes: number
   // Optional now that new uploads write to R2 instead — a file has exactly
@@ -483,7 +491,15 @@ export type ReelStyle = 'CINEMATIC' | 'ROMANTIC' | 'BOLLYWOOD' | 'LUXURY' | 'MEM
 // shared type rather than a cast at the write site, so the field's real
 // possible values are honest wherever it's read.
 export type ReelAspectRatio = '9:16' | '4:5' | '16:9' | '1:1'
-export type ReelResolution = '720p' | '1080p'
+// '4k' only ever appears on mode: 'omni' reels (Kling 3.0 Omni's own
+// resolution tier, confirmed 2026-09-29 alongside the rest of the Omni
+// contract — see the reel-generator-omni-redesign plan) — the older
+// image-to-video/text-to-video endpoints only ever accept 720p/1080p
+// (REEL_RESOLUTIONS in constants/videoProviders.ts stays that narrower set;
+// OMNI_RESOLUTIONS is the wider one). Included in this one shared type
+// rather than a cast at the write site, same precedent as ReelAspectRatio's
+// '1:1' above.
+export type ReelResolution = '720p' | '1080p' | '4k'
 // Finer-grained than JobStatus (which only tracks the envelope) — this is
 // the user-facing generation stage shown in ReelGenerationScreen.
 export type ReelStatus =
@@ -539,9 +555,26 @@ export interface StudioReel {
   // 'text' reels have photoIds: [] — Kling's text-to-video endpoint has no
   // source-photo concept at all, confirmed via a real API call (2026-09-18):
   // it's a genuinely different endpoint (POST /text-to-video/{model}, flat
-  // body) from image-to-video, not a variant of it.
-  mode?: 'photo' | 'text'
+  // body) from image-to-video, not a variant of it. 'omni' reels (Kling 3.0
+  // Omni redesign, 2026-09-29) use `omniReferences` below instead of
+  // `photoIds` for their inputs — confirmed a genuinely different endpoint
+  // again (POST /omni-video/kling-3.0-omni), not a variant of either.
+  mode?: 'photo' | 'text' | 'omni'
   photoIds: string[]
+  // Omni-only — the reference images/video/audio/subject items a reel was
+  // built from, in prompt-tag order (tag values like 'image_1'/'image_2'
+  // must match what's literally embedded in customPrompt as <<<tag>>>
+  // markers, confirmed required by Kling's own real API, 2026-09-29). r2Key
+  // is a MediaFile.r2Key for image/video/audio references (reference
+  // uploads are ordinary MediaFile rows tagged `purpose: 'REEL_REFERENCE'`,
+  // counted against the studio's normal storage quota — see the
+  // reel-generator-omni-redesign plan's Phase 2).
+  omniReferences?: { kind: 'image' | 'video' | 'audio' | 'subject'; tag: string; r2Key: string }[]
+  // Omni-only — native synchronized audio generation, mutually exclusive
+  // with a 'video' kind reference in omniReferences (Kling's own real
+  // constraint, confirmed 2026-09-29 — "generate audio and reference video
+  // are mutually exclusive").
+  generateAudio?: boolean
   analysis?: ReelPhotoAnalysis[]
   storyPlan?: ReelStoryPlan
   style: ReelStyle

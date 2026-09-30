@@ -121,37 +121,32 @@ function CommentsSheet({
   const [comments, setComments] = useState<CommentItem[] | null>(null)
   const [text, setText] = useState('')
   const [posting, setPosting] = useState(false)
-  // Backoff on repeated failures — without this, a backend hiccup gets
-  // amplified by every open sheet still hammering at full 4s cadence right
-  // through it, compounding whatever caused the hiccup in the first place.
-  const failCount = useRef(0)
-  const skipUntil = useRef(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const load = useCallback(() => {
-    fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/comments`)
+    return fetch(`/studio/api/moments/events/${projectId}/files/${fileId}/comments`)
       .then((r) => r.json())
       .then((res) => {
         if (!res.success) throw new Error('not success')
-        failCount.current = 0
         setComments(res.data)
       })
       .catch(() => {
         setComments((prev) => prev ?? []) // keep last-known state on a transient failure instead of wiping it
-        failCount.current += 1
-        skipUntil.current = Date.now() + Math.min(30000, 4000 * 2 ** failCount.current)
       })
   }, [projectId, fileId])
 
+  // Fetches once when the sheet opens — no more background poll (removed
+  // 2026-09-30 alongside the main gallery's own poll, same reasoning: a
+  // comment thread doesn't need sub-5-second live updates badly enough to
+  // justify a request every 4s for as long as the sheet stays open). The
+  // refresh icon next to the title re-triggers this same load() manually.
   useEffect(() => { load() }, [load])
-
-  // Live-ish — polls for new comments from other people while this sheet is
-  // open, so a conversation feels shared without anyone hitting refresh.
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible' && Date.now() >= skipUntil.current) load()
-    }, 4000)
-    return () => clearInterval(timer)
-  }, [load])
+  const handleRefresh = async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    await load()
+    setIsRefreshing(false)
+  }
 
   const post = async () => {
     const trimmed = text.trim()
@@ -189,7 +184,19 @@ function CommentsSheet({
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <h2 className="text-sm font-bold text-text-primary">💬 Comments</h2>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              aria-label="Refresh comments"
+              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted disabled:opacity-50"
+            >
+              <svg className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            </button>
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-border/60 text-muted">✕</button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
           {comments === null ? (
@@ -349,16 +356,21 @@ function GroupChatModal({ projectId, onClose }: { projectId: string; onClose: ()
       })
       .catch(() => {
         failCount.current += 1
-        skipUntil.current = Date.now() + Math.min(30000, 3000 * 2 ** failCount.current)
+        skipUntil.current = Date.now() + Math.min(30000, 5000 * 2 ** failCount.current)
       })
   }, [projectId])
 
   useEffect(() => { load() }, [load])
 
+  // The one place on this page that keeps a real background poll (2026-09-30
+  // — deliberately, per product decision: group chat is the one feature
+  // here that actually behaves like a live conversation, unlike the photo
+  // gallery/comments, which are now manual-refresh-only). 5s, only while
+  // this modal is open — was 3s.
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible' && Date.now() >= skipUntil.current) load()
-    }, 3000)
+    }, 5000)
     return () => clearInterval(timer)
   }, [load])
 
@@ -842,8 +854,13 @@ interface ReelHistoryItem {
   regenerate: { photoIds: string[] } & ReelRegeneratePrefill
 }
 
-const REEL_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', completed: 'Ready', failed: 'Failed' }
-const REEL_STATUS_DOT: Record<string, string> = { generating: 'bg-yellow-400 animate-pulse', completed: 'bg-success', failed: 'bg-danger' }
+// 'assembling' is a real, brief transient status reel-check sets right
+// before invoking the finalize Lambda (whether or not there's actually
+// anything to assemble — an Omni/text reel's single clip just gets
+// downloaded+uploaded, no real concat) — previously unmapped here, so it
+// fell through to showing the raw string "assembling" to the user.
+const REEL_STATUS_LABEL: Record<string, string> = { generating: 'Generating…', assembling: 'Finishing up…', completed: 'Ready', failed: 'Failed' }
+const REEL_STATUS_DOT: Record<string, string> = { generating: 'bg-yellow-400 animate-pulse', assembling: 'bg-yellow-400 animate-pulse', completed: 'bg-success', failed: 'bg-danger' }
 const REEL_STAGE_LABEL: Record<string, string> = { generating: 'Generating clips', assembling: 'Assembling video', finalizing: 'Finalizing' }
 
 function fmtReelDate(iso: string) {
@@ -1101,24 +1118,21 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
 
   const isAdmin = access?.role === 'ADMIN'
 
-  const filesFailCount = useRef(0)
-  const filesSkipUntil = useRef(0)
-  // Guards against the background poll clobbering an optimistic like toggle
-  // with stale pre-toggle data: a poll fetch already in flight when someone
+  // Guards against a manual refresh clobbering an optimistic like toggle
+  // with stale pre-toggle data: a refresh already in flight when someone
   // taps like can resolve AFTER the optimistic flip but BEFORE the like
   // POST's own effect is visible server-side, overwriting likedByMe/
-  // likeCount back to the old value — then the *next* poll flips it again,
-  // producing the reported "reverts and re-applies" flicker. While a
-  // fileId's own like request is in flight, refreshFiles preserves its
-  // local likedByMe/likeCount instead of trusting the poll response; once
-  // that request resolves, polling resumes normal trust for it (still
-  // picking up other members' concurrent likes as before).
+  // likeCount back to the old value. While a fileId's own like request is
+  // in flight, refreshFiles preserves its local likedByMe/likeCount instead
+  // of trusting the refresh response.
   const pendingLikeIds = useRef<Set<string>>(new Set())
+  const [isRefreshingFiles, setIsRefreshingFiles] = useState(false)
+  const [filesRefreshError, setFilesRefreshError] = useState(false)
   const refreshFiles = useCallback(async () => {
     try {
       const res = await fetch(`/studio/api/moments/events/${projectId}/files`).then((r) => r.json())
       if (res.success) {
-        filesFailCount.current = 0
+        setFilesRefreshError(false)
         setFiles((prev) => {
           if (pendingLikeIds.current.size === 0) return res.data
           const prevById = new Map(prev.map((f) => [f.fileId, f]))
@@ -1133,11 +1147,20 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
         throw new Error('not success')
       }
     } catch (err) {
-      filesFailCount.current += 1
-      filesSkipUntil.current = Date.now() + Math.min(30000, 4000 * 2 ** filesFailCount.current)
+      setFilesRefreshError(true)
       console.error('[moments refreshFiles]', err)
     }
   }, [projectId])
+
+  // The one place a manual "Refresh gallery" tap calls into — wraps
+  // refreshFiles with a loading flag for the button's own spinner/disabled
+  // state (see the header button, ~line 1186 area of the JSX below).
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshingFiles) return
+    setIsRefreshingFiles(true)
+    await refreshFiles()
+    setIsRefreshingFiles(false)
+  }, [isRefreshingFiles, refreshFiles])
 
   useEffect(() => {
     fetch('/studio/api/auth/me')
@@ -1166,17 +1189,16 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
       .finally(() => setChecking(false))
   }, [projectId, router, refreshFiles])
 
-  // Live-ish gallery — polls every few seconds so a new like/comment/upload
-  // from someone else shows up without anyone needing to hit refresh. Paused
-  // while the tab is hidden (no point spending the request), and skipped
-  // entirely until the event itself has loaded.
-  useEffect(() => {
-    if (!event) return
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible' && Date.now() >= filesSkipUntil.current) refreshFiles()
-    }, 4000)
-    return () => clearInterval(timer)
-  }, [event, refreshFiles])
+  // No more background auto-polling here (removed 2026-09-30 — a real
+  // production complaint: it ran unconditionally every 4s for the entire
+  // time a tab was open, re-fetching the FULL file list every time — for a
+  // large wedding gallery (1000+ photos) that's 0.6-1.2MB of JSON every 4
+  // seconds, per open tab, plus a full staleness sweep + an unscoped
+  // cross-gallery likes query on the server on every single one of those
+  // polls. A manual "Refresh gallery" affordance (isRefreshingFiles below,
+  // wired into the header) replaces it — same refreshFiles() call, just
+  // user-triggered instead of a timer. Initial load above still fetches
+  // once automatically; only the *repeating* poll is gone.
 
   // Arriving here via the top-level bottom bar's "which gallery?" picker
   // (Chat/People tapped with no gallery open yet) — ?open=chat|people opens
@@ -1719,10 +1741,16 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
   // FAILED file's r2PreviewUrl can be a stale leftover from a previous
   // attempt (the retry route re-processes without clearing it), which
   // otherwise let a broken/failed photo slip into the lightbox's photo list.
+  // fileType !== 'AUDIO' excludes Kling 3.0 Omni reference-audio uploads
+  // (purpose: 'REEL_REFERENCE', not a gallery deliverable — never has a
+  // meaningful grid preview and LightboxPhoto has no audio-rendering
+  // concept at all) — a defensive no-op today (no upload path produces
+  // AUDIO files yet), forward-correct once Phase 2 of the Omni redesign
+  // adds reference uploads.
   const viewablePhotos: LightboxPhoto[] = displayFiles
-    .filter((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl)
+    .filter((f) => f.processingStatus === 'READY' && !!f.r2PreviewUrl && f.fileType !== 'AUDIO')
     .map((f) => ({
-      fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType,
+      fileId: f.fileId, previewUrl: f.r2PreviewUrl!, filename: f.originalFilename, fileType: f.fileType as 'IMAGE' | 'VIDEO',
       thumbnailUrl: f.videoThumbnailUrl,
       likeCount: f.likeCount, commentCount: f.commentCount, likedByMe: f.likedByMe,
     }))
@@ -1843,6 +1871,27 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
               ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden"
               onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; setShowUploadModal(false) }}
             />
+
+            {/* Replaces the old always-on 4s background poll (removed
+                2026-09-30 — real bandwidth/battery complaint on large
+                galleries) — new photos, likes, and comments from other
+                people now show up when tapped, not automatically. */}
+            <div className="flex items-center justify-between gap-2 px-1">
+              <p className="text-[11px] text-muted">
+                {filesRefreshError ? 'Couldn\'t refresh — check your connection.' : 'Tap refresh to see new photos, likes & comments'}
+              </p>
+              <button
+                onClick={handleManualRefresh}
+                disabled={isRefreshingFiles}
+                aria-label="Refresh gallery"
+                className="flex items-center gap-1.5 text-xs font-semibold text-accent hover:text-accent/80 disabled:opacity-50 transition-colors flex-shrink-0 px-2 py-1 -mr-1"
+              >
+                <svg className={`w-3.5 h-3.5 ${isRefreshingFiles ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                {isRefreshingFiles ? 'Refreshing…' : 'Refresh gallery'}
+              </button>
+            </div>
 
             {isAdmin && unindexedPhotos.length > 0 && (
               <div className="flex items-center justify-between gap-2 bg-accent/10 border border-accent/20 rounded-xl px-3.5 py-2.5">
