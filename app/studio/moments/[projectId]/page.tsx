@@ -901,7 +901,16 @@ function ReelsTabContent({ projectId, canReel, onRegenerate }: {
   // kicked off generation may already be closed/navigated away from, so this
   // tab (not the modal) is the durable place to watch progress, per the
   // "go to reels page and see live progress" ask.
-  const hasGenerating = reels?.some((r) => r.status === 'generating') ?? false
+  //
+  // Includes 'assembling', not just 'generating' — a real bug found
+  // 2026-09-30: "Check now" advances a reel from generating to assembling
+  // and fires the finalize Lambda asynchronously (it doesn't wait for the
+  // Lambda to finish), so the reel sits on 'assembling' for a real stretch
+  // afterward. With only 'generating' checked here, this poll stopped the
+  // instant that happened, so the tab never picked up the eventual
+  // completion on its own — only a full page reload (a fresh GET) revealed
+  // it was actually done.
+  const hasGenerating = reels?.some((r) => r.status === 'generating' || r.status === 'assembling') ?? false
   useEffect(() => {
     if (!hasGenerating) return
     const id = setInterval(load, 3000)
@@ -2268,10 +2277,13 @@ export default function MomentsEventPage({ params }: { params: { projectId: stri
             onChat: () => setShowChat(true),
             onUpload: () => { setActiveTab('photos'); setShowUploadModal(true) },
             onManagePeople: () => setShowPeople(true),
-            // Opens ReelMvpModal directly on its own 'compose' stage now —
-            // photo selection lives inside the modal's own picker, no more
-            // grid pre-select dance.
-            onReelIt: () => { setRegenerateReel(null); setShowReelModal(true) },
+            // Full-page Reel Studio (2026-09-30) replaced the modal as the
+            // main "create a reel" entry point — the Omni feature set
+            // (multi-shot, first/last frame, feature/base video, elements)
+            // outgrew a modal. ReelMvpModal itself is untouched and still
+            // used for "Regenerate" from My Reels history (see onRegenerate
+            // below) — only the fresh-compose entry point moved.
+            onReelIt: () => router.push(`/studio/moments/${projectId}/reel-studio`),
           }}
         />
       )}

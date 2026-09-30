@@ -235,58 +235,67 @@ export class KlingProvider implements VideoProvider {
     return { providerJobId: `${TEXT_TO_VIDEO_JOB_PREFIX}${data.data.id}` }
   }
 
-  // Kling 3.0 Omni — CONFIRMED via a real API call against this account
-  // (2026-09-29, external_task_id "vayutransfer-omni-spike-...", one
-  // reference image, 3s/720p/no-audio, real succeeded response with a real
-  // video output and real billing of 1.8 units). Genuinely a third endpoint,
-  // not a variant of the other two:
+  // Kling 3.0 Omni — request shape confirmed two ways: (1) a real, billed
+  // API call against this account (2026-09-29, single reference image,
+  // 3s/720p/no-audio, real succeeded response + real billing of 1.8 units),
+  // and (2) Kling's own official documentation, obtained 2026-09-30
+  // (previously an unscrapable JS SPA — the user supplied a saved copy).
+  // The two sources DISAGREED on one point, and the doc wins: the real call
+  // used `{type:'image', url, tag}` with `<<<tag>>>` embedded in the prompt
+  // and it worked, but that's because a single reference can't reveal a
+  // wrong field name — Kling had nothing else to disambiguate against. The
+  // documented, correct shape is:
   //   - Real endpoint: POST {baseUrl}/omni-video/kling-3.0-omni.
-  //   - Request envelope matches image-to-video's nested contents[]/
-  //     settings{}/options{} shape — NOT a flat body. Confirmed by a real
-  //     "contents cannot be empty" rejection when a flat body was tried.
-  //   - Reference images are extra contents[] entries:
-  //     {type:'image', url, tag} — the SAME tag string must appear literally
-  //     as <<<tag>>> inside the prompt text, confirmed required (a request
-  //     with no first_frame/image and no aspect_ratio was rejected: "Aspect
-  //     ratio must be specified unless a first frame is provided or the task
-  //     is video editing" — implies a `type:'first_frame'` alternate content
-  //     kind and a distinct "video editing" task shape both exist, neither
-  //     independently confirmed yet).
-  //   - settings.audio is a STRING enum: 'native' | 'off' | 'original' — NOT
-  //     a boolean (a first real attempt with `audio: false` was rejected
-  //     with "settings.audio value is invalid").
-  //   - settings.aspect_ratio is REAL and matters here (unlike image-to-
-  //     video, which has no such field at all) — required whenever no
-  //     first-frame/video-editing content is present.
+  //   - Request envelope: nested contents[]/settings{}/options{} — confirmed
+  //     by a real "contents cannot be empty" rejection of a flat body.
+  //   - contents[].type enum: prompt, first_frame, last_frame, refer_image,
+  //     feature_video, base_video, element. Only 'prompt' and 'refer_image'
+  //     (our own "reference image" concept) are wired below — first_frame/
+  //     last_frame/feature_video/base_video/element are documented but not
+  //     yet exposed in any UI, see OmniReference's own comment in types.ts.
+  //   - Reference images are `{type:'refer_image', url, id}` — NOT `tag`.
+  //     The id is referenced inline in the prompt as `@id` (e.g. "@image_1"),
+  //     NOT `<<<id>>>` — documented explicitly: "Specify an image, an
+  //     Element, a video in the format of @xxx, such as @image_1, @Zhang,
+  //     @video_1." Ids must not be substrings of each other (Kling's own
+  //     documented caveat) — fine for our own image_1/image_2/... scheme.
+  //   - settings.audio is a STRING enum: 'native' | 'off' | 'original' —
+  //     confirmed both via the real call (a boolean was rejected) and docs.
+  //   - settings.aspect_ratio is required unless a first_frame or
+  //     video-editing (base_video) content is present — confirmed via a
+  //     real "Aspect ratio must be specified unless..." rejection.
+  //   - settings.multi_shot (boolean, default true) is documented but not
+  //     yet exposed in our request — Kling defaults to multi-shot prompt
+  //     parsing ("shot n, m, words;") on its own, no explicit opt-in needed
+  //     for that to work.
   //   - Status polling reuses image-to-video's own confirmed
-  //     `external_task_ids=` scheme (NOT text-to-video's `task_ids=`) — the
-  //     existing getGenerationStatus branch below needs no Omni-specific
-  //     handling at all, confirmed by a real create->poll->succeeded cycle.
+  //     `external_task_ids=` scheme (NOT text-to-video's `task_ids=`) —
+  //     getGenerationStatus needs no Omni-specific handling at all.
   //   - A succeeded task returned exactly ONE outputs[] video entry for the
-  //     single-reference case — real evidence Omni assembles everything
-  //     itself (no per-shot pieces needing our own ffmpeg concat), though
-  //     this is not independently confirmed for a genuinely multi-shot
-  //     narrative prompt.
-  //   - Multi-image reference (2+ contents[] image entries), a 'video' kind
-  //     reference (restyle), a 'subject' kind reference, and `audio:
-  //     'native'` output quality are all UNCONFIRMED — extrapolated from the
-  //     single-image case and third-party doc cross-reference, not
-  //     independently tested. See OmniReference's own comment in types.ts.
+  //     single-reference case — not independently confirmed for a genuinely
+  //     multi-shot narrative prompt, but nothing in the docs suggests
+  //     multi-shot output is ever split into multiple outputs[] entries.
   async generateOmniVideo(request: OmniVideoRequest): Promise<OmniVideoResult> {
     this.assertConfigured()
     if (!OMNI_ENABLED) {
       throw new Error('Kling Omni is not enabled (KLING_OMNI_ENABLED env var) — see reel-generator-omni-redesign plan')
     }
 
+    const KIND_TO_CONTENT_TYPE: Record<'image' | 'first_frame' | 'last_frame', string> = {
+      image: 'refer_image',
+      first_frame: 'first_frame',
+      last_frame: 'last_frame',
+    }
     const contents: Array<Record<string, unknown>> = [{ type: 'prompt', text: request.prompt }]
     for (const ref of request.references) {
-      if (ref.kind !== 'image') {
-        // video/audio/subject reference kinds: request shape not yet
-        // confirmed against a real call — fail loudly rather than send a
-        // guessed shape that could produce a real, billed, wrong result.
-        throw new Error(`Omni reference kind "${ref.kind}" is not yet wired — request shape unconfirmed, see klingProvider.ts's generateOmniVideo header`)
+      if (ref.kind !== 'image' && ref.kind !== 'first_frame' && ref.kind !== 'last_frame') {
+        // video/audio/subject reference kinds (feature_video/base_video/
+        // element): documented now, but not yet wired into any UI — fail
+        // loudly rather than guess at UX/validation for a content type
+        // nobody can actually produce yet.
+        throw new Error(`Omni reference kind "${ref.kind}" is not yet wired — see klingProvider.ts's generateOmniVideo header`)
       }
-      contents.push({ type: 'image', url: ref.url, tag: ref.tag })
+      contents.push({ type: KIND_TO_CONTENT_TYPE[ref.kind], url: ref.url, id: ref.tag })
     }
 
     const res = await fetchWithTimeout(`${KLING_API_BASE_URL}/${KLING_OMNI_MODEL_PATH}`, {
@@ -302,6 +311,7 @@ export class KlingProvider implements VideoProvider {
           duration: request.durationSec,
           audio: request.generateAudio ? 'native' : 'off',
           aspect_ratio: request.aspectRatio,
+          ...(request.multiShot === undefined ? {} : { multi_shot: request.multiShot }),
         },
         options: {
           external_task_id: request.externalTaskId,

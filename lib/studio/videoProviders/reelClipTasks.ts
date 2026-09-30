@@ -146,7 +146,7 @@ export async function createTextToVideoTask(params: {
 }
 
 export interface OmniReferenceInput {
-  kind: 'image' | 'video' | 'audio' | 'subject'
+  kind: 'image' | 'first_frame' | 'last_frame' | 'video' | 'audio' | 'subject'
   tag: string
   url: string
 }
@@ -171,6 +171,7 @@ export async function createOmniVideoTask(params: {
   aspectRatio: ReelAspectRatio
   resolution: ReelResolution
   generateAudio?: boolean
+  multiShot?: boolean
 }): Promise<CreateOmniVideoTaskResult> {
   const router = new VideoProviderRouter()
   // select()'s criteria are the same uniform shape every mode passes —
@@ -192,6 +193,7 @@ export async function createOmniVideoTask(params: {
     aspectRatio: params.aspectRatio,
     resolution: params.resolution,
     generateAudio: params.generateAudio,
+    multiShot: params.multiShot,
     externalTaskId,
   })
   return { provider: provider.name, providerJobId: result.providerJobId }

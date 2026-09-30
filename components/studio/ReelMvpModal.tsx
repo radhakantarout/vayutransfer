@@ -290,6 +290,28 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   // audio generation, off by default (real added cost, see
   // computeOmniVideoCost's own pricing header).
   const [generateAudio, setGenerateAudio] = useState(false)
+  // Multi-shot storyboard — UI MOCKUP ONLY (2026-09-30), per Kling's real
+  // documented "shot n, m, words; shot n, m, words;" prompt syntax
+  // (settings.multi_shot, 1-6 shots). Deliberately NOT wired to the real
+  // generate call yet — see the "Preview only" banner near the Generate
+  // button below. Sample two-shot default so the builder isn't empty on
+  // first toggle.
+  const [multiShotMode, setMultiShotMode] = useState(false)
+  const [shots, setShots] = useState<{ id: string; durationSec: number; text: string }[]>([
+    { id: 'shot-1', durationSec: 3, text: 'Camera pushes in slowly, warm golden light @image_1' },
+    { id: 'shot-2', durationSec: 2, text: 'She turns and smiles at the camera @image_1' },
+  ])
+  const [activeShotIndex, setActiveShotIndex] = useState(0)
+  const [showMultiShotPreview, setShowMultiShotPreview] = useState(false)
+  const shotTotalDurationSec = shots.reduce((sum, s) => sum + s.durationSec, 0)
+  const shotDurationValid = shotTotalDurationSec >= 3 && shotTotalDurationSec <= 15
+  // Kling's docs give the format as "shot n, m, words;" (n = shot number,
+  // m = duration in seconds, words = that shot's own prompt, max 512
+  // chars) but don't show a worked example with real values — exact
+  // punctuation/units are our best-effort reading of the spec, NOT
+  // independently confirmed against a real call. Needs a real test before
+  // this is wired to actual generation.
+  const assembledShotPrompt = shots.map((s, i) => `shot ${i + 1}, ${s.durationSec}, ${s.text.trim()}`).join('; ')
   const composeFileInputRef = useRef<HTMLInputElement>(null)
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -444,15 +466,27 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     addPhotoId(fileId)
   }
   // Omni reference mode's core new interaction (Kling 3.0 Omni redesign) —
-  // tapping a reference chip mentions it in the prompt via its
-  // <<<tag>>> marker, so nobody has to type Kling's own tag syntax by hand.
-  // Appends at the end rather than true cursor-position insertion (would
-  // need tracking selectionStart/selectionEnd across mobile keyboards,
-  // which behave inconsistently) — simple and predictable is worth more
-  // here than precise placement. No-ops if already mentioned, so repeat
-  // taps can't spam duplicate tags.
+  // tapping a reference chip mentions it in the prompt via its @tag marker
+  // (Kling's own documented convention — "Specify an image... in the format
+  // of @xxx, such as @image_1"; NOT the <<<tag>>> shape an earlier,
+  // pre-official-docs version of this used), so nobody has to type it by
+  // hand. Appends at the end rather than true cursor-position insertion
+  // (would need tracking selectionStart/selectionEnd across mobile
+  // keyboards, which behave inconsistently) — simple and predictable is
+  // worth more here than precise placement. No-ops if already mentioned, so
+  // repeat taps can't spam duplicate tags.
   const insertTag = (tag: string) => {
-    const marker = `<<<${tag}>>>`
+    const marker = `@${tag}`
+    // Multi-shot mode has no single prompt textarea — mention goes into
+    // whichever shot the user last focused instead.
+    if (multiShotMode) {
+      setShots((prev) => prev.map((s, i) => {
+        if (i !== activeShotIndex || s.text.includes(marker)) return s
+        const sep = s.text.trim().length > 0 ? ' ' : ''
+        return { ...s, text: `${s.text}${sep}${marker}`.slice(0, 512) }
+      }))
+      return
+    }
     setCustomPrompt((prev) => {
       if (prev.includes(marker)) return prev
       const sep = prev.trim().length > 0 ? ' ' : ''
@@ -460,6 +494,23 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
       return `${prev}${sep}${marker}`.slice(0, max)
     })
     promptTextareaRef.current?.focus()
+  }
+
+  // Mockup-only shot-list helpers (2026-09-30) — see multiShotMode's own
+  // comment near its useState. Docs cap shots at 6 and floor each at 1s.
+  const addShot = () => {
+    if (shots.length >= 6) return
+    setShots((prev) => [...prev, { id: `shot-${Date.now()}`, durationSec: 2, text: '' }])
+  }
+  const removeShot = (index: number) => {
+    if (shots.length <= 1) return
+    setShots((prev) => prev.filter((_, i) => i !== index))
+  }
+  const updateShotDuration = (index: number, durationSec: number) => {
+    setShots((prev) => prev.map((s, i) => i === index ? { ...s, durationSec: Math.max(1, durationSec) } : s))
+  }
+  const updateShotText = (index: number, text: string) => {
+    setShots((prev) => prev.map((s, i) => i === index ? { ...s, text: text.slice(0, 512) } : s))
   }
 
   const handleGenerate = async () => {
@@ -494,9 +545,9 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     // tag isn't literally present, so every tag is force-appended here
     // rather than risking a submit that's guaranteed to fail.
     const imageTags = composePhotoIds.map((_, i) => `image_${i + 1}`)
-    const omniPrompt = imageTags.every((t) => (trimmedPrompt ?? '').includes(`<<<${t}>>>`))
+    const omniPrompt = imageTags.every((t) => (trimmedPrompt ?? '').includes(`@${t}`))
       ? (trimmedPrompt ?? '')
-      : `${trimmedPrompt ?? ''} ${imageTags.map((t) => `<<<${t}>>>`).join(' ')}`.trim()
+      : `${trimmedPrompt ?? ''} ${imageTags.map((t) => `@${t}`).join(' ')}`.trim()
     // Text-to-video is a completely separate request shape (no photos,
     // template, style, resolution, or duration — Kling's own endpoint takes
     // none of those, see the Moments reels route's mode:'text' branch) —
@@ -595,7 +646,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 {composePhotoIds.map((fileId, i) => {
                   const photo = momentsPhotoById.get(fileId)
                   const tag = `image_${i + 1}`
-                  const mentioned = customPrompt.includes(`<<<${tag}>>>`)
+                  const mentioned = customPrompt.includes(`@${tag}`)
                   return (
                     <div
                       key={fileId}
@@ -648,24 +699,101 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               {uploadError && <p className="text-[11px] text-danger">{uploadError}</p>}
             </div>
 
-            <div className="space-y-2">
-              <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">
-                {isComposeTextMode ? 'Describe your video' : 'Add a note (optional)'}
-              </p>
-              <textarea
-                ref={promptTextareaRef}
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
-                placeholder={isComposeTextMode
-                  ? 'e.g. A golden retriever running joyfully through a sunlit meadow, cinematic slow motion, warm afternoon light'
-                  : 'e.g. Slow-motion walk together at sunset, warm golden-hour light…'}
-                rows={4}
-                className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
-              />
-              <p className="text-[10px] text-muted text-right">
-                {customPrompt.length}/{isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX}
-              </p>
-            </div>
+            {isOmniReferenceMode && (
+              <label className="flex items-center justify-between gap-3 select-none bg-bg border border-border rounded-xl px-3 py-2.5 cursor-pointer">
+                <span className="min-w-0">
+                  <span className="block text-xs font-bold text-text-primary">🎬 Short film mode</span>
+                  <span className="block text-[10px] text-muted leading-tight">Break your video into up to 6 shots, each with its own duration and description</span>
+                </span>
+                <button
+                  type="button" role="switch" aria-checked={multiShotMode}
+                  onClick={() => setMultiShotMode((v) => !v)}
+                  className={`relative flex-shrink-0 rounded-full transition-colors ${multiShotMode ? 'bg-accent' : 'bg-border'}`}
+                  style={{ height: '22px', width: '38px' }}
+                >
+                  <span className={`absolute top-0.5 left-0.5 rounded-full bg-white shadow transition-transform ${multiShotMode ? 'translate-x-4' : 'translate-x-0'}`} style={{ height: '18px', width: '18px' }} />
+                </button>
+              </label>
+            )}
+
+            {isOmniReferenceMode && multiShotMode ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Shots</p>
+                  <p className={`text-[11px] font-semibold ${shotDurationValid ? 'text-muted' : 'text-danger'}`}>
+                    {shotTotalDurationSec}s total {!shotDurationValid && '(needs to be 3–15s)'}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {shots.map((shot, i) => (
+                    <div key={shot.id} className="border border-border rounded-2xl p-3 space-y-2 bg-bg">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-accent">Shot {i + 1}</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number" min={1} max={15}
+                            value={shot.durationSec}
+                            onChange={(e) => updateShotDuration(i, parseInt(e.target.value, 10) || 1)}
+                            className="w-14 bg-card border border-border rounded-lg px-2 py-1 text-xs text-text-primary text-center focus:outline-none focus:border-accent/60"
+                          />
+                          <span className="text-[10px] text-muted">sec</span>
+                          {shots.length > 1 && (
+                            <button
+                              onClick={() => removeShot(i)}
+                              aria-label={`Remove shot ${i + 1}`}
+                              className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <textarea
+                        value={shot.text}
+                        onChange={(e) => updateShotText(i, e.target.value)}
+                        onFocus={() => setActiveShotIndex(i)}
+                        placeholder="What happens in this shot?"
+                        rows={2}
+                        className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {shots.length < 6 && (
+                  <button
+                    onClick={addShot}
+                    className="w-full text-xs font-semibold text-accent hover:underline text-center py-1.5"
+                  >
+                    + Add shot
+                  </button>
+                )}
+                <details className="text-[11px] text-muted">
+                  <summary className="cursor-pointer font-semibold select-none">Preview what will be sent</summary>
+                  <p className="mt-1.5 font-mono bg-bg border border-border rounded-lg p-2 leading-relaxed break-words">{assembledShotPrompt || '—'}</p>
+                </details>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                  {isComposeTextMode ? 'Describe your video' : 'Add a note (optional)'}
+                </p>
+                <textarea
+                  ref={promptTextareaRef}
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
+                  placeholder={isComposeTextMode
+                    ? 'e.g. A golden retriever running joyfully through a sunlit meadow, cinematic slow motion, warm afternoon light'
+                    : 'e.g. Slow-motion walk together at sunset, warm golden-hour light…'}
+                  rows={4}
+                  className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
+                />
+                <p className="text-[10px] text-muted text-right">
+                  {customPrompt.length}/{isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX}
+                </p>
+              </div>
+            )}
 
             {isOmniReferenceMode && (
               <button
@@ -849,16 +977,31 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
               </span>
             </label>
 
+            {/* Multi-shot mode is a UI mockup — not wired to real generation
+                yet (see multiShotMode's own comment). Generate shows what
+                WOULD be sent instead of actually calling Kling, so this can
+                be reviewed safely with zero cost before the real wiring
+                pass. */}
+            {isOmniReferenceMode && multiShotMode && showMultiShotPreview && (
+              <div className="bg-accent/10 border border-accent/30 rounded-2xl p-3.5 space-y-2">
+                <p className="text-xs font-bold text-accent">👀 Preview only — nothing was generated</p>
+                <p className="text-[11px] text-muted leading-relaxed">Short film mode isn't wired to real video generation yet. Here's exactly what would be sent once it is:</p>
+                <p className="text-[11px] font-mono bg-card border border-border rounded-lg p-2 leading-relaxed break-words">{assembledShotPrompt || '—'}</p>
+                <button onClick={() => setShowMultiShotPreview(false)} className="text-[11px] font-semibold text-accent hover:underline">Close preview</button>
+              </div>
+            )}
+
             <button
-              onClick={handleGenerate}
+              onClick={() => (isOmniReferenceMode && multiShotMode) ? setShowMultiShotPreview(true) : handleGenerate()}
               disabled={
                 (isComposeTextMode ? customPrompt.trim().length < MIN_TEXT_PROMPT_LENGTH : composePhotoIds.length < MIN_REEL_PHOTOS)
                 || !consentChecked
+                || (isOmniReferenceMode && multiShotMode && !shotDurationValid)
               }
               className="w-full text-sm font-bold py-3 rounded-xl text-white active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none hover:opacity-90"
               style={{ background: MOMENTS_GRADIENT }}
             >
-              ✨ Generate
+              {isOmniReferenceMode && multiShotMode ? '👀 Preview (mockup)' : '✨ Generate'}
             </button>
           </div>
         )}
