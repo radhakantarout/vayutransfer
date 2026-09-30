@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'
 import { SignJWT } from 'jose'
+import { authOptions } from '@/lib/auth'
 import { studioQueryByIndex, TABLES } from '@/lib/studio/dynamodb'
 import type { StudioUser } from '@/types/studio'
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 const ses = new SESClient({
   region: process.env.SES_REGION ?? 'ap-south-1',
@@ -16,15 +27,46 @@ function getEnquirySecret() {
   return new TextEncoder().encode((process.env.STUDIO_JWT_SECRET ?? 'fallback') + '_enquiry')
 }
 
+function isValidEmail(v: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { name, studioName, email: rawEmail, phone, message } = await req.json()
 
-    if (!name || !studioName || !rawEmail || !phone) {
-      return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    // Two callers share this route: app/vayustudio/EnquiryForm.tsx (on
+    // vayutransfer.com, where NextAuth/Google sign-in is the native auth
+    // system) requires a real signed-in session and never sends `email` at
+    // all — the verified session email is used, ignoring anything in the
+    // body. app/studio/home/EnquiryForm.tsx (on vayustudios.com, which uses
+    // its own separate studio_token JWT auth, not NextAuth — Google OAuth
+    // isn't registered for that domain, so gating it the same way would
+    // just break it) still sends a free-text email, validated below rather
+    // than trusted blindly. Both paths get the same length/format hardening
+    // — only the email's trust level differs.
+    const session = await getServerSession(authOptions)
+    let email: string
+    if (session?.user?.email) {
+      email = session.user.email.trim().toLowerCase()
+    } else {
+      if (!rawEmail || !isValidEmail(rawEmail)) {
+        return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+      }
+      email = rawEmail.trim().toLowerCase()
     }
 
-    const email = rawEmail.trim().toLowerCase()
+    if (!name || !studioName || !phone) {
+      return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    }
+    // Never trust free-text length/format from a POST body, session or not
+    // — name/studioName/message are always arbitrary user input.
+    if (name.length > 100 || studioName.length > 100 || (message && message.length > 2000)) {
+      return NextResponse.json({ success: false, error: 'INVALID_INPUT' }, { status: 400 })
+    }
+    if (!/^[+\d][\d\s-]{6,19}$/.test(phone.trim())) {
+      return NextResponse.json({ success: false, error: 'INVALID_PHONE' }, { status: 400 })
+    }
 
     // Check for an existing studio account before emailing the owner — catches duplicates
     // at submission time instead of leaving the requester waiting on an enquiry that will
@@ -66,8 +108,8 @@ export async function POST(req: NextRequest) {
         ['Message', message || '—'],
       ].map(([label, value]) => `
       <tr>
-        <td style="padding:8px 0;color:#5A7090;font-size:13px;width:100px;vertical-align:top;">${label}</td>
-        <td style="padding:8px 0;font-size:14px;color:#E0EAF8;">${value}</td>
+        <td style="padding:8px 0;color:#5A7090;font-size:13px;width:100px;vertical-align:top;">${escapeHtml(label)}</td>
+        <td style="padding:8px 0;font-size:14px;color:#E0EAF8;">${escapeHtml(String(value))}</td>
       </tr>`).join('')}
     </table>
 
