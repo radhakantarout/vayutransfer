@@ -875,6 +875,8 @@ function ReelsTabContent({ projectId, canReel, onRegenerate }: {
   const [reels, setReels] = useState<ReelHistoryItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
+  const [checkingId, setCheckingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   // creditsCharged is stored/returned in raw AI-search credits, but every
   // other Moments surface (Profile, UsageBillingPanel) shows the friendly
   // "Moments Credits" unit — this list was still showing the raw number
@@ -906,6 +908,47 @@ function ReelsTabContent({ projectId, canReel, onRegenerate }: {
     return () => clearInterval(id)
   }, [hasGenerating, load])
 
+  // Manual "did Kling actually finish?" recovery for a reel stuck on
+  // generating/assembling — production's periodic reel-check trigger was
+  // confirmed (2026-09-30) to never have been wired to a real recurring
+  // schedule, so nothing was re-asking Kling once a reel's clips actually
+  // finished. This makes that check self-serve instead of needing a
+  // manual backend intervention every time it happens.
+  const handleCheckNow = async (reelId: string) => {
+    if (checkingId) return
+    setCheckingId(reelId)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${projectId}/reels/${reelId}/check-now`, { method: 'POST' }).then((r) => r.json())
+      if (res.success) load()
+    } catch (err) {
+      console.error('[ReelsTabContent check-now]', err)
+    } finally {
+      setCheckingId(null)
+    }
+  }
+
+  const handleDelete = async (reelId: string) => {
+    if (deletingId) return
+    if (!window.confirm('Delete this reel permanently? This can\'t be undone.')) return
+    setDeletingId(reelId)
+    try {
+      const res = await fetch(`/studio/api/moments/events/${projectId}/reels/${reelId}`, { method: 'DELETE' }).then((r) => r.json())
+      if (res.success) {
+        setReels((prev) => prev?.filter((r) => r.reelId !== reelId) ?? null)
+        if (playingId === reelId) setPlayingId(null)
+      } else if (res.error === 'STILL_GENERATING') {
+        window.alert('This reel is still generating — wait for it to finish or fail before deleting it.')
+      } else {
+        window.alert('Could not delete this reel. Please try again.')
+      }
+    } catch (err) {
+      console.error('[ReelsTabContent delete]', err)
+      window.alert('Could not delete this reel. Please try again.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="space-y-3">
       {error && <p className="text-sm text-danger text-center py-8">{error}</p>}
@@ -928,36 +971,53 @@ function ReelsTabContent({ projectId, canReel, onRegenerate }: {
       <div className="space-y-2">
         {reels?.map((r) => (
           <div key={r.reelId} className="border border-border rounded-2xl overflow-hidden bg-card">
-            <button
-              onClick={() => r.status === 'completed' && setPlayingId(playingId === r.reelId ? null : r.reelId)}
-              className="w-full flex items-center gap-3 px-3.5 py-3 text-left hover:bg-border/30 transition-colors"
-            >
-              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${REEL_STATUS_DOT[r.status] ?? 'bg-muted'}`} />
-              <span className="flex-1 min-w-0">
-                <span className="flex items-center gap-1.5 text-sm font-semibold text-text-primary truncate">
-                  {r.mode === 'text' ? (
-                    <>✍️ Text-to-video</>
-                  ) : (
-                    <>
-                      {r.templateId && <span>{REEL_TEMPLATES.find((t) => t.id === r.templateId)?.icon}</span>}
-                      {r.photoCount} photos · {r.durationSec}s
-                    </>
-                  )}
-                  {r.mode !== 'text' && r.style && (
-                    <span
-                      className="text-[9px] font-bold text-white px-1.5 py-0.5 rounded-full"
-                      style={{ background: `linear-gradient(90deg, ${REEL_STYLE_META[r.style].colors[0]}, ${REEL_STYLE_META[r.style].colors[2]})` }}
-                    >
-                      {REEL_STYLE_META[r.style].icon} {REEL_STYLE_META[r.style].label}
-                    </span>
-                  )}
+            <div className="w-full flex items-center gap-2 px-3.5 py-3">
+              <button
+                onClick={() => r.status === 'completed' && setPlayingId(playingId === r.reelId ? null : r.reelId)}
+                className="flex-1 min-w-0 flex items-center gap-3 text-left"
+              >
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${REEL_STATUS_DOT[r.status] ?? 'bg-muted'}`} />
+                <span className="flex-1 min-w-0">
+                  <span className="flex items-center gap-1.5 text-sm font-semibold text-text-primary truncate">
+                    {r.mode === 'text' ? (
+                      <>✍️ Text-to-video</>
+                    ) : (
+                      <>
+                        {r.templateId && <span>{REEL_TEMPLATES.find((t) => t.id === r.templateId)?.icon}</span>}
+                        {r.photoCount} photos · {r.durationSec}s
+                      </>
+                    )}
+                    {r.mode !== 'text' && r.style && (
+                      <span
+                        className="text-[9px] font-bold text-white px-1.5 py-0.5 rounded-full"
+                        style={{ background: `linear-gradient(90deg, ${REEL_STYLE_META[r.style].colors[0]}, ${REEL_STYLE_META[r.style].colors[2]})` }}
+                      >
+                        {REEL_STYLE_META[r.style].icon} {REEL_STYLE_META[r.style].label}
+                      </span>
+                    )}
+                  </span>
+                  <span className="block text-[11px] text-muted">{fmtReelDate(r.createdAt)} · {toMomentsCredits(r.creditsCharged, creditDivisor)} credits</span>
                 </span>
-                <span className="block text-[11px] text-muted">{fmtReelDate(r.createdAt)} · {toMomentsCredits(r.creditsCharged, creditDivisor)} credits</span>
-              </span>
-              <span className="text-[11px] font-semibold text-muted flex-shrink-0">
-                {r.status === 'generating' && r.progress ? `${r.progress.percent}%` : REEL_STATUS_LABEL[r.status] ?? r.status}
-              </span>
-            </button>
+                <span className="text-[11px] font-semibold text-muted flex-shrink-0">
+                  {r.status === 'generating' && r.progress ? `${r.progress.percent}%` : REEL_STATUS_LABEL[r.status] ?? r.status}
+                </span>
+              </button>
+
+              <button
+                onClick={() => handleDelete(r.reelId)}
+                disabled={deletingId === r.reelId}
+                aria-label="Delete reel"
+                className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-danger/10 text-muted hover:text-danger disabled:opacity-50 transition-colors"
+              >
+                {deletingId === r.reelId
+                  ? <div className="w-3.5 h-3.5 border-2 border-danger border-t-transparent rounded-full animate-spin" />
+                  : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 7h12M9.5 7V5a1 1 0 011-1h3a1 1 0 011 1v2m2 0-.7 12.1a2 2 0 01-2 1.9H8.2a2 2 0 01-2-1.9L5.5 7h13z" />
+                    </svg>
+                  )}
+              </button>
+            </div>
 
             {r.status === 'generating' && (
               <div className="px-3.5 pb-3 space-y-1">
@@ -967,9 +1027,30 @@ function ReelsTabContent({ projectId, canReel, onRegenerate }: {
                     style={{ width: `${r.progress?.percent ?? 4}%` }}
                   />
                 </div>
-                {r.progress && (
-                  <p className="text-[10px] text-muted">{REEL_STAGE_LABEL[r.progress.stage] ?? 'Generating'}…</p>
-                )}
+                <div className="flex items-center justify-between">
+                  {r.progress && (
+                    <p className="text-[10px] text-muted">{REEL_STAGE_LABEL[r.progress.stage] ?? 'Generating'}…</p>
+                  )}
+                  <button
+                    onClick={() => handleCheckNow(r.reelId)}
+                    disabled={checkingId === r.reelId}
+                    className="text-[10px] font-semibold text-accent hover:text-accent/80 disabled:opacity-50 transition-colors"
+                  >
+                    {checkingId === r.reelId ? 'Checking…' : 'Taking a while? Check now'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {r.status === 'assembling' && (
+              <div className="px-3.5 pb-3 flex items-center justify-end">
+                <button
+                  onClick={() => handleCheckNow(r.reelId)}
+                  disabled={checkingId === r.reelId}
+                  className="text-[10px] font-semibold text-accent hover:text-accent/80 disabled:opacity-50 transition-colors"
+                >
+                  {checkingId === r.reelId ? 'Checking…' : 'Taking a while? Check now'}
+                </button>
               </div>
             )}
 
