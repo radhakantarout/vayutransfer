@@ -447,13 +447,36 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Duration</p>
+                {/* Explicit -/+ buttons, not just the bare <input type="number">
+                    this used to be — iOS Safari hides native number-input spin
+                    buttons entirely (Android support is inconsistent too), so
+                    on mobile there was no way to adjust this except typing
+                    directly into the field, which isn't discoverable. */}
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDurationSec((d) => Math.max(MIN_DURATION_SEC, d - 1))}
+                    disabled={durationSec <= MIN_DURATION_SEC}
+                    aria-label="Decrease duration"
+                    className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-lg border border-border text-text-primary hover:border-accent/50 active:scale-95 disabled:opacity-30 disabled:pointer-events-none transition-all"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" /></svg>
+                  </button>
                   <input
-                    type="number" min={MIN_DURATION_SEC} max={MAX_DURATION_SEC}
+                    type="number" inputMode="numeric" min={MIN_DURATION_SEC} max={MAX_DURATION_SEC}
                     value={durationSec}
                     onChange={(e) => setDurationSec(Math.min(MAX_DURATION_SEC, Math.max(MIN_DURATION_SEC, parseInt(e.target.value, 10) || MIN_DURATION_SEC)))}
-                    className="w-16 bg-bg border border-border rounded-lg px-2 py-1.5 text-xs text-text-primary text-center focus:outline-none focus:border-accent/60"
+                    className="w-14 bg-bg border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary text-center focus:outline-none focus:border-accent/60"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setDurationSec((d) => Math.min(MAX_DURATION_SEC, d + 1))}
+                    disabled={durationSec >= MAX_DURATION_SEC}
+                    aria-label="Increase duration"
+                    className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-lg border border-border text-text-primary hover:border-accent/50 active:scale-95 disabled:opacity-30 disabled:pointer-events-none transition-all"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" /></svg>
+                  </button>
                   <span className="text-[10px] text-muted">sec ({MIN_DURATION_SEC}–{MAX_DURATION_SEC})</span>
                 </div>
               </div>
