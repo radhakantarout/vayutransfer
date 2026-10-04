@@ -173,10 +173,12 @@ export async function POST(
       mode: requestedMode, photoIds, templateId, style, customPrompt, resolution: requestedResolution, durationSec: requestedDurationSec, droneShot: requestedDroneShot,
       textPrompt, aspectRatio: requestedAspectRatio, negativePrompt, cfgScale: requestedCfgScale,
       prompt: omniPrompt, references: requestedReferences, generateAudio: requestedGenerateAudio,
+      firstFrameFileId, lastFrameFileId, multiShot: requestedMultiShot,
     } = await req.json().catch(() => ({})) as {
       mode?: string; photoIds?: string[]; templateId?: string; style?: string; customPrompt?: string; resolution?: string; durationSec?: number; droneShot?: string
       textPrompt?: string; aspectRatio?: string; negativePrompt?: string; cfgScale?: number
       prompt?: string; references?: { kind?: string; tag?: string; fileId?: string }[]; generateAudio?: boolean
+      firstFrameFileId?: string; lastFrameFileId?: string; multiShot?: boolean
     }
     const mode: 'photo' | 'text' | 'omni' = requestedMode === 'text' ? 'text' : requestedMode === 'omni' ? 'omni' : 'photo'
 
@@ -354,8 +356,17 @@ export async function POST(
       }
 
       const references = Array.isArray(requestedReferences) ? requestedReferences : []
-      if (references.length === 0) {
-        return NextResponse.json({ success: false, error: 'MISSING_REFERENCES', message: 'Add at least one photo, video, or audio reference.' }, { status: 400 })
+      // First/Last Frame (Reel Studio, 2026-09-30) are their own dedicated
+      // slots, not part of references[] — the frontend never assigns them a
+      // numbered @tag since they're structural picks, not narrative
+      // mentions (see Reel Studio page's own header comment). last_frame
+      // requires first_frame — Kling's own documented constraint
+      // ("last frame only" is not supported).
+      if (typeof lastFrameFileId === 'string' && typeof firstFrameFileId !== 'string') {
+        return NextResponse.json({ success: false, error: 'INVALID_COMBINATION', message: 'A Last Frame needs a First Frame too — last-frame-only isn\'t supported yet.' }, { status: 400 })
+      }
+      if (references.length === 0 && typeof firstFrameFileId !== 'string') {
+        return NextResponse.json({ success: false, error: 'MISSING_REFERENCES', message: 'Add at least one photo, video, audio reference, or a First Frame.' }, { status: 400 })
       }
       const hasVideoReference = references.some((r) => r.kind === 'video')
       const maxReferences = hasVideoReference ? OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO : OMNI_MAX_REFERENCE_IMAGES
@@ -369,13 +380,14 @@ export async function POST(
         // trust the client to have disabled the incompatible control.
         return NextResponse.json({ success: false, error: 'INVALID_COMBINATION', message: 'Native audio generation can\'t be combined with a reference video.' }, { status: 400 })
       }
-      // Every reference's tag must literally appear as <<<tag>>> in the
-      // prompt — confirmed required by a real Kling 400 response. Cheap
-      // sanity check here avoids wasting a real, billed call on a request
-      // that's structurally certain to fail.
+      // Every reference's tag must literally appear as @tag in the prompt —
+      // Kling's own documented convention ("Specify an image... in the
+      // format of @xxx, such as @image_1"). Cheap sanity check here avoids
+      // wasting a real, billed call on a request that's structurally
+      // certain to fail or silently ignore the reference.
       for (const ref of references) {
-        if (!ref.tag || !ref.kind || !ref.fileId || !sanitizedPrompt.includes(`<<<${ref.tag}>>>`)) {
-          return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: `Every reference must be mentioned in your prompt as <<<${ref.tag || 'tag'}>>>.` }, { status: 400 })
+        if (!ref.tag || !ref.kind || !ref.fileId || !sanitizedPrompt.includes(`@${ref.tag}`)) {
+          return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: `Every reference must be mentioned in your prompt as @${ref.tag || 'tag'}.` }, { status: 400 })
         }
       }
 
@@ -420,6 +432,28 @@ export async function POST(
         resolvedReferences.push({ kind: references[i].kind as OmniReferenceInput['kind'], tag: references[i].tag!, url, r2Key: file.r2Key })
       }
 
+      // First/Last Frame — resolved the same trust-boundary way as
+      // references[] above (never trust a client-supplied URL, only a
+      // fileId), just kept separate since they're their own dedicated
+      // slots with fixed tags, never @-mentioned in the prompt.
+      const resolveFrame = async (fileId: string, kind: 'first_frame' | 'last_frame') => {
+        const file = await studioGetItem<MediaFile>(TABLES.mediafiles, { projectId, fileId })
+        if (!file || file.studioId !== studioId || file.fileType !== 'IMAGE' || file.processingStatus !== 'READY' || !file.r2Key) return null
+        const url = await getStudioR2SignedViewUrl(file.r2Key)
+        return { kind, tag: kind, url, r2Key: file.r2Key } satisfies OmniReferenceInput & { r2Key: string }
+      }
+      if (typeof firstFrameFileId === 'string') {
+        const resolved = await resolveFrame(firstFrameFileId, 'first_frame')
+        if (!resolved) return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: 'First Frame photo is not ready yet — try re-uploading.' }, { status: 400 })
+        resolvedReferences.unshift(resolved)
+      }
+      if (typeof lastFrameFileId === 'string') {
+        const resolved = await resolveFrame(lastFrameFileId, 'last_frame')
+        if (!resolved) return NextResponse.json({ success: false, error: 'INVALID_REFERENCE', message: 'Last Frame photo is not ready yet — try re-uploading.' }, { status: 400 })
+        resolvedReferences.push(resolved)
+      }
+      const multiShot = typeof requestedMultiShot === 'boolean' ? requestedMultiShot : undefined
+
       const pricing = await getPricingConfig()
       const { sellPricePaise } = computeOmniVideoCost(durationSec, omniResolution, hasVideoReference, generateAudio, pricing ?? undefined)
       const creditPrice = aiSearchCreditPricePaise(pricing.aiExtraPaisePer1000)
@@ -462,7 +496,7 @@ export async function POST(
           reelId,
           prompt: sanitizedPrompt,
           references: resolvedReferences,
-          durationSec, aspectRatio: omniAspectRatio, resolution: omniResolution, generateAudio,
+          durationSec, aspectRatio: omniAspectRatio, resolution: omniResolution, generateAudio, multiShot,
         })
       } catch (err) {
         await refundAiSearchCredits(studioId, aiCreditsRequired)
@@ -477,6 +511,7 @@ export async function POST(
         photoIds: [],
         omniReferences: resolvedReferences.map((r) => ({ kind: r.kind, tag: r.tag, r2Key: r.r2Key })),
         generateAudio,
+        multiShot,
         style: 'CINEMATIC',
         aspectRatio: omniAspectRatio,
         resolution: omniResolution,

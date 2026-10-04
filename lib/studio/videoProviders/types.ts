@@ -59,19 +59,35 @@ export interface TextToVideoResult {
 
 // Kling 3.0 Omni (reel-generator-omni-redesign plan, 2026-09-29) — a THIRD,
 // genuinely different Kling endpoint (POST /omni-video/kling-3.0-omni),
-// confirmed via a real API call. Unlike image-to-video/text-to-video, one
-// call takes 1+ reference items (images today; video/audio/subject kinds
-// are typed here for the full v1 scope but their exact request shape is
-// NOT yet confirmed — see OmniReference's own comment) referenced inline in
-// the prompt via literal `<<<tag>>>` markers, confirmed required by a real
-// 400 response. Status polling reuses the SAME `external_task_ids=` scheme
-// as image-to-video (confirmed) — simpler than text-to-video, which needed
-// its own `task_ids=`/prefix-discrimination scheme.
+// confirmed both via a real API call AND Kling's own official docs
+// (obtained 2026-09-30). Unlike image-to-video/text-to-video, one call
+// takes 1+ reference items (images today, sent as contents[] entries with
+// `type: 'refer_image'; our own OmniReference.kind covers video/audio/
+// subject too but their request shape maps to the docs' first_frame/
+// last_frame/feature_video/base_video/element content types, none of which
+// are wired in klingProvider.ts yet — see its generateOmniVideo header)
+// referenced inline in the prompt via Kling's documented `@tag` mention
+// syntax ("Specify an image, an Element, a video in the format of @xxx,
+// such as @image_1") — NOT `<<<tag>>>`, an earlier, pre-official-docs guess
+// this used before the real docs were available. Status polling reuses the
+// SAME `external_task_ids=` scheme as image-to-video (confirmed) — simpler
+// than text-to-video, which needed its own `task_ids=`/prefix-
+// discrimination scheme.
 export interface OmniReference {
-  kind: 'image' | 'video' | 'audio' | 'subject'
-  // Must exactly match a `<<<tag>>>` marker literally present in the
-  // request's prompt string — Kling rejects (or silently ignores; not
-  // independently tested) a reference with no corresponding prompt mention.
+  // 'first_frame'/'last_frame' added 2026-09-30 (Reel Studio) — real,
+  // documented Kling content types (pins the literal start/end frame of
+  // the whole generated video), distinct from 'image' (== docs' loose
+  // `refer_image`, a style/subject reference). 'video'/'audio'/'subject'
+  // remain unwired placeholders — see generateOmniVideo's header for why.
+  kind: 'image' | 'first_frame' | 'last_frame' | 'video' | 'audio' | 'subject'
+  // Must exactly match an `@tag` mention literally present in the request's
+  // prompt string — Kling's docs warn tags must not be substrings of each
+  // other (fine for our own sequential image_1/image_2/... scheme).
+  // EXCEPT for kind 'first_frame'/'last_frame', which are never @-mentioned
+  // in prose (they're structural picks, not narrative references — see the
+  // Reel Studio page's own header comment) — tag is still required as a
+  // unique content id, just never checked against the prompt text for
+  // those two kinds specifically.
   tag: string
   url: string
   // 'subject' kind only — 1-3 image URLs forming one named consistent
@@ -82,10 +98,18 @@ export interface OmniReference {
 }
 
 export interface OmniVideoRequest {
-  // Must literally contain a `<<<tag>>>` marker per entry in `references`.
+  // Must literally contain an `@tag` mention per entry in `references`
+  // whose kind is 'image' (first_frame/last_frame are exempt — see
+  // OmniReference.tag's own comment).
   prompt: string
   references: OmniReference[]
   durationSec: number
+  // Docs: required unless a first_frame (or video-editing) content is
+  // present. We always send it regardless (simpler, and sending an extra
+  // optional field is far lower-risk than conditionally omitting one) —
+  // not independently confirmed Kling accepts it either way when a
+  // first_frame IS present, that's part of what a real test call here
+  // would settle.
   aspectRatio: ReelAspectRatio
   resolution: ReelResolution
   // Maps to Kling's real `settings.audio` field, confirmed to be a STRING
@@ -95,6 +119,13 @@ export interface OmniVideoRequest {
   // exposed at this interface layer since it only makes sense paired with
   // a 'video' kind reference, whose own request shape isn't confirmed yet.
   generateAudio?: boolean
+  // Maps to settings.multi_shot (documented, default true if omitted).
+  // Lets a caller explicitly disable Kling's own "shot n, m, words;"
+  // prompt parsing for a plain single-shot description. UNCONFIRMED
+  // against a real call — Kling's own default (true) is used whenever this
+  // is left undefined, which is the lower-risk choice for any caller that
+  // doesn't care.
+  multiShot?: boolean
   externalTaskId: string
 }
 

@@ -156,9 +156,12 @@ export async function POST(
       // maps predictably to the first photo they picked.
       const orderedFiles = photoIds.map((id) => selectedFiles.find((f) => f.fileId === id)!).filter(Boolean)
       const tags = orderedFiles.map((_, i) => `image_${i + 1}`)
-      const autoPrompt = tags.length === sanitizedPrompt.split('<<<').length - 1
+      // @tag is Kling's own documented mention syntax ("Specify an image...
+      // in the format of @xxx, such as @image_1") — NOT <<<tag>>>, an
+      // earlier, pre-official-docs guess this used to use.
+      const autoPrompt = tags.every((t) => sanitizedPrompt.includes(`@${t}`))
         ? sanitizedPrompt // client already inserted tags itself (future UI)
-        : `${sanitizedPrompt} ${tags.map((t) => `<<<${t}>>>`).join(' ')}`.trim()
+        : `${sanitizedPrompt} ${tags.map((t) => `@${t}`).join(' ')}`.trim()
 
       const references: (OmniReferenceInput & { r2Key: string })[] = []
       for (let i = 0; i < orderedFiles.length; i++) {

@@ -563,18 +563,22 @@ export interface StudioReel {
   photoIds: string[]
   // Omni-only — the reference images/video/audio/subject items a reel was
   // built from, in prompt-tag order (tag values like 'image_1'/'image_2'
-  // must match what's literally embedded in customPrompt as <<<tag>>>
-  // markers, confirmed required by Kling's own real API, 2026-09-29). r2Key
+  // must match what's literally embedded in customPrompt as @tag mentions —
+  // Kling's own documented convention, confirmed via its official docs
+  // 2026-09-30; superseded an earlier, pre-docs <<<tag>>> guess). r2Key
   // is a MediaFile.r2Key for image/video/audio references (reference
   // uploads are ordinary MediaFile rows tagged `purpose: 'REEL_REFERENCE'`,
   // counted against the studio's normal storage quota — see the
   // reel-generator-omni-redesign plan's Phase 2).
-  omniReferences?: { kind: 'image' | 'video' | 'audio' | 'subject'; tag: string; r2Key: string }[]
+  omniReferences?: { kind: 'image' | 'first_frame' | 'last_frame' | 'video' | 'audio' | 'subject'; tag: string; r2Key: string }[]
   // Omni-only — native synchronized audio generation, mutually exclusive
   // with a 'video' kind reference in omniReferences (Kling's own real
   // constraint, confirmed 2026-09-29 — "generate audio and reference video
   // are mutually exclusive").
   generateAudio?: boolean
+  // Omni-only, Reel Studio (2026-09-30) — maps to settings.multi_shot.
+  // undefined means Kling's own default (true) applied.
+  multiShot?: boolean
   analysis?: ReelPhotoAnalysis[]
   storyPlan?: ReelStoryPlan
   style: ReelStyle
