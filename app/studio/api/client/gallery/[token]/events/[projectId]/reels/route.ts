@@ -12,7 +12,7 @@ import {
   REEL_STYLES, REEL_STYLE_META, getReelTemplate, DEFAULT_REEL_TEMPLATE, MAX_CUSTOM_PROMPT_LENGTH,
   DRONE_SHOT_STYLES, DRONE_SHOT_META,
   OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION, OMNI_MAX_REFERENCE_IMAGES, MIN_TEXT_PROMPT_LENGTH,
-  TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
+  TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO, OMNI_PROMPT_MAX,
 } from '@/constants/videoProviders'
 import { getPricingConfig } from '@/lib/pricingConfig'
 import type { StudioProject, MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
@@ -133,7 +133,7 @@ export async function POST(
     // upgrade: genuine multi-photo consistency in one call, native audio,
     // real aspect-ratio control, 4K.
     if (requestedMode === 'omni') {
-      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
+      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, OMNI_PROMPT_MAX) : ''
       if (sanitizedPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
         return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
       }

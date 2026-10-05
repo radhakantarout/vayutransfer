@@ -11,7 +11,7 @@ import {
   computeTextToVideoCost, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
   TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
   CFG_SCALE_PRESETS, DEFAULT_CFG_SCALE_PRESET, type CfgScalePreset, MAX_NEGATIVE_PROMPT_LENGTH,
-  computeOmniVideoCost, OMNI_RESOLUTIONS, OMNI_MAX_REFERENCE_IMAGES,
+  computeOmniVideoCost, OMNI_RESOLUTIONS, OMNI_MAX_REFERENCE_IMAGES, OMNI_PROMPT_MAX,
 } from '@/constants/videoProviders'
 import { aiSearchCreditPricePaise, toMomentsCredits } from '@/constants/studioPricing'
 import type { ReelStyle, ReelResolution } from '@/types/studio'
@@ -396,13 +396,13 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
   useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current) }, [])
 
   // Reclamps customPrompt when the compose screen's mode ACTUALLY SWITCHES —
-  // text mode's cap (1900) is HIGHER than photo mode's (1750, reserves room
-  // for the style fragment text mode doesn't use). Typing up to 1900 chars
-  // in text mode, then adding a photo (flipping to photo mode), used to
-  // leave the already-typed text over photo mode's cap with nothing to
-  // truncate it — the textarea's own onChange only enforces the CURRENT
-  // mode's cap as you type, not retroactively on a mode change it didn't
-  // witness.
+  // the three modes' caps differ (text 1900, Omni 2500, legacy photo 1750,
+  // the last reserving room for a style fragment the other two don't use).
+  // Typing up to a higher mode's cap, then switching to a lower-cap mode
+  // (e.g. Omni -> "classic template picker" photo mode), used to leave the
+  // already-typed text over the new mode's cap with nothing to truncate it
+  // — the textarea's own onChange only enforces the CURRENT mode's cap as
+  // you type, not retroactively on a mode change it didn't witness.
   //
   // Compares against a REF of the previous isComposeTextMode value, not
   // just "are we on the compose stage" — deliberately so this only fires on
@@ -417,7 +417,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     if (stage !== 'compose') return
     if (prevIsComposeTextModeRef.current === isComposeTextMode) return
     prevIsComposeTextModeRef.current = isComposeTextMode
-    const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
+    const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : isOmniReferenceMode ? OMNI_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
     setCustomPrompt((prev) => (prev.length > max ? prev.slice(0, max) : prev))
   }, [isComposeTextMode, stage])
 
@@ -490,7 +490,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
     setCustomPrompt((prev) => {
       if (prev.includes(marker)) return prev
       const sep = prev.trim().length > 0 ? ' ' : ''
-      const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
+      const max = isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : isOmniReferenceMode ? OMNI_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX
       return `${prev}${sep}${marker}`.slice(0, max)
     })
     promptTextareaRef.current?.focus()
@@ -782,7 +782,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                 <textarea
                   ref={promptTextareaRef}
                   value={customPrompt}
-                  onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
+                  onChange={(e) => setCustomPrompt(e.target.value.slice(0, isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : isOmniReferenceMode ? OMNI_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX))}
                   placeholder={isComposeTextMode
                     ? 'e.g. A golden retriever running joyfully through a sunlit meadow, cinematic slow motion, warm afternoon light'
                     : 'e.g. Slow-motion walk together at sunset, warm golden-hour light…'}
@@ -790,7 +790,7 @@ export default function ReelMvpModal(props: ReelMvpModalProps) {
                   className="w-full bg-bg border border-border rounded-2xl px-3.5 py-3 text-sm text-text-primary placeholder:text-muted/50 focus:outline-none focus:border-accent/60 resize-y transition-colors"
                 />
                 <p className="text-[10px] text-muted text-right">
-                  {customPrompt.length}/{isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX}
+                  {customPrompt.length}/{isComposeTextMode ? MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX : isOmniReferenceMode ? OMNI_PROMPT_MAX : MOMENTS_COMPOSE_PROMPT_MAX}
                 </p>
               </div>
             )}

@@ -60,7 +60,7 @@ import { toMomentsCredits } from '@/constants/studioPricing'
 import {
   computeOmniVideoCost, OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION,
   TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
-  MOMENTS_COMPOSE_PROMPT_MAX, OMNI_MAX_REFERENCE_IMAGES,
+  OMNI_PROMPT_MAX, OMNI_MAX_REFERENCE_IMAGES,
   DEFAULT_AI_CLIP_DURATION_SEC,
 } from '@/constants/videoProviders'
 import type { PricingConfig } from '@/types/pricingConfig'
@@ -147,7 +147,7 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
   }, [])
 
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value.slice(0, MOMENTS_COMPOSE_PROMPT_MAX)
+    const value = e.target.value.slice(0, OMNI_PROMPT_MAX)
     setPrompt(value)
     detectMention(value, e.target.selectionStart ?? value.length)
   }
@@ -161,7 +161,7 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
     const cursor = el?.selectionStart ?? prompt.length
     const before = prompt.slice(0, mention.start)
     const after = prompt.slice(cursor)
-    const next = `${before}@${tag} ${after}`.slice(0, MOMENTS_COMPOSE_PROMPT_MAX)
+    const next = `${before}@${tag} ${after}`.slice(0, OMNI_PROMPT_MAX)
     setPrompt(next)
     setMention(null)
     requestAnimationFrame(() => {
@@ -180,7 +180,7 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
     const marker = `@${tag}`
     if (prompt.includes(marker)) return
     const sep = prompt.slice(0, cursor).trim().length > 0 && prompt[cursor - 1] !== ' ' ? ' ' : ''
-    const next = `${prompt.slice(0, cursor)}${sep}${marker} ${prompt.slice(cursor)}`.slice(0, MOMENTS_COMPOSE_PROMPT_MAX)
+    const next = `${prompt.slice(0, cursor)}${sep}${marker} ${prompt.slice(cursor)}`.slice(0, OMNI_PROMPT_MAX)
     setPrompt(next)
   }
 
@@ -435,7 +435,7 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
               )}
             </div>
             <div className="flex items-center justify-between">
-              <p className="text-[10px] text-muted">{prompt.length}/{MOMENTS_COMPOSE_PROMPT_MAX}</p>
+              <p className="text-[10px] text-muted">{prompt.length}/{OMNI_PROMPT_MAX}</p>
               {!allTagsMentioned && referenceTags.length > 0 && (
                 <p className="text-[10px] text-danger">Mention every added image in your description (tap it, or type @)</p>
               )}
