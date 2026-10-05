@@ -17,7 +17,7 @@ import {
   DRONE_SHOT_STYLES, DRONE_SHOT_META, DEFAULT_REEL_ASPECT_RATIO,
   MOMENTS_COMPOSE_PROMPT_MAX, MOMENTS_TEXT_TO_VIDEO_PROMPT_MAX, MIN_TEXT_PROMPT_LENGTH,
   TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO, CFG_SCALE_PRESETS, MAX_NEGATIVE_PROMPT_LENGTH,
-  OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION, OMNI_MAX_REFERENCE_IMAGES, OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO,
+  OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION, OMNI_MAX_REFERENCE_IMAGES, OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO, OMNI_PROMPT_MAX,
 } from '@/constants/videoProviders'
 import type { MediaFile, Studio, StudioJob, StudioReel, ReelStyle, ReelResolution, ReelMotion } from '@/types/studio'
 
@@ -350,7 +350,7 @@ export async function POST(
     // Kling actually respects (confirmed — unlike image-to-video's no-
     // aspect-ratio-field and text-to-video's ignored duration/resolution).
     if (mode === 'omni') {
-      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, MAX_CUSTOM_PROMPT_LENGTH) : ''
+      const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, OMNI_PROMPT_MAX) : ''
       if (sanitizedPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
         return NextResponse.json({ success: false, error: 'MISSING_PROMPT', message: `Describe the video you want to generate (at least ${MIN_TEXT_PROMPT_LENGTH} characters).` }, { status: 400 })
       }

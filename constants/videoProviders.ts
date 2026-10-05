@@ -174,6 +174,15 @@ export const MAX_CUSTOM_PROMPT_LENGTH = 2000
 // 1771, rounded down.
 export const MOMENTS_COMPOSE_PROMPT_MAX = 1750
 
+// Kling 3.0 Omni's own cap — unlike photo-mode above, generateOmniVideo
+// sends the user's prompt straight through with no fixed suffix/style
+// fragment appended (see its contents.push({type:'prompt', ...}) call), so
+// no overhead-reservation math is needed here. Set to Kling's own
+// documented RECOMMENDED ceiling for contents[].type.prompt.text (hard max
+// is 3072, but the docs explicitly recommend staying at or under 2500) —
+// confirmed from Kling's official API docs, 2026-09-30.
+export const OMNI_PROMPT_MAX = 2500
+
 // Text-to-video mode's own cap — klingProvider.ts#generateTextToVideo always
 // appends TEXT_TO_VIDEO_BASE_SUFFIX, a shorter, generic quality guardrail (no
 // style fragment, no facial-identity preservation — there's no source photo
