@@ -344,11 +344,15 @@ export async function POST(
     }
 
     // ─── Kling 3.0 Omni — reel-generator-omni-redesign plan, 2026-09-29 ────
-    // A third, completely separate request shape again: 1+ references
+    // A third, completely separate request shape again: 0+ references
     // (photo/video/audio/subject) tagged and mentioned inline in the
-    // prompt, plus real duration/resolution/aspect-ratio/audio controls
-    // Kling actually respects (confirmed — unlike image-to-video's no-
-    // aspect-ratio-field and text-to-video's ignored duration/resolution).
+    // prompt, optional First/Last Frame, plus real duration/resolution/
+    // aspect-ratio/audio controls Kling actually respects (confirmed —
+    // unlike image-to-video's no-aspect-ratio-field and text-to-video's
+    // ignored duration/resolution). References are genuinely optional —
+    // Kling's own docs confirm a prompt-only call (no image/frame content
+    // at all) is valid (2026-10-07, see the "Only prompt" scenario
+    // example).
     if (mode === 'omni') {
       const sanitizedPrompt = typeof omniPrompt === 'string' ? omniPrompt.trim().slice(0, OMNI_PROMPT_MAX) : ''
       if (sanitizedPrompt.length < MIN_TEXT_PROMPT_LENGTH) {
@@ -365,9 +369,11 @@ export async function POST(
       if (typeof lastFrameFileId === 'string' && typeof firstFrameFileId !== 'string') {
         return NextResponse.json({ success: false, error: 'INVALID_COMBINATION', message: 'A Last Frame needs a First Frame too — last-frame-only isn\'t supported yet.' }, { status: 400 })
       }
-      if (references.length === 0 && typeof firstFrameFileId !== 'string') {
-        return NextResponse.json({ success: false, error: 'MISSING_REFERENCES', message: 'Add at least one photo, video, audio reference, or a First Frame.' }, { status: 400 })
-      }
+      // No minimum asset requirement — Kling's own docs show a real
+      // "prompt only" example with an empty-equivalent contents[] (just the
+      // prompt entry, no image/frame content at all), confirmed to work.
+      // References/First Frame/Last Frame are all optional on top of that;
+      // the only hard requirement is the prompt itself (checked above).
       const hasVideoReference = references.some((r) => r.kind === 'video')
       const maxReferences = hasVideoReference ? OMNI_MAX_REFERENCE_IMAGES_WITH_VIDEO : OMNI_MAX_REFERENCE_IMAGES
       if (references.length > maxReferences) {
