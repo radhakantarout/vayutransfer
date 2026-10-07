@@ -976,8 +976,10 @@ export interface Booking {
 // Pro storage/AI/billingCycle adjustments, and manual cycle renewal — all
 // reuse the same Razorpay order→verify pipeline as top-ups. 'reel_credit_topup'
 // is pack-based (constants/videoProviders.ts), unlike the linear-rate
-// storage/AI top-ups — see packageId's comment below.
-export type StudioTxnType = 'storage_topup' | 'ai_search_topup' | 'plan_change' | 'reel_credit_topup'
+// storage/AI top-ups — see packageId's comment below. 'coupon_redemption'
+// (coupon system, 2026-10-07) is the one type with no real money behind it
+// at all — amountPaise is always 0 — see lib/studio/coupons.ts.
+export type StudioTxnType = 'storage_topup' | 'ai_search_topup' | 'plan_change' | 'reel_credit_topup' | 'coupon_redemption'
 export type StudioTxnStatus = 'pending' | 'success' | 'failed'
 
 export interface StudioTransaction {
@@ -993,13 +995,65 @@ export interface StudioTransaction {
   amountPaise: number
   gbPurchased: number
   months?: number            // set for storage_topup only
-  creditsPurchased?: number  // set for ai_search_topup and reel_credit_topup
+  creditsPurchased?: number  // set for ai_search_topup, reel_credit_topup, and coupon_redemption
   // set for plan_change only — the plan/cycle this transaction moved the
   // studio to, so a receipt or audit trail can show what actually changed.
   planId?: 'free' | 'pro' | 'custom'
   billingCycle?: 'monthly' | 'annual'
   razorpayOrderId?: string
   razorpayPaymentId?: string
+  // coupon_redemption only — which code was redeemed, for a readable
+  // billing-history label and audit trail.
+  couponCode?: string
   status: StudioTxnStatus
   createdAt: string
+}
+
+// ── Coupons (2026-10-07) ─────────────────────────────────────────────────
+// Generic credit/storage grant mechanism — what every manual "add credits
+// via AWS CLI" admin request this project kept getting should have been
+// from the start. One owner-created code, redeemable by any real studio
+// (not just an admin back-door), with real abuse limits. See
+// lib/studio/coupons.ts for the atomic redemption logic and its own
+// detailed security notes.
+export interface StudioCoupon {
+  code: string // PK — normalized uppercase, see normalizeCouponCode
+  aiCredits: number // raw AI-search credits granted per redemption, 0 = none
+  storageGB: number // GB granted per redemption (permanent grant), 0 = none
+  // Global cap across every studio that redeems this code. Never
+  // "unlimited" — always an explicit number, so a coupon's total worst-case
+  // cost exposure (aiCredits/storageGB × maxRedemptions) is always
+  // computable and bounded, never open-ended.
+  maxRedemptions: number
+  // Atomic counter, incremented only via the conditional transaction in
+  // redeemCoupon — never written any other way.
+  redeemedCount: number
+  // Optional — when set, only this exact studio may redeem the code. Used
+  // for one-off grants to a specific account (e.g. a test studio) without
+  // the code being generally usable if it ever leaked. A studio can still
+  // only redeem once either way (enforced by StudioCouponRedemption's own
+  // composite key), this just additionally narrows WHO.
+  restrictToStudioId?: string
+  expiresAt: string | null // null = never expires
+  // 'disabled' lets an owner kill a code without deleting its redemption
+  // history — DELETE is only allowed server-side while redeemedCount is 0.
+  status: 'active' | 'disabled'
+  note?: string // internal-only, shown in the admin list, never to redeemers
+  createdByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+// PK code, SK studioId — the composite key itself IS the "has this studio
+// already redeemed this code" guard: a conditional Put with
+// attribute_not_exists(code) against this exact (code, studioId) pair can
+// never race, regardless of how many requests hit it at once. Never queried
+// by anything other than its own exact key (no GSI) — it exists purely as
+// an atomicity primitive + audit trail, not a list view.
+export interface StudioCouponRedemption {
+  code: string
+  studioId: string
+  txnId: string
+  redeemedByUserId: string
+  redeemedAt: string
 }

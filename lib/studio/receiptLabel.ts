@@ -9,6 +9,12 @@ export function formatTxnLabel(txn: StudioTransaction): string {
   if (txn.type === 'storage_topup') return `${txn.gbPurchased} GB storage top-up`
   if (txn.type === 'ai_search_topup') return `${txn.creditsPurchased ?? 0} AI search top-up`
   if (txn.type === 'reel_credit_topup') return `${txn.creditsPurchased ?? 0} AI Reel credit top-up`
+  if (txn.type === 'coupon_redemption') {
+    const parts: string[] = []
+    if (txn.creditsPurchased) parts.push(`${txn.creditsPurchased} AI credits`)
+    if (txn.gbPurchased) parts.push(`${txn.gbPurchased} GB storage`)
+    return `Coupon ${txn.couponCode ?? ''}: ${parts.join(' + ')}`.trim()
+  }
   if (txn.planId === 'free') return 'Free plan'
   return `Pro plan (${txn.gbPurchased} GB, ${txn.creditsPurchased ?? 0} AI searches/mo, ${txn.billingCycle ?? 'monthly'})`
 }
