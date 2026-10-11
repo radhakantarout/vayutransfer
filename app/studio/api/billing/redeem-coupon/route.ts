@@ -48,7 +48,16 @@ export async function POST(req: NextRequest) {
     // route guessing at a label that's wrong for half its callers.
     return NextResponse.json({ success: true, data: { aiCredits: result.aiCredits, storageGB: result.storageGB } })
   } catch (err) {
+    // Distinct message from every clean rejection above (which all have
+    // their own specific text) — if a redeemer ever sees this exact
+    // generic line, it means something actually threw server-side (e.g. a
+    // misconfigured table name), not that their code was rejected. Found
+    // the hard way: the frontend's own fallback for a response with no
+    // `message` field reads almost identically to this, which made an
+    // early real failure (Vercel Preview missing the new
+    // DYNAMO_STUDIO_COUPONS_TABLE/DYNAMO_STUDIO_COUPON_REDEMPTIONS_TABLE
+    // env vars after a deploy) hard to tell apart from "just a bad code."
     console.error('[billing/redeem-coupon]', err)
-    return NextResponse.json({ success: false, error: 'INTERNAL_ERROR' }, { status: 500 })
+    return NextResponse.json({ success: false, error: 'INTERNAL_ERROR', message: 'Something went wrong on our end — please try again in a moment.' }, { status: 500 })
   }
 }
