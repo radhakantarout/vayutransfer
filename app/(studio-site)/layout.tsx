@@ -1,4 +1,9 @@
-import { Noto_Sans_Devanagari, Noto_Sans_Oriya, Noto_Sans_Bengali, Noto_Sans_Tamil, Noto_Sans_Telugu } from 'next/font/google'
+import { Noto_Sans_Devanagari, Noto_Sans_Oriya, Noto_Sans_Tamil, Noto_Sans_Telugu } from 'next/font/google'
+// Noto_Sans_Bengali temporarily removed (2026-11-20) -- Vercel's build was
+// deterministically failing to fetch/parse its Google Fonts CSS response
+// (TypeError in next/font's loader.js, reproduced on 4 consecutive build
+// attempts), blocking an urgent unrelated production hotfix. Restore once
+// the underlying next/font/Google Fonts issue is understood.
 
 // None of the 8 (growing) templates' fonts (Georgia, Helvetica, Cormorant
 // Garamond, Palatino, Inter) have glyphs for Devanagari/Oriya/Bengali/Tamil/
@@ -11,13 +16,12 @@ import { Noto_Sans_Devanagari, Noto_Sans_Oriya, Noto_Sans_Bengali, Noto_Sans_Tam
 // address inside otherwise-English copy) renders.
 const notoDevanagari = Noto_Sans_Devanagari({ subsets: ['devanagari'], weight: ['400', '500', '600', '700'], variable: '--font-noto-devanagari', display: 'swap' })
 const notoOriya      = Noto_Sans_Oriya({ subsets: ['oriya'], weight: ['400', '500', '600', '700'], variable: '--font-noto-oriya', display: 'swap' })
-const notoBengali    = Noto_Sans_Bengali({ subsets: ['bengali'], weight: ['400', '500', '600', '700'], variable: '--font-noto-bengali', display: 'swap' })
 const notoTamil      = Noto_Sans_Tamil({ subsets: ['tamil'], weight: ['400', '500', '600', '700'], variable: '--font-noto-tamil', display: 'swap' })
 const notoTelugu     = Noto_Sans_Telugu({ subsets: ['telugu'], weight: ['400', '500', '600', '700'], variable: '--font-noto-telugu', display: 'swap' })
 
 export default function StudioSiteLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`${notoDevanagari.variable} ${notoOriya.variable} ${notoBengali.variable} ${notoTamil.variable} ${notoTelugu.variable}`}>
+    <div className={`${notoDevanagari.variable} ${notoOriya.variable} ${notoTamil.variable} ${notoTelugu.variable}`}>
       {children}
     </div>
   )
