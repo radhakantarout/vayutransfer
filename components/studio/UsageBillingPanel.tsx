@@ -58,6 +58,11 @@ export default function UsageBillingPanel({
   const [historyError, setHistoryError] = useState(false)
   const [topupKind, setTopupKind] = useState<'storage' | 'ai-search' | null>(null)
   const [sendingReceipt, setSendingReceipt] = useState<string | null>(null)
+  const [showCouponInput, setShowCouponInput] = useState(false)
+  const [couponCode, setCouponCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
+  const [couponError, setCouponError] = useState<string | null>(null)
+  const [couponSuccess, setCouponSuccess] = useState<string | null>(null)
 
   const handleTopUpClick = (kind: 'storage' | 'ai-search') => {
     if (!topUpAllowed) { onTopUpBlocked?.(kind); return }
@@ -80,6 +85,39 @@ export default function UsageBillingPanel({
     setSendingReceipt(txnId)
     await fetch(`/studio/api/billing/receipt/${txnId}`, { method: 'POST' }).catch(() => {})
     setSendingReceipt(null)
+  }
+
+  const handleRedeem = async () => {
+    const code = couponCode.trim()
+    if (!code || redeeming) return
+    setRedeeming(true)
+    setCouponError(null)
+    setCouponSuccess(null)
+    try {
+      const res = await fetch('/studio/api/billing/redeem-coupon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      }).then((r) => r.json())
+      if (!res.success) {
+        setCouponError(res.message ?? 'Could not redeem this code.')
+        return
+      }
+      const parts: string[] = []
+      if (res.data.aiCredits > 0) {
+        const display = role === 'moments' ? toMomentsCredits(res.data.aiCredits, momentsCreditDivisor) : res.data.aiCredits
+        parts.push(`${display} ${aiLabel}`)
+      }
+      if (res.data.storageGB > 0) parts.push(`${res.data.storageGB} GB storage`)
+      setCouponSuccess(`You've got ${parts.join(' + ')}!`)
+      setCouponCode('')
+      loadHistory()
+      onUsageChange?.()
+    } catch {
+      setCouponError('Network error — please try again.')
+    } finally {
+      setRedeeming(false)
+    }
   }
 
   return (
@@ -108,6 +146,40 @@ export default function UsageBillingPanel({
           <UsageBar pct={aiUsagePct} />
           <p className={`text-[11px] font-semibold ${usageTextColor(aiUsagePct)}`}>{aiUsagePct}% used</p>
         </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-2xl px-4 py-3">
+        {!showCouponInput ? (
+          <button
+            onClick={() => { setShowCouponInput(true); setCouponSuccess(null); setCouponError(null) }}
+            className="text-xs font-semibold text-accent hover:underline"
+          >
+            🎟️ Have a coupon code?
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-text-primary">Redeem a coupon code</p>
+            <div className="flex items-center gap-2">
+              <input
+                value={couponCode}
+                onChange={(e) => setCouponCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRedeem() }}
+                placeholder="e.g. WELCOME50"
+                disabled={redeeming}
+                className="flex-1 bg-bg border border-border rounded-xl px-3 py-2 text-sm text-text-primary uppercase placeholder:text-muted/60 placeholder:normal-case focus:outline-none focus:border-accent/60 transition-colors disabled:opacity-60"
+              />
+              <button
+                onClick={handleRedeem}
+                disabled={redeeming || !couponCode.trim()}
+                className="flex-shrink-0 bg-accent text-bg text-xs font-bold px-4 py-2 rounded-xl hover:bg-accent/90 transition-colors disabled:opacity-50"
+              >
+                {redeeming ? 'Redeeming…' : 'Redeem'}
+              </button>
+            </div>
+            {couponError && <p className="text-[11px] text-danger">{couponError}</p>}
+            {couponSuccess && <p className="text-[11px] text-success font-semibold">{couponSuccess}</p>}
+          </div>
+        )}
       </div>
 
       <div className="bg-card border border-border rounded-2xl overflow-hidden">

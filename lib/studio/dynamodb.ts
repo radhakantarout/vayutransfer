@@ -66,6 +66,14 @@ const TABLES = {
   // 2026-09-18 (code written ahead of infra, same pattern as every other
   // new table this session — needs explicit go-ahead before creation).
   aiImages: process.env.DYNAMO_STUDIO_AI_IMAGES_TABLE ?? 'vayustudio-ai-images',
+  // Coupons (2026-10-07) — PK code, no GSI (owner's own list route scans;
+  // low enough volume this isn't worth a GSI). couponRedemptions: PK code,
+  // SK studioId, no GSI — see StudioCouponRedemption's own comment for why
+  // its composite key is the real atomicity guard, not just an index.
+  // NOT YET PROVISIONED in AWS — same pattern as every other new table in
+  // this project, needs explicit go-ahead before creation.
+  coupons:           process.env.DYNAMO_STUDIO_COUPONS_TABLE            ?? 'vayustudio-coupons',
+  couponRedemptions: process.env.DYNAMO_STUDIO_COUPON_REDEMPTIONS_TABLE ?? 'vayustudio-coupon-redemptions',
 } as const
 
 export { TABLES }

@@ -61,7 +61,7 @@ import {
   computeOmniVideoCost, OMNI_RESOLUTIONS, DEFAULT_OMNI_RESOLUTION,
   TEXT_TO_VIDEO_ASPECT_RATIOS, DEFAULT_TEXT_TO_VIDEO_ASPECT_RATIO,
   OMNI_PROMPT_MAX, OMNI_MAX_REFERENCE_IMAGES,
-  DEFAULT_AI_CLIP_DURATION_SEC,
+  DEFAULT_AI_CLIP_DURATION_SEC, MIN_TEXT_PROMPT_LENGTH,
 } from '@/constants/videoProviders'
 import type { PricingConfig } from '@/types/pricingConfig'
 import ReelGalleryPickerModal, { type ReelPickerPhoto } from '@/components/studio/moments/ReelGalleryPickerModal'
@@ -222,7 +222,12 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
   const displayCredits = toMomentsCredits(cost.creditsRequired, pricing?.momentsCreditDivisor)
 
   const allTagsMentioned = referenceTags.every((t) => prompt.includes(`@${t}`))
-  const canGenerate = stage === 'compose' && prompt.trim().length > 0 && allTagsMentioned && consentChecked && usedIds.length > 0
+  // No asset requirement — Kling's own docs confirm a prompt-only Omni call
+  // (zero images/frames, just the text) is valid (the "Only prompt"
+  // scenario example). References/First Frame/Last Frame stay fully
+  // optional; the prompt itself (checked against the same minimum the
+  // backend enforces) is the only hard requirement.
+  const canGenerate = stage === 'compose' && prompt.trim().length >= MIN_TEXT_PROMPT_LENGTH && allTagsMentioned && consentChecked
 
   // Exactly what's sent, given the current form state — shown live in the
   // Output panel, mirroring the reference screenshot's own layout.
@@ -357,7 +362,7 @@ export default function ReelStudioPage({ params }: { params: { projectId: string
         {/* ── Input panel ──────────────────────────────────────────────── */}
         <div className="space-y-5">
           <div className="space-y-2">
-            <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Reference assets</p>
+            <p className="text-[11px] font-semibold text-muted uppercase tracking-wider">Reference assets <span className="normal-case font-normal text-muted/70">(optional)</span></p>
             <div className="flex flex-wrap gap-2">
               <AssetTile
                 label="First Frame"

@@ -79,7 +79,7 @@ See REQUIREMENTS.md for full spec. Build in this order:
 
 ## Current Build Status
 
-Last updated: 2026-09-20 (STEP 16 close-out)
+Last updated: 2026-10-11 (STEP 17 close-out)
 
 ```
 [x] STEP 1 — Types + Constants
@@ -98,6 +98,7 @@ Last updated: 2026-09-20 (STEP 16 close-out)
 [x] STEP 14 — VayuTransfer: S3→R2 for new uploads, batch/multi-file + receive-link transfers, flat-rate pricing, UI overhaul (preview panel, icon set, transfers page redesign) — MERGED TO MAIN 2026-08-10 (merge commit c71f419), live in production at vayutransfer.com. Production R2 bucket + vayu-transfer-files/vayu-receive-requests DynamoDB tables + Vercel Production env vars all set up same day; confirmed working via a real production upload.
 [x] STEP 15 — VayuTransfer Phase 6 (R2 migration background/rollout close-out) — MERGED TO MAIN 2026-08-10, run directly against production. Metadata-only: `storageBackend='S3'` backfilled on the 147/149 production `vayu-transfers` records missing it. No file bytes copied — confirmed the production S3 bucket (`vayu-transfer-files`) has zero objects (its 7-day lifecycle rule already deleted everything, independent of app status/expiry), so there was nothing left to migrate. Wallets/transactions/downloads tables untouched. R2 migration is now fully closed out.
 [x] STEP 16 — VayuStudios Moments: prompt-first "Reel It" redesign + text-to-video (5 phases), real Kling reel-generation refund/retry-cascade bug fix, and AI Image Studio provider switch Kling→OpenAI gpt-image-2.5-sunburst — MERGED TO MAIN 2026-09-20 (merge commit d755f097), live in production. Both `vayustudio-reelgen` and `vayustudio-imagegen` production Lambdas explicitly redeployed the same day (code merges never auto-deploy Lambdas). `OPENAI_API_KEY` still needs adding to Vercel Production env vars — see priorities below.
+[x] STEP 17 — VayuStudios generic coupon system for AI credit/storage grants (2026-10-07, fix 2026-10-11) — self-service replacement for ad-hoc AWS-CLI manual grants. Owner creates a code at `/studio/admin/coupons` (AI credits and/or storage GB, required max-redemption cap, optional expiry, optional single-studio restriction); any studio redeems it via a new "Have a coupon code?" box in the shared `UsageBillingPanel` (reaches both Moments' Plan & Usage and real Studio Admin's Settings > Billing). Redemption is a single all-or-nothing DynamoDB transaction (claim per-studio slot + claim global slot + apply grant + audit record). New tables `vayustudio-coupons`/`vayustudio-coupon-redemptions` — **test versions only, provisioned and verified against a real coupon; production tables NOT yet created.** Follow-up fix: redemption API's generic `INTERNAL_ERROR` now carries a real message so a genuine server error (e.g. missing table env vars) isn't indistinguishable from a clean "bad code" rejection. **On `develop` only — NOT merged to main, NOT live in production.**
 ```
 
 Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/vayutransfer
@@ -151,7 +152,8 @@ Live at https://vayutransfer.com — GitHub: https://github.com/radhakantarout/v
 
 ### Next Session Priorities
 0. **Add `OPENAI_API_KEY` to Vercel Production env vars** — STEP 16 (merged to main 2026-09-20) switched AI Image Studio's primary provider to OpenAI, and without this key set in Production, every "Edit with AI"/generate call will fail there (Preview/test.vayutransfer.com needs it too, for the same reason — see STEP 16 for context). Both production Lambdas (`vayustudio-imagegen`, `vayustudio-reelgen`) were already explicitly redeployed same day.
-0a. Provision AWS for the new Download-All zip fix (see "Download-All fix" decision above) — `vayu-zip-jobs` DynamoDB table, `vayu-transfer-zip` Lambda (create in console, then run its `deploy.sh`), IAM role, and `TRANSFER_ZIP_LAMBDA_ARN`/`DYNAMO_ZIP_JOBS_TABLE` Vercel env vars. Code is done and typechecked on `develop` but unpushed and untested against real infra — needs the user's explicit go-ahead on each resource per the standing AWS-confirmation rule.
+0a. **Provision production tables + merge for STEP 17 coupon system** — create production `vayustudio-coupons`/`vayustudio-coupon-redemptions` DynamoDB tables (only `-test` exist today), then merge `develop`→`main` (needs explicit go-ahead per standing rule). Currently only usable on test.vayustudios.com.
+0b. Provision AWS for the new Download-All zip fix (see "Download-All fix" decision above) — `vayu-zip-jobs` DynamoDB table, `vayu-transfer-zip` Lambda (create in console, then run its `deploy.sh`), IAM role, and `TRANSFER_ZIP_LAMBDA_ARN`/`DYNAMO_ZIP_JOBS_TABLE` Vercel env vars. Code is done and typechecked on `develop` but unpushed and untested against real infra — needs the user's explicit go-ahead on each resource per the standing AWS-confirmation rule.
 1. VayuStudios feature enhancement planning — next focus per user, now that VayuTransfer's R2 migration (Phases 1-6) is fully closed out. No specific feature picked yet.
 2. Epic F (subscription/margin-based pricing) and Epic G (regenerate/reshare links) — planned VayuTransfer epics, not started, lower priority than VayuStudios work for now.
 3. Razorpay live keys (when account approved) — swap manually in Vercel, do NOT do this via Claude
